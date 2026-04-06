@@ -1,0 +1,6 @@
+
+export MODEL=chriamue/bird-species-classifier
+export CONF_THRESHOLD=0.70
+export NO_BIRD_CONF=0.40
+
+source .env

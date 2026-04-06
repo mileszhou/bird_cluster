@@ -1,0 +1,24 @@
+# !/usr/bin/env bash
+# set -e
+
+# This script sets up a Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+
+# Easiest way to set the path
+#PATH=.venv/bin:$PATH   # not a good idea, better to activate the virtual environment
+
+pip install --upgrade pip
+# Install necessary libraries
+pip install torch transformers datasets
+
+# Notbook dependencies
+pip install ipykernel       # for Jupyter notebook support
+
+pip install openai          # for OpenAI API access
+
+pip install python-dotenv   # for loading environment variables from .env files
+pip install pypinyin        # for Chinese pinyin conversion
+
+# environment variables
+source _env

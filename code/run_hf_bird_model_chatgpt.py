@@ -1,0 +1,326 @@
+#!/usr/bin/env python3
+"""run_hf_bird_model_chatgpt.py – Bird identification using OpenAI GPT‑4o (Vision).
+
+- Uses the OpenAI Vision API to extract **English** and **Chinese** bird names, plus confidence.
+- Output CSV includes: `filename`, `label` (English), `label_cn` (Chinese), `confidence`, `note`, `response_json`.
+- No logits are available from the OpenAI API (as noted).
+
+Run with the same CLI flags as before, for example:
+```
+python3 run_hf_bird_model_chatgpt.py --conf-threshold 0.6 --no-bird 0.2
+```
+"""
+
+import argparse
+import base64
+import json
+import os
+import shutil
+from datetime import datetime
+from pathlib import Path
+import csv
+import urllib.request
+import re
+
+from .lib.label_generator import pinyin_initials
+import run_hf_bird_model_llamacpp
+
+# ------------------------------------------------------------
+# Helper: read an image and encode as base64 for the OpenAI API.
+# ------------------------------------------------------------
+
+def read_image_base64(image_path: Path) -> str:
+    with open(image_path, 'rb') as f:
+        return base64.b64encode(f.read()).decode('utf-8')
+
+# ------------------------------------------------------------
+# Helper: call OpenAI Chat Completion API using only stdlib.
+# ------------------------------------------------------------
+def _openai_chat_completion(messages, model_name):
+    """Send a request to OpenAI's /v1/chat/completions endpoint using urllib."""
+    api_key = os.getenv('OPENAI_API_KEY')
+    if not api_key:
+        raise RuntimeError('OPENAI_API_KEY not set in environment')
+    payload = {
+        'model': model_name,
+        'messages': messages,
+        'max_tokens': 80,
+        'temperature': 0.0,
+    }
+    request = urllib.request.Request(
+        url='https://api.openai.com/v1/chat/completions',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}',
+        }
+    )
+    with urllib.request.urlopen(request) as response:
+        resp_body = response.read().decode('utf-8')
+        return json.loads(resp_body)
+
+# ------------------------------------------------------------
+# XMP keyword handling (unchanged from original).
+# ------------------------------------------------------------
+
+def add_keywords_to_xmp(xmp_path: Path, keywords):
+    """Add keywords to an XMP side‑car file.
+    This version catches permission errors (e.g., when files are read‑only) and
+    attempts to fix the file mode before retrying. If it still fails, it logs a
+    warning and skips the file so the overall processing does not abort.
+    """
+    ns = {
+        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+        "dc": "http://purl.org/dc/elements/1.1/",
+    }
+    # Ensure namespaces are registered for new files.
+    import xml.etree.ElementTree as ET
+    for prefix, uri in ns.items():
+        ET.register_namespace(prefix, uri)
+
+    try:
+        tree = ET.parse(xmp_path)
+        root = tree.getroot()
+
+        # Find or create the RDF Description block
+        desc = root.find('.//rdf:Description', ns)
+        if desc is None:
+            rdf_elem = root.find('rdf:RDF', ns)
+            if rdf_elem is None:
+                rdf_elem = ET.SubElement(root, f"{{{ns['rdf']}}}RDF")
+            desc = ET.SubElement(rdf_elem, f"{{{ns['rdf']}}}Description")
+
+        # Find or create dc:subject
+        subject = desc.find('dc:subject', ns)
+        if subject is None:
+            subject = ET.SubElement(desc, f"{{{ns['dc']}}}subject")
+
+        # Find or create rdf:Seq within subject
+        seq = subject.find('rdf:Seq', ns)
+        if seq is None:
+            seq = ET.SubElement(subject, f"{{{ns['rdf']}}}Seq")
+
+        existing = {li.text for li in seq.findall('rdf:li', ns) if li.text}
+        for kw in keywords:
+            if kw not in existing:
+                li = ET.SubElement(seq, f"{{{ns['rdf']}}}li")
+                li.text = kw
+
+        # Write back, handling PermissionError.
+        try:
+            tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
+        except PermissionError:
+            # Try to make file writable and retry once.
+            try:
+                xmp_path.chmod(0o666)
+                tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
+                print(f"⚠️  Fixed permissions and updated {xmp_path.name}")
+            except Exception as e2:
+                print(f"⚠️  Could not write XMP file {xmp_path.name}: {e2}. Skipping.")
+    except Exception as e:
+        print(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
+
+# ------------------------------------------------------------
+# OpenAI GPT‑4o Vision query.
+# ------------------------------------------------------------
+
+def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float):
+    """Returns (category, label, label_cn, confidence, raw_json) from GPT‑4o.
+    The model is asked to return a JSON object with keys:
+    - `category` – 'bird', 'animal', or 'scenery'
+    - `label` – English name or description
+    - `label_cn` – Chinese name
+    - `confidence` – float 0.0‑1.0
+    """
+    img_b64 = read_image_base64(image_path)
+    system_prompt = (
+        "You are an expert bird and wild animal identification system. "
+        "For the given image, output a JSON object with the following fields: "
+        "`category` – a string that must be one of: 'bird', 'animal', 'people' (including a single person), or 'scenery'. "
+        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'."
+        "`label_cn` – the Chinese name corresponding to `label`."
+        "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
+        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `label_cn` blank."
+    )
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + img_b64}}]}
+    ]
+    # Prepare defaults in case of failure
+    category = "scenery"
+    label = "unknown"
+    label_cn = ""
+    confidence = 0.0
+    raw_json = "{}"
+    try:
+        # Debug: show the message payload sent to OpenAI (first 2 lines only)
+        import json as _json
+        _debug_msg = _json.dumps(messages, ensure_ascii=False)
+        if len(_debug_msg) > 500:
+            _debug_msg = _debug_msg[:500] + "..."
+        # print("DEBUG messages payload:", _debug_msg)
+        response = _openai_chat_completion(messages, model_name)
+        content = response['choices'][0]['message']['content']
+        try:
+            data = json.loads(content)
+        except json.JSONDecodeError:
+            # Extract JSON block if there is surrounding text
+            match = re.search(r'\{.*\}', content, re.DOTALL)
+            if not match:
+                raise ValueError('No JSON found in OpenAI response')
+            data = json.loads(match.group())
+        raw_json = json.dumps(data, ensure_ascii=False)
+        label = data.get('label', 'unknown').lower()
+        label_cn = data.get('label_cn', '未知')
+        confidence = float(data.get('confidence', 0.0))
+        category = data.get('category', 'scenery')
+    except Exception as e:
+        print(f"⚠️  OpenAI request failed for {image_path.name}: {e}")
+    # Return the collected values (defaults may be unchanged if an error occurred)
+    return category, label, label_cn, confidence, raw_json
+
+# ------------------------------------------------------------
+# Helper to build a compact label string for animal entries.
+# ------------------------------------------------------------
+def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
+    """Construct a label like 'zs-zhangsan (95%)'.
+    `label_en` – English name, `label_cn` – Chinese name, `conf` – confidence (0‑1).
+    """
+    ret = ""
+    if category in ("bird", "animal"):
+        c_init = pinyin_initials(label_cn)
+        ret = f"{c_init}-{label_cn}-{label_en}({conf * 100:.0f}%)"
+    else:
+        ret = f"{label_en}({conf * 100:.0f}%)"
+    if conf<=0.2:
+        ret = f"_{ret}"  # low‑confidence marker for non‑bird
+    return ret
+
+# ------------------------------------------------------------
+# Process a single XMP file (extracted for notebook testing)
+# ------------------------------------------------------------
+
+def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
+    """Process one XMP side‑car file.
+    - Finds the matching JPEG.
+    - Calls the GPT‑4o model.
+    - Updates the XMP with keyword tags.
+    - Writes a row to the provided CSV writer.
+    - Prints a concise status line.
+    """
+    base = xmp_file.stem
+    jpg_file = JPG_DIR / f"{base}.jpg"
+    # Avoid early return: handle missing JPEG with an else block.
+    if not jpg_file.is_file():
+        print(f"⚠️  JPEG missing for {xmp_file.name}, skipping.")
+        # Populate placeholder values so the CSV row can still be written if desired.
+        label = "unknown"
+        label_cn = "未知"
+        conf = 0.0
+        raw_json = "{}"
+        keywords = []
+        note = "missing JPEG"
+    else:
+        switch = args.approach
+        if switch == "llamacpp":
+            category, label, label_cn, conf, raw_json = run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird)
+        elif switch == "chatgpt":
+            category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
+        else: # should not happen due to argparse choices, but handle gracefully:
+            print(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
+            category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
+
+        # Choose keywords based on the returned category
+        keywords = []
+        keywords.append(category)
+        spec = mk_label(category, label, label_cn, conf)
+        keywords.append(spec)
+        note = f"{category} ({conf:.2f})"
+
+        # Update XMP file (handles permission issues internally)
+        add_keywords_to_xmp(xmp_file, keywords)
+
+    # Write CSV row (common for both branches)
+    csv_writer.writerow([
+        xmp_file.name,
+        label,
+        label_cn,
+        f"{conf:.2f}",
+        note,
+        args.run_label,
+        raw_json,
+    ])
+    print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+
+
+# ------------------------------------------------------------
+# Process all side‑car XMP files, generate CSV, update XMP keywords.
+# ------------------------------------------------------------
+
+def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
+    # Determine a deterministic order for processing files
+    xmp_files = sorted(xmp_root.rglob('*.xmp'), key=lambda p: p.as_posix())
+    # Checkpoint file to record processed filenames
+    checkpoint_path = csv_path.parent / "processed.txt"
+    processed: set = set()
+    if checkpoint_path.is_file():
+        processed = set(line.strip() for line in checkpoint_path.read_text().splitlines())
+    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
+        for xmp_file in xmp_files:
+            if xmp_file.name in processed:
+                # Skip files already processed in a previous run
+                continue
+            try:
+                process_single_xmp(xmp_file, writer, args)
+                # Record successful processing
+                with open(checkpoint_path, 'a', encoding='utf-8') as cp:
+                    cp.write(f"{xmp_file.name}\n")
+            except Exception as e:
+                print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
+                # Stop further processing; the checkpoint already contains all successfully processed files
+                break
+
+# ------------------------------------------------------------
+# Main script execution
+# ------------------------------------------------------------
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Bird ID using GPT‑4o (Vision) with Chinese name support")
+    parser.add_argument("--run-label", default="", help="Label for this run (e.g., 'first successful run')")
+    parser.add_argument("--model", default="gpt-4o", help="OpenAI model (default gpt-4o)")
+    parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
+    parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
+    parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
+    parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
+    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
+    if parser.parse_args().approach == "llama.cpp":
+        parser.add_argument("--llama-url", default="http://localhost:8080/v1", help="URL for LLaMA.cpp API (ignored in this script)")
+    args = parser.parse_args()
+
+    # Paths
+    DATA_DIR = Path(args.data_dir)
+    JPG_DIR = DATA_DIR / "jpg"
+    RAW_DIR = DATA_DIR / "raw"
+    OUTPUT_DIR = Path(args.output_dir)
+
+    # Use a single output folder (no per‑run subdirectory)
+    RUN_DIR = OUTPUT_DIR
+    RAW_OUT = RUN_DIR / "raw"
+    CSV_PATH = RUN_DIR / "bird_identification_output.csv"
+
+    # Ensure output directories exist; copy raw data only if not already present
+    RUN_DIR.mkdir(parents=True, exist_ok=True)
+    if not RAW_OUT.exists():
+        shutil.copytree(RAW_DIR, RAW_OUT)
+    else:
+        print(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
+    # Save command‑line args for reproducibility (overwrites previous args.json)
+    with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
+        json.dump(vars(args), f, indent=2)
+
+    # Process and generate CSV
+    print("\n🔧 Processing side‑car XMP files with GPT‑4o…")
+    process_folder(RAW_OUT, CSV_PATH, args)
+    print("\n✅ Run complete. Output stored in:", RUN_DIR)

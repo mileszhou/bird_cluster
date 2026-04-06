@@ -1,0 +1,8 @@
+#!/bin/bash
+
+source .env
+python3 -m code.run_hf_bird_model_chatgpt \
+   --conf-threshold 0.6 --no-bird 0.2 \
+   --data-dir ./data \
+   --output-dir ./output \
+   --approach chatgpt
