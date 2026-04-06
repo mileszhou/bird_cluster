@@ -6,8 +6,8 @@
 - Run with: python3 run_hf_bird_model_llamacpp.py --use-llamacpp --llama-url http://localhost:8080
 """
 
-from .transformers_engine import predict_with_transformers
-from .label_generator import pinyin_initials
+from .lib.transformers_engine import predict_with_transformers
+from .lib.label_generator import pinyin_initials
 import argparse
 import base64
 import json
@@ -111,7 +111,7 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
 
         existing = {li.text for li_elem in seq.findall('rdf:li', ns) if (li := li_elem.text)}
         for kw in keywords:
-            if kw not not in existing:
+            if kw not in existing:
                 li = ET.SubElement(seq, f"{{{ns['rdf']}}}li")
                 li.text = kw
 
