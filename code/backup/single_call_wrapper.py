@@ -14,7 +14,7 @@ from typing import List
 
 # Import the low‑level helpers defined in the main module
 # (they are public functions in that script)
-from run_hf_bird_model_chatgpt import read_image_base64, _openai_chat_completion
+from code.bird_label import read_image_base64, _openai_chat_completion
 
 
 def _image_to_data_url(image_path: Path) -> str:
