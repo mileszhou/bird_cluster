@@ -22,8 +22,8 @@ import csv
 import urllib.request
 import re
 
-from .lib.label_generator import pinyin_initials
-import run_hf_bird_model_llamacpp
+from code.lib.label_generator import pinyin_initials
+import code.run_hf_bird_model_llamacpp
 
 # ------------------------------------------------------------
 # Helper: read an image and encode as base64 for the OpenAI API.
@@ -222,8 +222,8 @@ def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
         note = "missing JPEG"
     else:
         switch = args.approach
-        if switch == "llamacpp":
-            category, label, label_cn, conf, raw_json = run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird)
+        if switch == "llama.cpp":
+            category, label, label_cn, conf, raw_json = code.run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird, args.llama_url)
         elif switch == "chatgpt":
             category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
         else: # should not happen due to argparse choices, but handle gracefully:
@@ -295,8 +295,7 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
     parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
-    if parser.parse_args().approach == "llama.cpp":
-        parser.add_argument("--llama-url", default="http://localhost:8080/v1", help="URL for LLaMA.cpp API (ignored in this script)")
+    parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
     args = parser.parse_args()
 
     # Paths
