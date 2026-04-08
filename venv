@@ -20,5 +20,7 @@ pip install openai          # for OpenAI API access
 pip install python-dotenv   # for loading environment variables from .env files
 pip install pypinyin        # for Chinese pinyin conversion
 
+pip install Pillow
+
 # environment variables
 source _env

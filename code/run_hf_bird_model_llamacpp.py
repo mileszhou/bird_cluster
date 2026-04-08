@@ -6,15 +6,15 @@
 - Run with: python3 run_hf_bird_model_llamacpp.py --use-llamacpp --llama-url http://localhost:8080
 """
 
-from .lib.transformers_engine import predict_with_transformers
-from .lib.label_generator import pinyin_initials
+from code.lib.transformers_engine import predict_with_transformers
+from code.lib.label_generator import pinyin_initials
 import argparse
 import base64
 import json
 import os
 import shutil
 from datetime import datetime
-from pathlibto import Path
+from pathlib import Path
 import csv
 import urllib.request
 import re
@@ -66,7 +66,7 @@ def _llamacpp_chat_completion(messages, model_name, base_url: str):
         'temperature': 0.0,
     }
     request = urllib.request.Request(
-        url=f'{base_url.rstrip("/")}/v1/chat/completions',
+        url=f'{base_url.rstrip("/")}/chat/completions',
         data=json.dumps(payload).encode('utf-8'),
         headers={'Content-Type': 'application/json'}
     )
@@ -175,7 +175,7 @@ def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float,
 # llama.cpp Vision query (NEW)
 # ------------------------------------------------------------
 
-def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float, base_url: str):
+def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float, llama_url: str):
     img_b64 = read_image_base64(image_path)
     system_prompt = (
         "You are an expert bird and wild animal identification system. "
@@ -196,7 +196,7 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
     confidence = 0.0
     raw_json = "{}"
     try:
-        response = _llamacpp_chat_completion(messages, model_name, base_url)
+        response = _llamacpp_chat_completion(messages, model_name, llama_url)
         content = response['choices'][0]['message']['content']
         try:
             data = json.loads(content)

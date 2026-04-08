@@ -1,9 +1,9 @@
 #!/bin/bash
 
-source .env
+#source .env
 python3 -m code.bird_label \
-   --conf-threshold 0.6 --no-bird 0.2 \
+   --conf-threshold 0.7 --no-bird 0.2 \
    --data-dir ./data \
    --output-dir ./output \
-   --approach llamac.pp \
+   --approach llama.cpp \
    --llama-url http://darwin:8080/v1 

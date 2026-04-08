@@ -1,6 +1,6 @@
 import torch
 from PIL import Image
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from transformers import AutoProcessor
 import json
 import re
 from pathlib import Path
