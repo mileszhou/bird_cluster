@@ -62,7 +62,7 @@ def _llamacpp_chat_completion(messages, model_name, base_url: str):
     payload = {
         'model': model_name,
         'messages': messages,
-        'max_tokens': 80,
+        'max_tokens': 2048,
         'temperature': 0.0,
     }
     request = urllib.request.Request(
@@ -178,17 +178,22 @@ def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float,
 def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float, llama_url: str):
     img_b64 = read_image_base64(image_path)
     system_prompt = (
-        "You are an expert bird and wild animal identification system. "
-        "For the given image, output a JSON object with the following fields: "
-        "`category` – a string that must be one of: 'bird', 'animal', 'people', or 'scenery'. "
-        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'."
-        "`label_cn` – the Chinese name corresponding to `label`."
-        "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
-        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `not label_cn blank."
+        "You are an expert ornithologist and wildlife photographer specializing in birds of China and East Asia. "
+        "Identify the subject in the image to the most specific taxonomic level possible — always prefer full species name over genus or family. "
+        "Use plumage details, body shape, beak, tail, eye markings, and habitat cues visible in the image. "
+        "If the bird is common in China, use the standard Chinese species name. "
+        "Output ONLY a JSON object with these fields: "
+        "`category` – one of: 'bird', 'animal', 'people', or 'scenery'. "
+        "`label` – full English species name (e.g. 'Light-vented Bulbul', not just 'Bulbul'). "
+        "`label_cn` – standard Chinese species name (e.g. '白头鹎', not just '鹎'). "
+        "`confidence` – float 0.0–1.0 reflecting how certain you are of the species identification. "
+        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' and leave `label_cn` blank."
     )
     messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}]}
+        {"role": "user", "content": [
+            {"type": "text", "text": system_prompt},
+            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+        ]}
     ]
     category = "scenery"
     label = "unknown"
@@ -197,7 +202,8 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
     raw_json = "{}"
     try:
         response = _llamacpp_chat_completion(messages, model_name, llama_url)
-        content = response['choices'][0]['message']['content']
+        msg = response['choices'][0]['message']
+        content = msg.get('content') or msg.get('reasoning_content', '')
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
