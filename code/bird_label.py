@@ -257,9 +257,34 @@ def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
 # Process all side‑car XMP files, generate CSV, update XMP keywords.
 # ------------------------------------------------------------
 
+def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
+    """Return a set of xmp filenames to process, based on a prior run's CSV.
+    Includes images where category == 'animal' or confidence < conf_threshold.
+    Returns None if no filter is requested."""
+    if not filter_csv:
+        return None
+    filenames = set()
+    with open(filter_csv, newline='', encoding='utf-8') as f:
+        for row in csv.DictReader(f):
+            note = row.get('note', '')
+            category = note.split('(')[0].strip() if '(' in note else ''
+            try:
+                conf = float(row.get('confidence', 1.0))
+            except ValueError:
+                conf = 1.0
+            if category == 'animal' or conf < conf_threshold:
+                # CSV has jpg filename; derive xmp name
+                stem = Path(row['filename']).stem
+                filenames.add(stem + '.xmp')
+    return filenames
+
+
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     # Determine a deterministic order for processing files
     xmp_files = sorted(xmp_root.rglob('*.xmp'), key=lambda p: p.as_posix())
+    filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
+    if filter_set is not None:
+        print(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
     # Checkpoint file to record processed filenames
     checkpoint_path = csv_path.parent / "processed.txt"
     processed: set = set()
@@ -270,7 +295,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
         for xmp_file in xmp_files:
             if xmp_file.name in processed:
-                # Skip files already processed in a previous run
+                continue
+            if filter_set is not None and xmp_file.name not in filter_set:
                 continue
             try:
                 process_single_xmp(xmp_file, writer, args)
@@ -296,6 +322,7 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
+    parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     args = parser.parse_args()
 
     # Paths

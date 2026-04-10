@@ -62,7 +62,7 @@ def _llamacpp_chat_completion(messages, model_name, base_url: str):
     payload = {
         'model': model_name,
         'messages': messages,
-        'max_tokens': 2048,
+        'max_tokens': 4096,
         'temperature': 0.0,
     }
     request = urllib.request.Request(
@@ -187,7 +187,8 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
         "`label` – full English species name (e.g. 'Light-vented Bulbul', not just 'Bulbul'). "
         "`label_cn` – standard Chinese species name (e.g. '白头鹎', not just '鹎'). "
         "`confidence` – float 0.0–1.0 reflecting how certain you are of the species identification. "
-        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' and leave `label_cn` blank."
+        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' and leave `label_cn` blank. "
+        "Do not explain your reasoning. Output the JSON object only."
     )
     messages = [
         {"role": "user", "content": [
