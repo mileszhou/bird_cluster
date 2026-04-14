@@ -331,6 +331,8 @@ if __name__ == "__main__":
     RAW_DIR = DATA_DIR / "raw"
     OUTPUT_DIR = Path(args.output_dir)
 
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
     # Use a single output folder (no per‑run subdirectory)
     RUN_DIR = OUTPUT_DIR
     RAW_OUT = RUN_DIR / "raw"

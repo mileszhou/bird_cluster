@@ -62,7 +62,7 @@ def _llamacpp_chat_completion(messages, model_name, base_url: str):
     payload = {
         'model': model_name,
         'messages': messages,
-        'max_tokens': 4096,
+        'max_tokens': 8192,
         'temperature': 0.0,
     }
     request = urllib.request.Request(
