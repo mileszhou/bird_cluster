@@ -5,7 +5,7 @@ tmp/
 data/
 logs/
 output*/
-results/
+#results/
 **/.env
 
 *.log
