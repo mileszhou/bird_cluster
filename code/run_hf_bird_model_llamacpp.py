@@ -54,11 +54,37 @@ def _openai_chat_completion(messages, model_name):
         return json.loads(resp_body)
 
 # ------------------------------------------------------------
-# llama.cpp API helper (NEW)
+# llama.cpp API helper
 # ------------------------------------------------------------
+def get_actual_model_name(llama_url: str, requested_model: str) -> str:
+    """Probes the llama.cpp server to find the actual loaded model name."""
+    # Ensure we don't double-up on '/v1'
+    base_url = llama_url.rstrip('/').replace('/v1', '')
+    
+    try:
+        probe_request = urllib.request.Request(f'{base_url}/v1/models')
+        with urllib.request.urlopen(probe_request, timeout=10) as probe_resp:
+            models_data = json.loads(probe_resp.read().decode('utf-8'))
+            available_models = [m['id'] for m in models_data.get('data', [])]
+            if available_models:
+                if requested_model not in available_models:
+                    actual = available_models[0]
+                    print(f"ℹ️  Server mismatch: requested '{requested_model}', but using '{actual}'")
+                    return actual
+    except Exception as e:
+        print(f"⚠️  Could not probe models at {base_url}/v1: {e}")
+    return requested_model
 
 def _llamacpp_chat_completion(messages, model_name, base_url: str):
-    """Send a request to a local llama.cpp server's /v1/chat/completions endpoint."""
+    """
+    API CLIENT:
+    Sends the payload to the server. We check the response 'model' field
+    to catch any late-stage discrepancies between the request and the 
+    server's actual execution state.
+    """
+    # Ensure we don't double-up on '/v1'
+    base_url = base_url.rstrip('/').replace('/v1', '')
+    
     payload = {
         'model': model_name,
         'messages': messages,
@@ -66,14 +92,20 @@ def _llamacpp_chat_completion(messages, model_name, base_url: str):
         'temperature': 0.0,
     }
     request = urllib.request.Request(
-        url=f'{base_url.rstrip("/")}/chat/completions',
+        url=f'{base_url}/v1/chat/completions',
         data=json.dumps(payload).encode('utf-8'),
         headers={'Content-Type': 'application/json'}
     )
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
             resp_body = response.read().decode('utf-8')
-            return json.loads(resp_body)
+            resp_json = json.loads(resp_body)
+            
+            server_model = resp_json.get('model')
+            if server_model and server_model != model_name:
+                print(f"ℹ️  Server is actually using model: {server_model}")
+            
+            return resp_json
     except urllib.error.URLError as e:
         raise RuntimeError(f'Failed to connect to llama.cpp server at {base_url}: {e}')
 
@@ -177,19 +209,39 @@ def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float,
 
 def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float, llama_url: str):
     img_b64 = read_image_base64(image_path)
-    system_prompt = (
-        "You are an expert ornithologist and wildlife photographer specializing in birds of China and East Asia. "
-        "Identify the subject in the image to the most specific taxonomic level possible — always prefer full species name over genus or family. "
-        "Use plumage details, body shape, beak, tail, eye markings, and habitat cues visible in the image. "
-        "If the bird is common in China, use the standard Chinese species name. "
-        "Output ONLY a JSON object with these fields: "
-        "`category` – one of: 'bird', 'animal', 'people', or 'scenery'. "
-        "`label` – full English species name (e.g. 'Light-vented Bulbul', not just 'Bulbul'). "
-        "`label_cn` – standard Chinese species name (e.g. '白头鹎', not just '鹎'). "
-        "`confidence` – float 0.0–1.0 reflecting how certain you are of the species identification. "
-        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' and leave `label_cn` blank. "
-        "Do not explain your reasoning. Output the JSON object only."
-    )
+    
+    # 1. Detect the actual model name by making a quick probe to /v1/models
+    actual_model_name = get_actual_model_name(llama_url, model_name)
+
+    # 2. Adjust prompt based on the model name
+    # Some models (like Llama 3.2 Vision) respond better to structured instruction,
+    # while others (like older LLaVA) need more descriptive, "role-play" style prompts.
+    
+    if "llama-3.2" in actual_model_name.lower():
+        # Llama 3.2 Vision performs well with direct, structured instructions
+        system_prompt = (
+            "You are an expert ornithologist. Identify the subject in the image. "
+            "Output ONLY a JSON object with: "
+            "`category` ('bird', 'animal', 'people', or 'scenery'), "
+            "`label` (English name), `label_cn` (Chinese name), and `confidence` (0.0-1.0). "
+            "Do not include any other text."
+        )
+    else:
+        # Fallback to the more descriptive, "expert" persona for other models
+        system_prompt = (
+            "You are an expert ornithologist and wildlife photographer specializing in birds of China and East Asia. "
+            "Identify the subject in the image to the most specific taxonomic level possible. "
+            "Use plumage details, body shape, beak, tail, eye markings, and habitat cues. "
+            "If the bird is common in China, use the standard Chinese species name. "
+            "Output ONLY a JSON object with these fields: "
+            "`category` – one of: 'bird', 'animal', 'people', or 'scenery'. "
+            "`label` – full English species name. "
+            "`label_cn` – standard Chinese species name. "
+            "`confidence` – float 0.0–1.0. "
+            "If no recognizable animal, set category to 'people' or 'scenery' and leave `label_cn` blank. "
+            "Do not explain your reasoning. Output the JSON object only."
+        )
+
     messages = [
         {"role": "user", "content": [
             {"type": "text", "text": system_prompt},
@@ -202,7 +254,7 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
     confidence = 0.0
     raw_json = "{}"
     try:
-        response = _llamacpp_chat_completion(messages, model_name, llama_url)
+        response = _llamacpp_chat_completion(messages, actual_model_name, llama_url)
         msg = response['choices'][0]['message']
         content = msg.get('content') or msg.get('reasoning_content', '')
         try:
