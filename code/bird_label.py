@@ -325,6 +325,19 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     args = parser.parse_args()
 
+    # Update args with actual model name if using llama.cpp to ensure args.json is accurate
+    if args.approach == "llama.cpp" and args.llama_url:
+        try:
+            probe_request = urllib.request.Request(f'{args.llama_url.rstrip("/")}/v1/models')
+            with urllib.request.urlopen(probe_request, timeout=5) as probe_resp:
+                models_data = json.loads(probe_resp.read().decode('utf-8'))
+                available_models = [m['id'] for m in models_data.get('data', [])]
+                if available_models and args.model not in available_models:
+                    print(f"ℹ️  [args.json fix] Server mismatch: requested '{args.model}', but using '{available_models[0]}'")
+                    args.model = available_models[0]
+        except Exception as e:
+            print(f"⚠️  [args.json fix] Could not probe models for args.json: {e}")
+
     # Paths
     DATA_DIR = Path(args.data_dir)
     JPG_DIR = DATA_DIR / "jpg"
