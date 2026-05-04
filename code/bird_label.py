@@ -22,6 +22,8 @@ import csv
 import urllib.request
 import re
 
+import vllm
+
 from code.lib.label_generator import pinyin_initials
 import code.run_hf_bird_model_llamacpp
 
@@ -121,11 +123,10 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
         print(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
 
 # ------------------------------------------------------------
-# OpenAI GPT‑4o Vision query.
+# vLLM query.
 # ------------------------------------------------------------
-
-def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float):
-    """Returns (category, label, label_cn, confidence, raw_json) from GPT‑4o.
+def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float):
+    """Returns (category, label, label_cn, confidence, raw_json) from vLLM.
     The model is asked to return a JSON object with keys:
     - `category` – 'bird', 'animal', or 'scenery'
     - `label` – English name or description
@@ -159,7 +160,7 @@ def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float,
         if len(_debug_msg) > 500:
             _debug_msg = _debug_msg[:500] + "..."
         # print("DEBUG messages payload:", _debug_msg)
-        response = _openai_chat_completion(messages, model_name)
+        response = _vllm_chat_completion(messages, model_name)
         content = response['choices'][0]['message']['content']
         try:
             data = json.loads(content)
@@ -226,7 +227,9 @@ def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
             category, label, label_cn, conf, raw_json = code.run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird, args.llama_url)
         elif switch == "chatgpt":
             category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
-        else: # should not happen due to argparse choices, but handle gracefully:
+        elif switch == "vllm":
+            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, args.model, args.conf_threshold, args.no_bird)
+        else: # should not happen due to argparse choices, but handle gracefully:else: # should not happen due to argparse choices, but handle gracefully:
             print(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
 
@@ -320,7 +323,7 @@ if __name__ == "__main__":
     parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
     parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
     parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
-    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
+    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     args = parser.parse_args()
