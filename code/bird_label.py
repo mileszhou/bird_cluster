@@ -23,6 +23,7 @@ from pathlib import Path
 import csv
 import urllib.request
 import re
+from PIL import Image
 
 import vllm
 
@@ -127,32 +128,29 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
 # ------------------------------------------------------------
 # vLLM query.
 # ------------------------------------------------------------
-def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float):
+def predict_with_vllm(image_path: Path, llm, model_name: str, conf_threshold: float, no_bird_conf: float):
     """Returns (category, label, label_cn, confidence, raw_json) from vLLM.
-    The model is asked to return a JSON object with keys:
-    - `category` – 'bird', 'animal', or 'scenery'
+    The model is asked to return a JSON object with the following fields:
+    - `category` – 'bird', 'animal', 'people', or 'scenery'
     - `label` – English name or description
     - `label_cn` – Chinese name
     - `confidence` – float 0.0‑1.0
     """
-    #img_b64 = read_image_base64(image_path)
     system_prompt = (
         "You are an expert bird and wild animal identification system. "
         "For the given image, output a JSON object with the following fields: "
         "`category` – a string that must be one of: 'bird', 'animal', 'people' (including a single person), or 'scenery'. "
-        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'."
-        "`label_cn` – the Chinese name corresponding to `label`."
+        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'. "
+        "`label_cn` – the Chinese name corresponding to `label`. "
         "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
         "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `label_cn` blank."
     )
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
+        {"role": "user", "content": [{"type": "image", "image": None}, {"type": "text", "text": "Identify this image."}]}
     ]
 
-    llm = vllm.LLM(model=model_name, limit_mm_per_prompt={"image": 1})
     tokenizer = llm.get_tokenizer()
-
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     # Prepare defaults in case of failure
@@ -162,23 +160,16 @@ def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, 
     confidence = 0.0
     raw_json = "{}"
     try:
-        # Debug: show the message payload sent to OpenAI (first 2 lines only)
-        import json as _json
-        # _debug_msg = _json.dumps(messages, ensure_ascii=False)
-        # if len(_debug_msg) > 500:
-        #     _debug_msg = _debug_msg[:500] + "..."
-        # print("DEBUG messages payload:", _debug_msg)
-
-        # response = _vllm_chat_completion(messages, model_name)
+        image = Image.open(image_path)
         response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}})
-        content = response['choices'][0]['message']['content']
+        content = response[0].outputs[0].text
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
             # Extract JSON block if there is surrounding text
             match = re.search(r'\{.*\}', content, re.DOTALL)
             if not match:
-                raise ValueError('No JSON found in OpenAI response')
+                raise ValueError('No JSON found in vLLM response')
             data = json.loads(match.group())
         raw_json = json.dumps(data, ensure_ascii=False)
         label = data.get('label', 'unknown').lower()
@@ -186,7 +177,7 @@ def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, 
         confidence = float(data.get('confidence', 0.0))
         category = data.get('category', 'scenery')
     except Exception as e:
-        print(f"⚠️  OpenAI request failed for {image_path.name}: {e}")
+        print(f"⚠️  vLLM request failed for {image_path.name}: {e}")
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
