@@ -13,6 +13,8 @@ python3 run_hf_bird_model_chatgpt.py --conf-threshold 0.6 --no-bird 0.2
 
 import argparse
 import base64
+from email.mime import image
+from email.mime import image
 import json
 import os
 import shutil
@@ -133,7 +135,7 @@ def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, 
     - `label_cn` – Chinese name
     - `confidence` – float 0.0‑1.0
     """
-    img_b64 = read_image_base64(image_path)
+    #img_b64 = read_image_base64(image_path)
     system_prompt = (
         "You are an expert bird and wild animal identification system. "
         "For the given image, output a JSON object with the following fields: "
@@ -145,8 +147,14 @@ def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, 
     )
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + img_b64}}]}
+        {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
     ]
+
+    llm = vllm.LLM(model=model_name, limit_mm_per_prompt={"image": 1})
+    tokenizer = llm.get_tokenizer()
+
+    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
     # Prepare defaults in case of failure
     category = "scenery"
     label = "unknown"
@@ -156,11 +164,13 @@ def predict_with_vllm(image_path: Path, model_name: str, conf_threshold: float, 
     try:
         # Debug: show the message payload sent to OpenAI (first 2 lines only)
         import json as _json
-        _debug_msg = _json.dumps(messages, ensure_ascii=False)
-        if len(_debug_msg) > 500:
-            _debug_msg = _debug_msg[:500] + "..."
+        # _debug_msg = _json.dumps(messages, ensure_ascii=False)
+        # if len(_debug_msg) > 500:
+        #     _debug_msg = _debug_msg[:500] + "..."
         # print("DEBUG messages payload:", _debug_msg)
-        response = _vllm_chat_completion(messages, model_name)
+
+        # response = _vllm_chat_completion(messages, model_name)
+        response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}})
         content = response['choices'][0]['message']['content']
         try:
             data = json.loads(content)
@@ -280,7 +290,6 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
                 stem = Path(row['filename']).stem
                 filenames.add(stem + '.xmp')
     return filenames
-
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     # Determine a deterministic order for processing files
