@@ -34,12 +34,14 @@ Key CLI flags:
 
 Reset output: `./clean`
 
+`vllm.run` is the recommended approach — significantly faster than llama.cpp, fully occupies the GPU. The vLLM engine is created once before the processing loop (expensive CUDA kernel compilation on first run, cached in `~/.cache/vllm/` afterward).
+
 ## Architecture
 
 **Data flow:**
 1. Input: `data/jpg/*.jpg` paired with `data/raw/*.xmp` sidecar files
 2. `code/bird_label.py` iterates XMP files, finds matching JPEG, calls the selected backend
-3. Each backend sends a system prompt ("You are an expert ornithologist...") + base64-encoded image
+3. Each backend sends a system prompt + PIL image via vLLM's chat template
 4. Model returns JSON: `{category, label, label_cn, confidence}`
 5. `code/lib/label_generator.py` formats a compact label with pinyin initials and confidence
 6. XMP sidecar gets keywords injected; CSV row appended; checkpoint updated
@@ -63,5 +65,6 @@ Reset output: `./clean`
 
 - **Checkpoint resumption:** Already-processed filenames in `output/processed.txt` are skipped on re-run
 - **XMP permissions:** Script calls `chmod` on XMP files before writing keywords (needed for library-managed files)
-- **JSON parsing:** Model responses are cleaned of markdown fences before JSON parsing; malformed JSON is caught and logged
+- **JSON parsing:** Model may wrap response in markdown fences or return Chinese in the `label` field; post-processing strips fences and moves Chinese characters from `label` to `label_cn` automatically
+- **vLLM prompt constraints:** `category: "bird"` is strictly class Aves; insects/butterflies must be `animal`. `label` must use Latin characters only; `label_cn` is Mandarin.
 - **Filter mode:** `--filter-csv` reads a prior output CSV and only reprocesses rows where `note` contains "animal" or confidence is below threshold

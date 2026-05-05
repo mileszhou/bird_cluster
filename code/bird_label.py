@@ -135,11 +135,11 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
     system_prompt = (
         "You are an expert bird and wild animal identification system. "
         "For the given image, output a JSON object with the following fields: "
-        "`category` – a string that must be one of: 'bird', 'animal', 'people' (including a single person), or 'scenery'. "
-        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'. "
-        "`label_cn` – the Chinese name corresponding to `label`. "
-        "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
-        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `label_cn` blank."
+        "`category` – one of: 'bird' (only class Aves — actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
+        "`label` – the English common name using Latin characters only (e.g. 'Grey Wagtail'). "
+        "`label_cn` – the standard Chinese (Mandarin) name (e.g. '灰鶺鸰'). "
+        "`confidence` – a float between 0.0 and 1.0. "
+        "Output ONLY a JSON object, no other text."
     )
 
     # Prepare defaults in case of failure
@@ -148,15 +148,18 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
     label_cn = ""
     confidence = 0.0
     raw_json = "{}"
+    content = None
     try:
         image = Image.open(image_path)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
         ]
+        from vllm import SamplingParams
         tokenizer = llm.get_tokenizer()
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}})
+        sampling_params = SamplingParams(max_tokens=200, temperature=0.0)
+        response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}}, sampling_params, use_tqdm=False)
         content = response[0].outputs[0].text
         try:
             data = json.loads(content)
@@ -167,12 +170,19 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
                 raise ValueError('No JSON found in vLLM response')
             data = json.loads(match.group())
         raw_json = json.dumps(data, ensure_ascii=False)
-        label = data.get('label', 'unknown').lower()
-        label_cn = data.get('label_cn', '未知')
+        label = data.get('label', '').lower()
+        label_cn = data.get('label_cn', '')
         confidence = float(data.get('confidence', 0.0))
         category = data.get('category', 'scenery')
+        # If model put Chinese in label field, move it to label_cn
+        if any('\u4e00' <= c <= '\u9fff' for c in label):
+            if not label_cn:
+                label_cn = label
+            label = ''
+        label = label or 'unknown'
     except Exception as e:
         print(f"⚠️  vLLM request failed for {image_path.name}: {e}")
+        print(f"    raw response: {repr(content)}")
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
