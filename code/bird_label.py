@@ -186,6 +186,72 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
+
+def predict_with_vllm_batch(image_paths: list, llm, conf_threshold: float, no_bird_conf: float):
+    """Batch vLLM inference. Returns list of (category, label, label_cn, confidence, raw_json)."""
+    system_prompt = (
+        "You are an expert bird and wild animal identification system. "
+        "For the given image, output a JSON object with the following fields: "
+        "`category` – one of: 'bird' (only class Aves — actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
+        "`label` – the English common name using Latin characters only (e.g. 'Grey Wagtail'). "
+        "`label_cn` – the standard Chinese (Mandarin) name (e.g. '灰鶺鸰'). "
+        "`confidence` – a float between 0.0 and 1.0. "
+        "Output ONLY a JSON object, no other text."
+    )
+    results = [("scenery", "unknown", "", 0.0, "{}") for _ in image_paths]
+
+    from vllm import SamplingParams
+    tokenizer = llm.get_tokenizer()
+    sampling_params = SamplingParams(max_tokens=200, temperature=0.0)
+
+    inputs = []
+    valid_indices = []
+    for i, image_path in enumerate(image_paths):
+        try:
+            image = Image.open(image_path)
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
+            ]
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+            inputs.append({"prompt": prompt, "multi_modal_data": {"image": image}})
+            valid_indices.append(i)
+        except Exception as e:
+            print(f"⚠️  Could not load image {image_path.name}: {e}")
+
+    if not inputs:
+        return results
+
+    responses = llm.generate(inputs, sampling_params, use_tqdm=False)
+
+    for idx, response in zip(valid_indices, responses):
+        content = None
+        try:
+            content = response.outputs[0].text
+            try:
+                data = json.loads(content)
+            except json.JSONDecodeError:
+                match = re.search(r'\{.*\}', content, re.DOTALL)
+                if not match:
+                    raise ValueError('No JSON found in vLLM response')
+                data = json.loads(match.group())
+            raw_json = json.dumps(data, ensure_ascii=False)
+            label = data.get('label', '').lower()
+            label_cn = data.get('label_cn', '')
+            confidence = float(data.get('confidence', 0.0))
+            category = data.get('category', 'scenery')
+            if any('一' <= c <= '鿿' for c in label):
+                if not label_cn:
+                    label_cn = label
+                label = ''
+            label = label or 'unknown'
+            results[idx] = (category, label, label_cn, confidence, raw_json)
+        except Exception as e:
+            print(f"⚠️  vLLM parse failed for {image_paths[idx].name}: {e}")
+            print(f"    raw response: {repr(content)}")
+
+    return results
+
 # ------------------------------------------------------------
 # Helper to build a compact label string for animal entries.
 # ------------------------------------------------------------
@@ -298,23 +364,60 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
     processed: set = set()
     if checkpoint_path.is_file():
         processed = set(line.strip() for line in checkpoint_path.read_text().splitlines())
+
+    pending = [
+        xmp for xmp in xmp_files
+        if xmp.name not in processed and (filter_set is None or xmp.name in filter_set)
+    ]
+
+    batch_size = getattr(args, 'batch_size', 1)
+    use_batch = args.approach == "vllm" and batch_size > 1 and llm is not None
+    if use_batch:
+        print(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
+
     with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
-        for xmp_file in xmp_files:
-            if xmp_file.name in processed:
-                continue
-            if filter_set is not None and xmp_file.name not in filter_set:
-                continue
-            try:
-                process_single_xmp(xmp_file, writer, args, llm=llm)
-                # Record successful processing
+
+        step = batch_size if use_batch else 1
+        for i in range(0, len(pending), step):
+            if use_batch:
+                batch = pending[i:i + batch_size]
+                # Separate missing JPEGs from valid ones
+                valid_items, missing = [], []
+                for xmp in batch:
+                    jpg = JPG_DIR / f"{xmp.stem}.jpg"
+                    (valid_items if jpg.is_file() else missing).append((xmp, jpg))
+                for xmp, _ in missing:
+                    writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
+                    print(f"⚠️  JPEG missing for {xmp.name}, skipping.")
+                if valid_items:
+                    try:
+                        batch_results = predict_with_vllm_batch(
+                            [jpg for _, jpg in valid_items], llm, args.conf_threshold, args.no_bird
+                        )
+                        for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
+                            keywords = [category, mk_label(category, label, label_cn, conf)]
+                            note = f"{category} ({conf:.2f})"
+                            add_keywords_to_xmp(xmp_file, keywords)
+                            writer.writerow([xmp_file.name, label, label_cn, f"{conf:.2f}", note, args.run_label, raw_json])
+                            print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+                    except Exception as e:
+                        print(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
+                        break
+                # Checkpoint entire batch (including skipped missing-JPEG files)
                 with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                    cp.write(f"{xmp_file.name}\n")
-            except Exception as e:
-                print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
-                # Stop further processing; the checkpoint already contains all successfully processed files
-                break
+                    for xmp in batch:
+                        cp.write(f"{xmp.name}\n")
+            else:
+                xmp_file = pending[i]
+                try:
+                    process_single_xmp(xmp_file, writer, args, llm=llm)
+                    with open(checkpoint_path, 'a', encoding='utf-8') as cp:
+                        cp.write(f"{xmp_file.name}\n")
+                except Exception as e:
+                    print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
+                    break
 
 # ------------------------------------------------------------
 # Main script execution
@@ -332,6 +435,7 @@ if __name__ == "__main__":
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--tensor-parallel", type=int, default=1, help="Number of GPUs for tensor parallelism (default 1)")
+    parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     args = parser.parse_args()
 
     # Update args with actual model name if using llama.cpp to ensure args.json is accurate
@@ -381,7 +485,7 @@ if __name__ == "__main__":
         from vllm import LLM
         print(f"\n🔧 Loading vLLM engine for {args.model}…")
         llm_engine = LLM(model=args.model,
-                         max_model_len=65536,
+                         max_model_len=8192,
                          gpu_memory_utilization=0.95,
                          limit_mm_per_prompt={"image": 1},
                          tensor_parallel_size=args.tensor_parallel
