@@ -31,6 +31,7 @@ Key CLI flags:
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
 - `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV
 - `--run-label TEXT` — tag this run in the output CSV
+- `--batch-size INT` — number of images per vLLM batch (default 1; 8 recommended for 32B model on 2 GPUs)
 
 Reset output: `./clean`
 
@@ -63,8 +64,9 @@ Reset output: `./clean`
 
 ## Key Behaviors
 
-- **Checkpoint resumption:** Already-processed filenames in `output/processed.txt` are skipped on re-run
+- **Checkpoint resumption:** Already-processed filenames in `output/processed.txt` are skipped on re-run; CSV is opened in append mode so prior results are preserved
 - **XMP permissions:** Script calls `chmod` on XMP files before writing keywords (needed for library-managed files)
 - **JSON parsing:** Model may wrap response in markdown fences or return Chinese in the `label` field; post-processing strips fences and moves Chinese characters from `label` to `label_cn` automatically
 - **vLLM prompt constraints:** `category: "bird"` is strictly class Aves; insects/butterflies must be `animal`. `label` must use Latin characters only; `label_cn` is Mandarin.
 - **Filter mode:** `--filter-csv` reads a prior output CSV and only reprocesses rows where `note` contains "animal" or confidence is below threshold
+- **Graceful Ctrl-C:** SIGINT is intercepted with a deferred handler — the signal sets a flag rather than raising immediately, so the current batch always completes fully (inference, XMP write, CSV write, checkpoint) before the loop exits. This synchronises the async signal with the program's batch boundary, ensuring no partial writes.
