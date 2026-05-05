@@ -331,6 +331,7 @@ if __name__ == "__main__":
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
+    parser.add_argument("--tensor-parallel", type=int, default=1, help="Number of GPUs for tensor parallelism (default 1)")
     args = parser.parse_args()
 
     # Update args with actual model name if using llama.cpp to ensure args.json is accurate
@@ -374,7 +375,12 @@ if __name__ == "__main__":
     if args.approach == "vllm":
         from vllm import LLM
         print(f"\n🔧 Loading vLLM engine for {args.model}…")
-        llm_engine = LLM(model=args.model, limit_mm_per_prompt={"image": 1})
+        llm_engine = LLM(model=args.model,
+                         max_model_len=16384,
+                         gpu_memory_utilization=0.95,
+                         limit_mm_per_prompt={"image": 1},
+                         tensor_parallel_size=args.tensor_parallel
+                         )
 
     # Process and generate CSV
     print("\n🔧 Processing side‑car XMP files…")
