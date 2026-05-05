@@ -13,8 +13,6 @@ python3 run_hf_bird_model_chatgpt.py --conf-threshold 0.6 --no-bird 0.2
 
 import argparse
 import base64
-from email.mime import image
-from email.mime import image
 import json
 import os
 import shutil
@@ -24,8 +22,6 @@ import csv
 import urllib.request
 import re
 from PIL import Image
-
-import vllm
 
 from code.lib.label_generator import pinyin_initials
 import code.run_hf_bird_model_llamacpp
@@ -128,7 +124,7 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
 # ------------------------------------------------------------
 # vLLM query.
 # ------------------------------------------------------------
-def predict_with_vllm(image_path: Path, llm, model_name: str, conf_threshold: float, no_bird_conf: float):
+def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf: float):
     """Returns (category, label, label_cn, confidence, raw_json) from vLLM.
     The model is asked to return a JSON object with the following fields:
     - `category` – 'bird', 'animal', 'people', or 'scenery'
@@ -145,13 +141,6 @@ def predict_with_vllm(image_path: Path, llm, model_name: str, conf_threshold: fl
         "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
         "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `label_cn` blank."
     )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [{"type": "image", "image": None}, {"type": "text", "text": "Identify this image."}]}
-    ]
-
-    tokenizer = llm.get_tokenizer()
-    prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
     # Prepare defaults in case of failure
     category = "scenery"
@@ -161,6 +150,12 @@ def predict_with_vllm(image_path: Path, llm, model_name: str, conf_threshold: fl
     raw_json = "{}"
     try:
         image = Image.open(image_path)
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
+        ]
+        tokenizer = llm.get_tokenizer()
+        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}})
         content = response[0].outputs[0].text
         try:
@@ -202,7 +197,7 @@ def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
 # Process a single XMP file (extracted for notebook testing)
 # ------------------------------------------------------------
 
-def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
+def process_single_xmp(xmp_file: Path, csv_writer, args, llm=None) -> None:
     """Process one XMP side‑car file.
     - Finds the matching JPEG.
     - Calls the GPT‑4o model.
@@ -229,7 +224,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args) -> None:
         elif switch == "chatgpt":
             category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
         elif switch == "vllm":
-            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, args.model, args.conf_threshold, args.no_bird)
+            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, llm, args.conf_threshold, args.no_bird)
         else: # should not happen due to argparse choices, but handle gracefully:else: # should not happen due to argparse choices, but handle gracefully:
             print(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
@@ -282,7 +277,7 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
                 filenames.add(stem + '.xmp')
     return filenames
 
-def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
+def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
     # Determine a deterministic order for processing files
     xmp_files = sorted(xmp_root.rglob('*.xmp'), key=lambda p: p.as_posix())
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
@@ -302,7 +297,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
             if filter_set is not None and xmp_file.name not in filter_set:
                 continue
             try:
-                process_single_xmp(xmp_file, writer, args)
+                process_single_xmp(xmp_file, writer, args, llm=llm)
                 # Record successful processing
                 with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                     cp.write(f"{xmp_file.name}\n")
@@ -364,7 +359,14 @@ if __name__ == "__main__":
     with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
         json.dump(vars(args), f, indent=2)
 
+    # Create the vLLM engine once, outside the processing loop
+    llm_engine = None
+    if args.approach == "vllm":
+        from vllm import LLM
+        print(f"\n🔧 Loading vLLM engine for {args.model}…")
+        llm_engine = LLM(model=args.model, limit_mm_per_prompt={"image": 1})
+
     # Process and generate CSV
-    print("\n🔧 Processing side‑car XMP files with GPT‑4o…")
-    process_folder(RAW_OUT, CSV_PATH, args)
+    print("\n🔧 Processing side‑car XMP files…")
+    process_folder(RAW_OUT, CSV_PATH, args, llm=llm_engine)
     print("\n✅ Run complete. Output stored in:", RUN_DIR)
