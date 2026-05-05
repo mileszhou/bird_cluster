@@ -381,7 +381,7 @@ if __name__ == "__main__":
         from vllm import LLM
         print(f"\n🔧 Loading vLLM engine for {args.model}…")
         llm_engine = LLM(model=args.model,
-                         max_model_len=16384,
+                         max_model_len=65536,
                          gpu_memory_utilization=0.95,
                          limit_mm_per_prompt={"image": 1},
                          tensor_parallel_size=args.tensor_parallel
