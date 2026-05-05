@@ -16,6 +16,7 @@ import base64
 import json
 import os
 import shutil
+import signal
 from datetime import datetime
 from pathlib import Path
 import csv
@@ -384,6 +385,14 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
         if not resuming:
             writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
 
+        interrupted = False
+        def _sigint_handler(sig, frame):
+            nonlocal interrupted
+            if not interrupted:
+                print("\nInterrupt received — finishing current batch before stopping...")
+                interrupted = True
+        original_sigint = signal.signal(signal.SIGINT, _sigint_handler)
+
         step = batch_size if use_batch else 1
         try:
             for i in range(0, len(pending), step):
@@ -424,8 +433,11 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
                     except Exception as e:
                         print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
                         break
-        except KeyboardInterrupt:
-            print("\nInterrupted. Progress saved — re-run to resume.")
+                if interrupted:
+                    print("Stopped cleanly. Re-run to resume.")
+                    break
+        finally:
+            signal.signal(signal.SIGINT, original_sigint)
 
 # ------------------------------------------------------------
 # Main script execution
