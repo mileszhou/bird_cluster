@@ -367,8 +367,13 @@ if __name__ == "__main__":
     else:
         print(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
     # Save command‑line args for reproducibility (overwrites previous args.json)
+    import subprocess
+    try:
+        git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        git_hash = "unknown"
     with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
-        json.dump(vars(args), f, indent=2)
+        json.dump({**vars(args), "git_commit": git_hash}, f, indent=2)
 
     # Create the vLLM engine once, outside the processing loop
     llm_engine = None
