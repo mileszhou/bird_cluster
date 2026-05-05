@@ -385,44 +385,47 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
             writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
 
         step = batch_size if use_batch else 1
-        for i in range(0, len(pending), step):
-            if use_batch:
-                batch = pending[i:i + batch_size]
-                # Separate missing JPEGs from valid ones
-                valid_items, missing = [], []
-                for xmp in batch:
-                    jpg = JPG_DIR / f"{xmp.stem}.jpg"
-                    (valid_items if jpg.is_file() else missing).append((xmp, jpg))
-                for xmp, _ in missing:
-                    writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
-                    print(f"⚠️  JPEG missing for {xmp.name}, skipping.")
-                if valid_items:
-                    try:
-                        batch_results = predict_with_vllm_batch(
-                            [jpg for _, jpg in valid_items], llm, args.conf_threshold, args.no_bird
-                        )
-                        for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
-                            keywords = [category, mk_label(category, label, label_cn, conf)]
-                            note = f"{category} ({conf:.2f})"
-                            add_keywords_to_xmp(xmp_file, keywords)
-                            writer.writerow([xmp_file.name, label, label_cn, f"{conf:.2f}", note, args.run_label, raw_json])
-                            print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
-                    except Exception as e:
-                        print(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
-                        break
-                # Checkpoint entire batch (including skipped missing-JPEG files)
-                with open(checkpoint_path, 'a', encoding='utf-8') as cp:
+        try:
+            for i in range(0, len(pending), step):
+                if use_batch:
+                    batch = pending[i:i + batch_size]
+                    # Separate missing JPEGs from valid ones
+                    valid_items, missing = [], []
                     for xmp in batch:
-                        cp.write(f"{xmp.name}\n")
-            else:
-                xmp_file = pending[i]
-                try:
-                    process_single_xmp(xmp_file, writer, args, llm=llm)
+                        jpg = JPG_DIR / f"{xmp.stem}.jpg"
+                        (valid_items if jpg.is_file() else missing).append((xmp, jpg))
+                    for xmp, _ in missing:
+                        writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
+                        print(f"⚠️  JPEG missing for {xmp.name}, skipping.")
+                    if valid_items:
+                        try:
+                            batch_results = predict_with_vllm_batch(
+                                [jpg for _, jpg in valid_items], llm, args.conf_threshold, args.no_bird
+                            )
+                            for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
+                                keywords = [category, mk_label(category, label, label_cn, conf)]
+                                note = f"{category} ({conf:.2f})"
+                                add_keywords_to_xmp(xmp_file, keywords)
+                                writer.writerow([xmp_file.name, label, label_cn, f"{conf:.2f}", note, args.run_label, raw_json])
+                                print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+                        except Exception as e:
+                            print(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
+                            break
+                    # Checkpoint entire batch (including skipped missing-JPEG files)
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                        cp.write(f"{xmp_file.name}\n")
-                except Exception as e:
-                    print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
-                    break
+                        for xmp in batch:
+                            cp.write(f"{xmp.name}\n")
+                else:
+                    xmp_file = pending[i]
+                    try:
+                        process_single_xmp(xmp_file, writer, args, llm=llm)
+                        with open(checkpoint_path, 'a', encoding='utf-8') as cp:
+                            cp.write(f"{xmp_file.name}\n")
+                    except Exception as e:
+                        print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
+                        break
+        except KeyboardInterrupt:
+            print("\nInterrupted. Progress saved — re-run to resume.")
 
 # ------------------------------------------------------------
 # Main script execution
