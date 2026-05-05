@@ -375,9 +375,14 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
     if use_batch:
         print(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
 
-    with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+    resuming = bool(processed)
+    csv_mode = 'a' if resuming else 'w'
+    if resuming:
+        print(f"⚙️  Resuming: {len(processed)} already processed, {len(pending)} remaining.")
+    with open(csv_path, csv_mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
-        writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
+        if not resuming:
+            writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
 
         step = batch_size if use_batch else 1
         for i in range(0, len(pending), step):
