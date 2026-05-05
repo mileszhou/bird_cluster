@@ -6,4 +6,5 @@ python3 -m code.bird_label \
    --data-dir ./data \
    --output-dir ./output \
    --approach vllm \
-   --model "Qwen/Qwen2-VL-7B-Instruct"
+   --tensor-parallel 2 \
+   --model "Qwen/Qwen3-VL-32B-Instruct-FP8"
