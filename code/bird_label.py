@@ -25,7 +25,7 @@ import re
 from PIL import Image
 
 from code.lib.label_generator import pinyin_initials
-import code.run_hf_bird_model_llamacpp
+import code.lib.run_hf_bird_model_llamacpp
 
 # ------------------------------------------------------------
 # Helper: read an image and encode as base64 for the OpenAI API.
@@ -297,7 +297,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, llm=None) -> None:
     else:
         switch = args.approach
         if switch == "llama.cpp":
-            category, label, label_cn, conf, raw_json = code.run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird, args.llama_url)
+            category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird, args.llama_url)
         elif switch == "chatgpt":
             category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
         elif switch == "vllm":
@@ -461,7 +461,7 @@ if __name__ == "__main__":
     # Update args with actual model name if using llama.cpp to ensure args.json is accurate
     if args.approach == "llama.cpp" and args.llama_url:
         try:
-            probe_request = urllib.request.Request(f'{args.llama_url.rstrip("/")}/v1/models')
+            probe_request = urllib.request.Request(f'{args.llama_url.rstrip("/")}/models')
             with urllib.request.urlopen(probe_request, timeout=5) as probe_resp:
                 models_data = json.loads(probe_resp.read().decode('utf-8'))
                 available_models = [m['id'] for m in models_data.get('data', [])]
