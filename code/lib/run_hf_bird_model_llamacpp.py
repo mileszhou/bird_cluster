@@ -217,85 +217,15 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
     # Some models (like Llama 3.2 Vision) respond better to structured instruction,
     # while others (like older LLaVA) need more descriptive, "role-play" style prompts.
     
-    if "llama-3.2" in actual_model_name.lower():
-        # Llama 3.2 Vision performs well with direct, structured instructions
-        system_prompt = (
-            "You are an expert ornithologist. Identify the subject in the image. "
-            "Output ONLY a JSON object with: "
-            "`category` ('bird', 'animal', 'people', or 'scenery'), "
-            "`label` (English name), `label_cn` (Chinese name), and `confidence` (0.0-1.0). "
-            "Do not include any other text."
-        )
-    else:
-        # Fallback to the more descriptive, "expert" persona for other models
-        system_prompt = (
-            "You are an expert ornithologist and wildlife photographer specializing in birds of China and East Asia. "
-            "Identify the subject in the image to the most specific taxonomic level possible. "
-            "Use plumage details, body shape, beak, tail, eye markings, and habitat cues. "
-            "If the bird is common in China, use the standard Chinese species name. "
-            "Output ONLY a JSON object with these fields: "
-            "`category` – one of: 'bird', 'animal', 'people', or 'scenery'. "
-            "`label` – full English species name. "
-            "`label_cn` – standard Chinese species name. "
-            "`confidence` – float 0.0–1.0. "
-            "If no recognizable animal, set category to 'people' or 'scenery' and leave `label_cn` blank. "
-            "Do not explain your reasoning. Output the JSON object only."
-        )
-
-    messages = [
-        {"role": "user", "content": [
-            {"type": "text", "text": system_prompt},
-            {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
-        ]}
-    ]
-    category = "scenery"
-    label = "unknown"
-    label_cn = ""
-    confidence = 0.0
-    raw_json = "{}"
-    try:
-        response = _llamacpp_chat_completion(messages, actual_model_name, llama_url)
-        msg = response['choices'][0]['message']
-        content = msg.get('content') or msg.get('reasoning_content', '')
-        try:
-            data = json.loads(content)
-        except json.JSONDecodeError:
-            match = re.search(r'\{.*\}', content, re.DOTALL)
-            if not match:
-                raise ValueError('No JSON found in llama.cpp response')
-            data = json.loads(match.group())
-        raw_json = json.dumps(data, ensure_ascii=False)
-        label = data.get('label', 'unknown').lower()
-        label_cn = data.get('label_cn', '未知')
-        confidence = float(data.get('confidence', 0.0))
-        category = data.get('category', 'scenery')
-    except Exception as e:
-        print(f"⚠️  llama.cpp request failed for {image_path.name}: {e}")
-    return category, label, label_cn, confidence, raw_json
-
-def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float, llama_url: str):
-    img_b64 = read_image_base64(image_path)
-    
-    # 1. Detect the actual model name by making a quick probe to /v1/models
-    actual_model_name = get_actual_model_name(llama_url, model_name)
-
-    # 2. Adjust prompt based on the model name
-    # Some models (like Llama 3.2 Vision) respond better to structured instruction,
-    # while others (like older LLaVA) need more descriptive, "role-play" style prompts.
-    
     # Fallback to the more descriptive, "expert" persona for other models
     system_prompt = (
-        "You are an expert ornithologist and wildlife photographer specializing in birds of China and East Asia. "
-        "Identify the subject in the image to the most specific taxonomic level possible. "
-        "Use plumage details, body shape, beak, tail, eye markings, and habitat cues. "
-        "If the bird is common in China, use the standard Chinese species name. "
-        "Output ONLY a JSON object with these fields: "
-        "`category` – one of: 'bird', 'animal', 'people', or 'scenery'. "
-        "`label` – full English species name. "
-        "`label_cn` – standard Chinese species name. "
-        "`confidence` – float 0.0–1.0. "
-        "If no recognizable animal, set category to 'people' or 'scenery' and leave `label_cn` blank. "
-        "Do not explain your reasoning. Output the JSON object only."
+        "You are an expert bird and wild animal identification system. "
+        "For the given image, output a JSON object with the following fields: "
+        "`category` – one of: 'bird' (only class Aves — actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
+        "`label` – the English common name using Latin characters only (e.g. 'Grey Wagtail'). "
+        "`label_cn` – the standard Chinese (Mandarin) name (e.g. '灰鶺鸰'). "
+        "`confidence` – a float between 0.0 and 1.0. "
+        "Output ONLY a JSON object, no other text."
     )
 
     messages = [
