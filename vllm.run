@@ -7,5 +7,5 @@ python3 -m code.bird_label \
    --output-dir ./output \
    --approach vllm \
    --tensor-parallel 2 \
-   --batch-size 8 \
-   --model "Qwen/Qwen3-VL-32B-Instruct-FP8"
+   --batch-size 4 \
+   --model "Qwen/Qwen3-VL-32B-FP8"

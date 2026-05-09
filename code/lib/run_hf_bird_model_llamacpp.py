@@ -279,12 +279,6 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
     # 1. Detect the actual model name by making a quick probe to /v1/models
     actual_model_name = get_actual_model_name(llama_url, model_name)
 
-    # Try "Qwen/Qwen2-VL-7B-Instruct" or "mistralai/Pixtral-12B-2409"
-    llm = LLM(model="Qwen/Qwen2-VL-7B-Instruct", limit_mm_per_prompt={"image": 1})
-
-    # Retrieve the internal tokenizer
-    tokenizer = llm.get_tokenizer()
-
     # 2. Adjust prompt based on the model name
     # Some models (like Llama 3.2 Vision) respond better to structured instruction,
     # while others (like older LLaVA) need more descriptive, "role-play" style prompts.
