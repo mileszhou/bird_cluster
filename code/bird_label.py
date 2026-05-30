@@ -23,6 +23,7 @@ import csv
 import urllib.request
 import re
 from PIL import Image
+import time
 
 from code.lib.label_generator import pinyin_initials
 import code.lib.run_hf_bird_model_llamacpp
@@ -499,6 +500,8 @@ if __name__ == "__main__":
     with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
         json.dump({**vars(args), "git_commit": git_hash}, f, indent=2)
 
+    start_time = time.perf_counter()
+
     # Create the vLLM engine once, outside the processing loop
     llm_engine = None
     if args.approach == "vllm":
@@ -511,7 +514,18 @@ if __name__ == "__main__":
                          tensor_parallel_size=args.tensor_parallel
                          )
 
+    init_time = time.perf_counter()
+    init_elapsed = init_time - start_time
+    print(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
+    
     # Process and generate CSV
     print("\n🔧 Processing side‑car XMP files…")
     process_folder(RAW_OUT, CSV_PATH, args, llm=llm_engine)
+
+    end_time = time.perf_counter()
+    processing_elapsed = end_time - init_time
+    print(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
+    print(f"⏱️  Processing time: {processing_elapsed:.1f} seconds.")
+    
     print("\n✅ Run complete. Output stored in:", RUN_DIR)
+
