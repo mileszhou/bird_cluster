@@ -5,3 +5,4 @@ export NO_BIRD_CONF=0.40
 
 # export OPENAI_API_KEY=sk-...
 #source .env
+
