@@ -123,6 +123,60 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
     except Exception as e:
         print(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
 
+
+_INJECTED_CATEGORIES = {"bird", "animal", "people", "scenery"}
+_INJECTED_LABEL_RE = re.compile(r'^_?.+\(\d+%\)$')
+
+
+def _is_injected_keyword(text: str) -> bool:
+    return text in _INJECTED_CATEGORIES or bool(_INJECTED_LABEL_RE.match(text or ""))
+
+
+def strip_injected_keywords(raw_out: Path) -> int:
+    """Remove keywords previously written by add_keywords_to_xmp() from a fresh
+    copy of the raw XMP tree, so re-running against leftover output doesn't
+    treat a prior run's own labels as pre-existing metadata. Only removes the
+    rdf:Seq (or its parent dc:subject, if the Seq was its only content) that
+    matches the exact category/label shapes add_keywords_to_xmp() writes;
+    any other pre-existing dc:subject content (e.g. rdf:Bag, rdf:Alt) is left
+    untouched. Returns the number of files modified.
+    """
+    ns = {
+        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+        "dc": "http://purl.org/dc/elements/1.1/",
+    }
+    import xml.etree.ElementTree as ET
+    for prefix, uri in ns.items():
+        ET.register_namespace(prefix, uri)
+
+    modified = 0
+    for xmp_path in raw_out.rglob('*.xmp'):
+        if not xmp_path.is_file():
+            continue
+        try:
+            tree = ET.parse(xmp_path)
+        except Exception as e:
+            print(f"⚠️  Could not parse {xmp_path.name} while stripping keywords: {e}. Skipping.")
+            continue
+        root = tree.getroot()
+        changed = False
+        for desc in root.findall('.//rdf:Description', ns):
+            subject = desc.find('dc:subject', ns)
+            if subject is None:
+                continue
+            for seq in subject.findall('rdf:Seq', ns):
+                lis = seq.findall('rdf:li', ns)
+                if lis and all(_is_injected_keyword(li.text) for li in lis):
+                    subject.remove(seq)
+                    changed = True
+            if len(subject) == 0:
+                desc.remove(subject)
+                changed = True
+        if changed:
+            tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
+            modified += 1
+    return modified
+
 # ------------------------------------------------------------
 # vLLM query (via OpenAI-compatible vLLM server, e.g. http://galileo:8000/v1).
 # ------------------------------------------------------------
@@ -545,6 +599,9 @@ if __name__ == "__main__":
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     if not RAW_OUT.exists():
         shutil.copytree(RAW_DIR, RAW_OUT)
+        stripped = strip_injected_keywords(RAW_OUT)
+        if stripped:
+            print(f"🧹 Stripped leftover injected keywords from {stripped} XMP file(s) in {RAW_OUT}.")
     else:
         print(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
     # Save command‑line args for reproducibility (overwrites previous args.json)
