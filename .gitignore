@@ -17,5 +17,6 @@ output*/
 *.pyo
 *.egg-info/
 __pycache__/
+.DS*
 
 !.openclaw
