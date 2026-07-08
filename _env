@@ -1,8 +1,3 @@
 
-export MODEL=chriamue/bird-species-classifier
-export CONF_THRESHOLD=0.70
-export NO_BIRD_CONF=0.40
-
+# Required for --approach chatgpt only; not needed for vllm/llama.cpp.
 # export OPENAI_API_KEY=sk-...
-#source .env
-

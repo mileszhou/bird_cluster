@@ -124,27 +124,63 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
         print(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
 
 # ------------------------------------------------------------
-# vLLM query.
+# vLLM query (via OpenAI-compatible vLLM server, e.g. http://galileo:8000/v1).
 # ------------------------------------------------------------
-def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf: float):
-    """Returns (category, label, label_cn, confidence, raw_json) from vLLM.
-    The model is asked to return a JSON object with the following fields:
-    - `category` – 'bird', 'animal', 'people', or 'scenery'
-    - `label` – English name or description
-    - `label_cn` – Chinese name
-    - `confidence` – float 0.0‑1.0
-    """
-    system_prompt = (
-        "You are an expert bird and wild animal identification system. "
-        "For the given image, output a JSON object with the following fields: "
-        "`category` – one of: 'bird' (only class Aves — actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
-        "`label` – the English common name using Latin characters only (e.g. 'Grey Wagtail'). "
-        "`label_cn` – the standard Chinese (Mandarin) name (e.g. '灰鶺鸰'). "
-        "`confidence` – a float between 0.0 and 1.0. "
-        "Output ONLY a JSON object, no other text."
-    )
+VLLM_SYSTEM_PROMPT = (
+    "You are an expert bird, wild animal, and scene identification system. "
+    "For the given image, output a JSON object with the following fields: "
+    "`category` \u2013 one of: 'bird' (only class Aves \u2014 actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
+    "`label` \u2013 for 'bird'/'animal', the English common name using Latin characters only (e.g. 'Grey Wagtail'); "
+    "for 'scenery', a concise description naming the specific subject of the scene \u2014 the landmark, landscape feature, or activity in view (e.g. 'Sunset over Lofoten fjord', 'Sahara sand dunes', 'Gothic cathedral facade', 'Hikers on mountain trail') rather than a generic word like 'landscape' or 'outdoor scene'; "
+    "for 'people', a brief description of who/what they're doing. "
+    "`label_cn` \u2013 the standard Chinese (Mandarin) name or translation of `label` (e.g. '\u7070\u9d3a\u9dcc'). "
+    "`confidence` \u2013 a float between 0.0 and 1.0. "
+    "Output ONLY a JSON object, no other text."
+)
 
-    # Prepare defaults in case of failure
+
+def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
+    """Probes the vLLM OpenAI-compatible server to find the actual loaded model name."""
+    base_url = vllm_url.rstrip('/').replace('/v1', '')
+    try:
+        probe_request = urllib.request.Request(f'{base_url}/v1/models')
+        with urllib.request.urlopen(probe_request, timeout=10) as probe_resp:
+            models_data = json.loads(probe_resp.read().decode('utf-8'))
+            available_models = [m['id'] for m in models_data.get('data', [])]
+            if available_models and requested_model not in available_models:
+                actual = available_models[0]
+                print(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', but using '{actual}'")
+                return actual
+    except Exception as e:
+        print(f"\u26a0\ufe0f  Could not probe models at {base_url}/v1: {e}")
+    return requested_model
+
+
+def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int = 120):
+    base_url = vllm_url.rstrip('/').replace('/v1', '')
+    payload = {
+        'model': model_name,
+        'messages': messages,
+        'max_tokens': 200,
+        'temperature': 0.0,
+    }
+    request = urllib.request.Request(
+        url=f'{base_url}/v1/chat/completions',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Content-Type': 'application/json'}
+    )
+    with urllib.request.urlopen(request, timeout=timeout) as response:
+        return json.loads(response.read().decode('utf-8'))
+
+
+def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str, conf_threshold: float, no_bird_conf: float):
+    """Returns (category, label, label_cn, confidence, raw_json) from a vLLM server.
+    The model is asked to return a JSON object with the following fields:
+    - `category` \u2013 'bird', 'animal', 'people', or 'scenery'
+    - `label` \u2013 English name or description
+    - `label_cn` \u2013 Chinese name
+    - `confidence` \u2013 float 0.0\u20111.0
+    """
     category = "scenery"
     label = "unknown"
     label_cn = ""
@@ -152,17 +188,16 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
     raw_json = "{}"
     content = None
     try:
-        image = Image.open(image_path)
+        img_b64 = read_image_base64(image_path)
         messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
+            {"role": "user", "content": [
+                {"type": "text", "text": VLLM_SYSTEM_PROMPT},
+                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
+            ]}
         ]
-        from vllm import SamplingParams
-        tokenizer = llm.get_tokenizer()
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-        sampling_params = SamplingParams(max_tokens=200, temperature=0.0)
-        response = llm.generate({"prompt": prompt, "multi_modal_data": {"image": image}}, sampling_params, use_tqdm=False)
-        content = response[0].outputs[0].text
+        response = _vllm_chat_completion(messages, model_name, vllm_url)
+        msg = response['choices'][0]['message']
+        content = msg.get('content') or msg.get('reasoning_content', '')
         try:
             data = json.loads(content)
         except json.JSONDecodeError:
@@ -183,74 +218,32 @@ def predict_with_vllm(image_path: Path, llm, conf_threshold: float, no_bird_conf
             label = ''
         label = label or 'unknown'
     except Exception as e:
-        print(f"⚠️  vLLM request failed for {image_path.name}: {e}")
+        print(f"\u26a0\ufe0f  vLLM request failed for {image_path.name}: {e}")
         print(f"    raw response: {repr(content)}")
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
 
-def predict_with_vllm_batch(image_paths: list, llm, conf_threshold: float, no_bird_conf: float):
-    """Batch vLLM inference. Returns list of (category, label, label_cn, confidence, raw_json)."""
-    system_prompt = (
-        "You are an expert bird and wild animal identification system. "
-        "For the given image, output a JSON object with the following fields: "
-        "`category` – one of: 'bird' (only class Aves — actual birds), 'animal' (all other animals: insects, butterflies, mammals, reptiles, etc.), 'people', or 'scenery'. "
-        "`label` – the English common name using Latin characters only (e.g. 'Grey Wagtail'). "
-        "`label_cn` – the standard Chinese (Mandarin) name (e.g. '灰鶺鸰'). "
-        "`confidence` – a float between 0.0 and 1.0. "
-        "Output ONLY a JSON object, no other text."
-    )
+def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, conf_threshold: float, no_bird_conf: float):
+    """Batch vLLM inference against a vLLM server. Fires requests concurrently so the
+    server's continuous batching handles them together. Returns a list of
+    (category, label, label_cn, confidence, raw_json), one per input image, in order."""
     results = [("scenery", "unknown", "", 0.0, "{}") for _ in image_paths]
-
-    from vllm import SamplingParams
-    tokenizer = llm.get_tokenizer()
-    sampling_params = SamplingParams(max_tokens=200, temperature=0.0)
-
-    inputs = []
-    valid_indices = []
-    for i, image_path in enumerate(image_paths):
-        try:
-            image = Image.open(image_path)
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": [{"type": "image", "image": image}, {"type": "text", "text": "Identify this image."}]}
-            ]
-            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
-            inputs.append({"prompt": prompt, "multi_modal_data": {"image": image}})
-            valid_indices.append(i)
-        except Exception as e:
-            print(f"⚠️  Could not load image {image_path.name}: {e}")
-
-    if not inputs:
+    if not image_paths:
         return results
 
-    responses = llm.generate(inputs, sampling_params, use_tqdm=False)
-
-    for idx, response in zip(valid_indices, responses):
-        content = None
-        try:
-            content = response.outputs[0].text
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(image_paths)) as pool:
+        futures = {
+            pool.submit(predict_with_vllm, path, vllm_url, model_name, conf_threshold, no_bird_conf): i
+            for i, path in enumerate(image_paths)
+        }
+        for future in concurrent.futures.as_completed(futures):
+            idx = futures[future]
             try:
-                data = json.loads(content)
-            except json.JSONDecodeError:
-                match = re.search(r'\{.*\}', content, re.DOTALL)
-                if not match:
-                    raise ValueError('No JSON found in vLLM response')
-                data = json.loads(match.group())
-            raw_json = json.dumps(data, ensure_ascii=False)
-            label = data.get('label', '').lower()
-            label_cn = data.get('label_cn', '')
-            confidence = float(data.get('confidence', 0.0))
-            category = data.get('category', 'scenery')
-            if any('一' <= c <= '鿿' for c in label):
-                if not label_cn:
-                    label_cn = label
-                label = ''
-            label = label or 'unknown'
-            results[idx] = (category, label, label_cn, confidence, raw_json)
-        except Exception as e:
-            print(f"⚠️  vLLM parse failed for {image_paths[idx].name}: {e}")
-            print(f"    raw response: {repr(content)}")
+                results[idx] = future.result()
+            except Exception as e:
+                print(f"\u26a0\ufe0f  vLLM request failed for {image_paths[idx].name}: {e}")
 
     return results
 
@@ -272,10 +265,70 @@ def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
     return ret
 
 # ------------------------------------------------------------
+# Locate the JPEG matching an XMP sidecar.
+#
+# XMP files live in nested per-trip subfolders under a half-year folder, e.g.
+#   raw/Photos-23.01.xmp/2023-04-10 青溪古镇/_Z9C7446.xmp
+# JPEGs live flat inside the corresponding half-year folder under JPG_DIR
+# (no per-trip nesting there), e.g.
+#   jpg/Photos-2023.01/_Z9C7446.jpg
+# The half-year boundaries don't always line up between raw/ and jpg/ though
+# (a trip filed under one raw half can have its JPEGs exported into an
+# adjacent half's jpg folder), so we try the expected folder first and fall
+# back to a filename-stem index built over the whole jpg tree. Camera
+# filenames can collide across unrelated shoots (counter wraparound), so a
+# stem with more than one match outside the expected folder is treated as
+# ambiguous rather than guessed.
+# ------------------------------------------------------------
+
+_JPG_STEM_INDEX = None
+
+
+def _jpg_stem_index():
+    global _JPG_STEM_INDEX
+    if _JPG_STEM_INDEX is None:
+        index = {}
+        for jpg in JPG_DIR.rglob("*.jpg"):
+            index.setdefault(jpg.stem, []).append(jpg)
+        _JPG_STEM_INDEX = index
+    return _JPG_STEM_INDEX
+
+
+def _jpg_subfolder_for_raw_subfolder(raw_folder_name: str) -> str | None:
+    match = re.match(r'^Photos-(\d{2})\.(\d{2})\.xmp$', raw_folder_name)
+    if not match:
+        return None
+    yy, half = match.groups()
+    return f"Photos-20{yy}.{half}"
+
+
+def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
+    stem = xmp_file.stem
+    try:
+        rel_parts = xmp_file.relative_to(raw_root).parts
+    except ValueError:
+        rel_parts = xmp_file.parts
+
+    if rel_parts:
+        jpg_subfolder = _jpg_subfolder_for_raw_subfolder(rel_parts[0])
+        if jpg_subfolder is not None:
+            candidate = JPG_DIR / jpg_subfolder / f"{stem}.jpg"
+            if candidate.is_file():
+                return candidate
+
+    matches = _jpg_stem_index().get(stem, [])
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        print(f"⚠️  Ambiguous JPEG match for {stem} ({len(matches)} candidates); skipping.")
+    return None
+
+
+# ------------------------------------------------------------
 # Process a single XMP file (extracted for notebook testing)
 # ------------------------------------------------------------
 
-def process_single_xmp(xmp_file: Path, csv_writer, args, llm=None) -> None:
+def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None:
     """Process one XMP side‑car file.
     - Finds the matching JPEG.
     - Calls the GPT‑4o model.
@@ -283,10 +336,9 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, llm=None) -> None:
     - Writes a row to the provided CSV writer.
     - Prints a concise status line.
     """
-    base = xmp_file.stem
-    jpg_file = JPG_DIR / f"{base}.jpg"
+    jpg_file = find_jpg_for_xmp(xmp_file, raw_root)
     # Avoid early return: handle missing JPEG with an else block.
-    if not jpg_file.is_file():
+    if jpg_file is None:
         print(f"⚠️  JPEG missing for {xmp_file.name}, skipping.")
         # Populate placeholder values so the CSV row can still be written if desired.
         label = "unknown"
@@ -302,7 +354,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, llm=None) -> None:
         elif switch == "chatgpt":
             category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
         elif switch == "vllm":
-            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, llm, args.conf_threshold, args.no_bird)
+            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
         else: # should not happen due to argparse choices, but handle gracefully:else: # should not happen due to argparse choices, but handle gracefully:
             print(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
@@ -355,9 +407,11 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
                 filenames.add(stem + '.xmp')
     return filenames
 
-def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
+def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     # Determine a deterministic order for processing files
-    xmp_files = sorted(xmp_root.rglob('*.xmp'), key=lambda p: p.as_posix())
+    # Half-year raw folders are themselves named "Photos-YY.NN.xmp", so rglob
+    # would also match those directories; filter to actual sidecar files.
+    xmp_files = sorted((p for p in xmp_root.rglob('*.xmp') if p.is_file()), key=lambda p: p.as_posix())
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:
         print(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
@@ -373,7 +427,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
     ]
 
     batch_size = getattr(args, 'batch_size', 1)
-    use_batch = args.approach == "vllm" and batch_size > 1 and llm is not None
+    use_batch = args.approach == "vllm" and batch_size > 1
     if use_batch:
         print(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
 
@@ -402,15 +456,15 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
                     # Separate missing JPEGs from valid ones
                     valid_items, missing = [], []
                     for xmp in batch:
-                        jpg = JPG_DIR / f"{xmp.stem}.jpg"
-                        (valid_items if jpg.is_file() else missing).append((xmp, jpg))
+                        jpg = find_jpg_for_xmp(xmp, xmp_root)
+                        (valid_items if jpg is not None else missing).append((xmp, jpg))
                     for xmp, _ in missing:
                         writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
                         print(f"⚠️  JPEG missing for {xmp.name}, skipping.")
                     if valid_items:
                         try:
                             batch_results = predict_with_vllm_batch(
-                                [jpg for _, jpg in valid_items], llm, args.conf_threshold, args.no_bird
+                                [jpg for _, jpg in valid_items], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
                             for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
                                 keywords = [category, mk_label(category, label, label_cn, conf)]
@@ -428,7 +482,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args, llm=None) -> None:
                 else:
                     xmp_file = pending[i]
                     try:
-                        process_single_xmp(xmp_file, writer, args, llm=llm)
+                        process_single_xmp(xmp_file, writer, args, raw_root=xmp_root)
                         with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                             cp.write(f"{xmp_file.name}\n")
                     except Exception as e:
@@ -454,8 +508,8 @@ if __name__ == "__main__":
     parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
+    parser.add_argument("--vllm-url", default="http://galileo:8000/v1", help="URL for the vLLM OpenAI-compatible server (vllm approach only)")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
-    parser.add_argument("--tensor-parallel", type=int, default=1, help="Number of GPUs for tensor parallelism (default 1)")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     args = parser.parse_args()
 
@@ -471,6 +525,8 @@ if __name__ == "__main__":
                     args.model = available_models[0]
         except Exception as e:
             print(f"⚠️  [args.json fix] Could not probe models for args.json: {e}")
+    elif args.approach == "vllm" and args.vllm_url:
+        args.model = get_actual_vllm_model_name(args.vllm_url, args.model)
 
     # Paths
     DATA_DIR = Path(args.data_dir)
@@ -502,25 +558,16 @@ if __name__ == "__main__":
 
     start_time = time.perf_counter()
 
-    # Create the vLLM engine once, outside the processing loop
-    llm_engine = None
     if args.approach == "vllm":
-        from vllm import LLM
-        print(f"\n🔧 Loading vLLM engine for {args.model}…")
-        llm_engine = LLM(model=args.model,
-                         max_model_len=8192,
-                         gpu_memory_utilization=0.95,
-                         limit_mm_per_prompt={"image": 1},
-                         tensor_parallel_size=args.tensor_parallel
-                         )
+        print(f"🔧 Using vLLM server at {args.vllm_url} with model '{args.model}'.")
 
     init_time = time.perf_counter()
     init_elapsed = init_time - start_time
     print(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
-    
+
     # Process and generate CSV
     print("\n🔧 Processing side‑car XMP files…")
-    process_folder(RAW_OUT, CSV_PATH, args, llm=llm_engine)
+    process_folder(RAW_OUT, CSV_PATH, args)
 
     end_time = time.perf_counter()
     processing_elapsed = end_time - init_time
