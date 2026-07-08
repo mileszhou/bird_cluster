@@ -348,12 +348,19 @@ def _jpg_stem_index():
     return _JPG_STEM_INDEX
 
 
-def _jpg_subfolder_for_raw_subfolder(raw_folder_name: str) -> str | None:
+def _jpg_subfolders_for_raw_subfolder(raw_folder_name: str) -> list[str]:
+    """Candidate jpg subfolder names for a raw subfolder, in priority order.
+    Current convention: raw and jpg subfolders share the same name directly
+    (e.g. "2024.8" -> "2024.8"). Older data used "Photos-YY.NN.xmp" raw
+    folders mapping to "Photos-YYYY.NN" jpg folders; kept as a fallback for
+    any legacy-named folders still around.
+    """
+    candidates = [raw_folder_name]
     match = re.match(r'^Photos-(\d{2})\.(\d{2})\.xmp$', raw_folder_name)
-    if not match:
-        return None
-    yy, half = match.groups()
-    return f"Photos-20{yy}.{half}"
+    if match:
+        yy, half = match.groups()
+        candidates.append(f"Photos-20{yy}.{half}")
+    return candidates
 
 
 def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
@@ -364,8 +371,7 @@ def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
         rel_parts = xmp_file.parts
 
     if rel_parts:
-        jpg_subfolder = _jpg_subfolder_for_raw_subfolder(rel_parts[0])
-        if jpg_subfolder is not None:
+        for jpg_subfolder in _jpg_subfolders_for_raw_subfolder(rel_parts[0]):
             candidate = JPG_DIR / jpg_subfolder / f"{stem}.jpg"
             if candidate.is_file():
                 return candidate
