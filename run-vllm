@@ -6,8 +6,8 @@ python3 -m code.bird_label \
    --data-dir ./data \
    --output-dir ./output \
    --approach vllm \
-   --vllm-url http://galileo:8000/v1 \
-   --batch-size 8 \
+   --vllm-url http://darwin:8000/v1 \
+   --batch-size 16 \
    --model /data/models/Qwen3-VL-132B-Instruct
 
    #--model "Qwen/Qwen3-VL-32B-Instruct-FP8"

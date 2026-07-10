@@ -1,0 +1,81 @@
+#!/bin/bash
+#
+# Finds every "jpg/" subfolder created by Lightroom's "Same folder as
+# original photo" + "Put in Subfolder: jpg" export, and moves its *.jpg
+# files into DEST_ROOT, mirroring the exact relative path of the trip
+# folder that "jpg/" subfolder sits in (so data/raw/<half>/<trip>/ and
+# data/jpg/<half>/<trip>/ line up 1:1 with no cross-trip filename clashes).
+#
+# Usage:
+#   ./collect-jpg-exports SOURCE_ROOT DEST_ROOT [--copy] [--dry-run]
+#
+# Example:
+#   ./collect-jpg-exports ~/Pictures/Lightroom ./data/jpg
+
+set -euo pipefail
+
+usage() {
+    echo "Usage: $0 SOURCE_ROOT DEST_ROOT [--copy] [--dry-run]" >&2
+    exit 1
+}
+
+[ $# -ge 2 ] || usage
+
+SOURCE_ROOT=$1
+DEST_ROOT=$2
+shift 2
+
+MODE="move"
+DRY_RUN=0
+for arg in "$@"; do
+    case "$arg" in
+        --copy) MODE="copy" ;;
+        --dry-run) DRY_RUN=1 ;;
+        *) usage ;;
+    esac
+done
+
+[ -d "$SOURCE_ROOT" ] || { echo "Source root not found: $SOURCE_ROOT" >&2; exit 1; }
+mkdir -p "$DEST_ROOT"
+
+folders=0
+moved=0
+skipped=0
+
+while IFS= read -r -d '' jpg_dir; do
+    folders=$((folders + 1))
+    trip_dir=$(dirname "$jpg_dir")
+    rel_trip=${trip_dir#"$SOURCE_ROOT"/}
+    dest_trip="$DEST_ROOT/$rel_trip"
+
+    [ "$DRY_RUN" -eq 1 ] || mkdir -p "$dest_trip"
+
+    while IFS= read -r -d '' jpg_file; do
+        fname=$(basename "$jpg_file")
+        dest_file="$dest_trip/$fname"
+
+        if [ -e "$dest_file" ]; then
+            echo "⚠️  Skipping (already exists): $dest_file"
+            skipped=$((skipped + 1))
+            continue
+        fi
+
+        if [ "$DRY_RUN" -eq 1 ]; then
+            echo "[dry-run] $MODE  $jpg_file  ->  $dest_file"
+        elif [ "$MODE" = "copy" ]; then
+            cp -p "$jpg_file" "$dest_file"
+        else
+            mv "$jpg_file" "$dest_file"
+        fi
+        moved=$((moved + 1))
+    done < <(find "$jpg_dir" -maxdepth 1 -type f -iname '*.jpg' -print0)
+
+    # Clean up the now-empty source jpg/ folder after a real move.
+    if [ "$MODE" = "move" ] && [ "$DRY_RUN" -eq 0 ]; then
+        rmdir "$jpg_dir" 2>/dev/null || true
+    fi
+done < <(find "$SOURCE_ROOT" -type d -name jpg -print0)
+
+echo
+echo "Found $folders jpg/ export folder(s)."
+echo "$MODE-d $moved file(s), skipped $skipped already-existing file(s)."
