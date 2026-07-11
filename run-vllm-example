@@ -1,4 +1,0 @@
-#!/bin/bash
-
-source .env
-python3 -m code.experiment.vllm_image_example
