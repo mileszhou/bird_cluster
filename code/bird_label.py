@@ -14,9 +14,11 @@ python3 run_hf_bird_model_chatgpt.py --conf-threshold 0.6 --no-bird 0.2
 import argparse
 import base64
 import json
+import logging
 import os
 import shutil
 import signal
+import sys
 from datetime import datetime
 from pathlib import Path
 import csv
@@ -27,6 +29,20 @@ import time
 
 from code.lib.label_generator import pinyin_initials
 import code.lib.run_hf_bird_model_llamacpp
+
+logger = logging.getLogger("bird_label")
+
+
+def setup_logging(log_path: Path) -> None:
+    """Mirror stdout's status lines into an INFO-level log file at log_path,
+    appending so a resumed run's log stays contiguous with prior runs."""
+    logger.setLevel(logging.INFO)
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(logging.Formatter("%(message)s"))
+    file_handler = logging.FileHandler(log_path, encoding="utf-8")
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+    logger.addHandler(stream_handler)
+    logger.addHandler(file_handler)
 
 # ------------------------------------------------------------
 # Helper: read an image and encode as base64 for the OpenAI API.
@@ -117,11 +133,11 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
             try:
                 xmp_path.chmod(0o666)
                 tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
-                print(f"⚠️  Fixed permissions and updated {xmp_path.name}")
+                logger.info(f"⚠️  Fixed permissions and updated {xmp_path.name}")
             except Exception as e2:
-                print(f"⚠️  Could not write XMP file {xmp_path.name}: {e2}. Skipping.")
+                logger.info(f"⚠️  Could not write XMP file {xmp_path.name}: {e2}. Skipping.")
     except Exception as e:
-        print(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
+        logger.info(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
 
 
 _INJECTED_CATEGORIES = {"bird", "animal", "people", "scenery"}
@@ -156,7 +172,7 @@ def strip_injected_keywords(raw_out: Path) -> int:
         try:
             tree = ET.parse(xmp_path)
         except Exception as e:
-            print(f"⚠️  Could not parse {xmp_path.name} while stripping keywords: {e}. Skipping.")
+            logger.info(f"⚠️  Could not parse {xmp_path.name} while stripping keywords: {e}. Skipping.")
             continue
         root = tree.getroot()
         changed = False
@@ -203,10 +219,10 @@ def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
             available_models = [m['id'] for m in models_data.get('data', [])]
             if available_models and requested_model not in available_models:
                 actual = available_models[0]
-                print(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', but using '{actual}'")
+                logger.info(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', but using '{actual}'")
                 return actual
     except Exception as e:
-        print(f"\u26a0\ufe0f  Could not probe models at {base_url}/v1: {e}")
+        logger.info(f"\u26a0\ufe0f  Could not probe models at {base_url}/v1: {e}")
     return requested_model
 
 
@@ -272,8 +288,8 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str, conf_thr
             label = ''
         label = label or 'unknown'
     except Exception as e:
-        print(f"\u26a0\ufe0f  vLLM request failed for {image_path.name}: {e}")
-        print(f"    raw response: {repr(content)}")
+        logger.info(f"\u26a0\ufe0f  vLLM request failed for {image_path.name}: {e}")
+        logger.info(f"    raw response: {repr(content)}")
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
@@ -297,7 +313,7 @@ def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, c
             try:
                 results[idx] = future.result()
             except Exception as e:
-                print(f"\u26a0\ufe0f  vLLM request failed for {image_paths[idx].name}: {e}")
+                logger.info(f"\u26a0\ufe0f  vLLM request failed for {image_paths[idx].name}: {e}")
 
     return results
 
@@ -380,7 +396,7 @@ def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
     if len(matches) == 1:
         return matches[0]
     if len(matches) > 1:
-        print(f"⚠️  Ambiguous JPEG match for {stem} ({len(matches)} candidates); skipping.")
+        logger.info(f"⚠️  Ambiguous JPEG match for {stem} ({len(matches)} candidates); skipping.")
     return None
 
 
@@ -399,7 +415,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
     jpg_file = find_jpg_for_xmp(xmp_file, raw_root)
     # Avoid early return: handle missing JPEG with an else block.
     if jpg_file is None:
-        print(f"⚠️  JPEG missing for {xmp_file.name}, skipping.")
+        logger.info(f"⚠️  JPEG missing for {xmp_file.name}, skipping.")
         # Populate placeholder values so the CSV row can still be written if desired.
         label = "unknown"
         label_cn = "未知"
@@ -416,7 +432,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         elif switch == "vllm":
             category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
         else: # should not happen due to argparse choices, but handle gracefully:else: # should not happen due to argparse choices, but handle gracefully:
-            print(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
+            logger.info(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
 
         # Choose keywords based on the returned category
@@ -439,7 +455,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         args.run_label,
         raw_json,
     ])
-    print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+    logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
 
 
 # ------------------------------------------------------------
@@ -474,7 +490,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     xmp_files = sorted((p for p in xmp_root.rglob('*.xmp') if p.is_file()), key=lambda p: p.as_posix())
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:
-        print(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
+        logger.info(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
     # Checkpoint file to record processed filenames
     checkpoint_path = csv_path.parent / "processed.txt"
     processed: set = set()
@@ -489,12 +505,12 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     batch_size = getattr(args, 'batch_size', 1)
     use_batch = args.approach == "vllm" and batch_size > 1
     if use_batch:
-        print(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
+        logger.info(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
 
     resuming = bool(processed)
     csv_mode = 'a' if resuming else 'w'
     if resuming:
-        print(f"⚙️  Resuming: {len(processed)} already processed, {len(pending)} remaining.")
+        logger.info(f"⚙️  Resuming: {len(processed)} already processed, {len(pending)} remaining.")
     with open(csv_path, csv_mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not resuming:
@@ -504,7 +520,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         def _sigint_handler(sig, frame):
             nonlocal interrupted
             if not interrupted:
-                print("\nInterrupt received — finishing current batch before stopping...")
+                logger.info("\nInterrupt received — finishing current batch before stopping...")
                 interrupted = True
         original_sigint = signal.signal(signal.SIGINT, _sigint_handler)
 
@@ -520,7 +536,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                         (valid_items if jpg is not None else missing).append((xmp, jpg))
                     for xmp, _ in missing:
                         writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
-                        print(f"⚠️  JPEG missing for {xmp.name}, skipping.")
+                        logger.info(f"⚠️  JPEG missing for {xmp.name}, skipping.")
                     if valid_items:
                         try:
                             batch_results = predict_with_vllm_batch(
@@ -531,9 +547,9 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 note = f"{category} ({conf:.2f})"
                                 add_keywords_to_xmp(xmp_file, keywords)
                                 writer.writerow([xmp_file.name, label, label_cn, f"{conf:.2f}", note, args.run_label, raw_json])
-                                print(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+                                logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
                         except Exception as e:
-                            print(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
+                            logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
                             break
                     # Checkpoint entire batch (including skipped missing-JPEG files)
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
@@ -546,10 +562,10 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                         with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                             cp.write(f"{xmp_file.name}\n")
                     except Exception as e:
-                        print(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
+                        logger.info(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
                         break
                 if interrupted:
-                    print("Stopped cleanly. Re-run to resume.")
+                    logger.info("Stopped cleanly. Re-run to resume.")
                     break
         finally:
             signal.signal(signal.SIGINT, original_sigint)
@@ -573,6 +589,10 @@ if __name__ == "__main__":
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     args = parser.parse_args()
 
+    OUTPUT_DIR = Path(args.output_dir)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    setup_logging(OUTPUT_DIR / "bird_label.log")
+
     # Update args with actual model name if using llama.cpp to ensure args.json is accurate
     if args.approach == "llama.cpp" and args.llama_url:
         try:
@@ -581,10 +601,10 @@ if __name__ == "__main__":
                 models_data = json.loads(probe_resp.read().decode('utf-8'))
                 available_models = [m['id'] for m in models_data.get('data', [])]
                 if available_models and args.model not in available_models:
-                    print(f"ℹ️  [args.json fix] Server mismatch: requested '{args.model}', but using '{available_models[0]}'")
+                    logger.info(f"ℹ️  [args.json fix] Server mismatch: requested '{args.model}', but using '{available_models[0]}'")
                     args.model = available_models[0]
         except Exception as e:
-            print(f"⚠️  [args.json fix] Could not probe models for args.json: {e}")
+            logger.info(f"⚠️  [args.json fix] Could not probe models for args.json: {e}")
     elif args.approach == "vllm" and args.vllm_url:
         args.model = get_actual_vllm_model_name(args.vllm_url, args.model)
 
@@ -592,9 +612,6 @@ if __name__ == "__main__":
     DATA_DIR = Path(args.data_dir)
     JPG_DIR = DATA_DIR / "jpg"
     RAW_DIR = DATA_DIR / "raw"
-    OUTPUT_DIR = Path(args.output_dir)
-
-    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
     # Use a single output folder (no per‑run subdirectory)
     RUN_DIR = OUTPUT_DIR
@@ -607,9 +624,9 @@ if __name__ == "__main__":
         shutil.copytree(RAW_DIR, RAW_OUT)
         stripped = strip_injected_keywords(RAW_OUT)
         if stripped:
-            print(f"🧹 Stripped leftover injected keywords from {stripped} XMP file(s) in {RAW_OUT}.")
+            logger.info(f"🧹 Stripped leftover injected keywords from {stripped} XMP file(s) in {RAW_OUT}.")
     else:
-        print(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
+        logger.info(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
     # Save command‑line args for reproducibility (overwrites previous args.json)
     import subprocess
     try:
@@ -622,20 +639,20 @@ if __name__ == "__main__":
     start_time = time.perf_counter()
 
     if args.approach == "vllm":
-        print(f"🔧 Using vLLM server at {args.vllm_url} with model '{args.model}'.")
+        logger.info(f"🔧 Using vLLM server at {args.vllm_url} with model '{args.model}'.")
 
     init_time = time.perf_counter()
     init_elapsed = init_time - start_time
-    print(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
+    logger.info(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
 
     # Process and generate CSV
-    print("\n🔧 Processing side‑car XMP files…")
+    logger.info("\n🔧 Processing side‑car XMP files…")
     process_folder(RAW_OUT, CSV_PATH, args)
 
     end_time = time.perf_counter()
     processing_elapsed = end_time - init_time
-    print(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
-    print(f"⏱️  Processing time: {processing_elapsed:.1f} seconds.")
+    logger.info(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
+    logger.info(f"⏱️  Processing time: {processing_elapsed:.1f} seconds.")
     
-    print("\n✅ Run complete. Output stored in:", RUN_DIR)
+    logger.info(f"\n✅ Run complete. Output stored in: {RUN_DIR}")
 
