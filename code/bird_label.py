@@ -28,6 +28,7 @@ from PIL import Image
 import time
 
 from code.lib.label_generator import pinyin_initials
+from code.lib.config import server_url
 import code.lib.run_hf_bird_model_llamacpp
 
 logger = logging.getLogger("bird_label")
@@ -583,11 +584,16 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
     parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
-    parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (ignored in this script)")
-    parser.add_argument("--vllm-url", default="http://galileo:8000/v1", help="URL for the vLLM OpenAI-compatible server (vllm approach only)")
+    parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (llama.cpp approach only; default: from config.toml [servers.llama_cpp])")
+    parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     args = parser.parse_args()
+
+    if args.approach == "vllm" and not args.vllm_url:
+        args.vllm_url = server_url("vllm", path="/v1")
+    if args.approach == "llama.cpp" and not args.llama_url:
+        args.llama_url = server_url("llama_cpp", path="/v1")
 
     OUTPUT_DIR = Path(args.output_dir)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)

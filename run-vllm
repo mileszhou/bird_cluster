@@ -6,6 +6,5 @@ python3 -m code.bird_label \
    --data-dir ./data \
    --output-dir ./output \
    --approach vllm \
-   --vllm-url http://darwin:8000/v1 \
    --batch-size 16 \
    --model Qwen/Qwen3-VL-32B-Instruct

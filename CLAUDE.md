@@ -14,20 +14,25 @@ cp _env .env
 # Add OPENAI_API_KEY to .env if using chatgpt approach
 ```
 
+Non-secret configuration (which host each backend server runs on, etc.) lives in `config.toml`
+at the repo root, checked into git — see `[servers.*]` entries, read via
+`code/lib/config.py:server_url()`. Keep it separate from `.env`: `.env` is for secrets only and
+is gitignored.
+
 Run via convenience scripts or directly:
 ```bash
 ./run-gpt                         # GPT-4o (requires OPENAI_API_KEY)
-./run-cpp                         # llama.cpp server at http://darwin:8080
-./run-vllm                        # vLLM server at http://galileo:8000/v1 (recommended)
+./run-cpp                         # llama.cpp server, host from config.toml [servers.llama_cpp]
+./run-vllm                        # vLLM server, host from config.toml [servers.vllm] (recommended)
 ./run-tf                          # HuggingFace Transformers
 
 # Or directly with options:
-python3 -m code.bird_label --approach vllm --vllm-url http://galileo:8000/v1 --model "Qwen/Qwen3-VL-132B-Instruct" --conf-threshold 0.6
+python3 -m code.bird_label --approach vllm --model "Qwen/Qwen3-VL-132B-Instruct" --conf-threshold 0.6
 ```
 
 Key CLI flags:
 - `--approach` — `chatgpt`, `llama.cpp`, `vllm`, or `transformer`
-- `--vllm-url URL` — vLLM OpenAI-compatible server endpoint (default `http://galileo:8000/v1`, vllm approach only)
+- `--vllm-url URL` — vLLM OpenAI-compatible server endpoint (default: `config.toml` `[servers.vllm]`, vllm approach only)
 - `--conf-threshold FLOAT` — confidence below which to flag as low-confidence (default 0.6)
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
 - `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV
@@ -36,7 +41,7 @@ Key CLI flags:
 
 Reset output: `./clean`
 
-`run-vllm` is the recommended approach — it talks to a vLLM OpenAI-compatible server (`--vllm-url`, default `http://galileo:8000/v1`) rather than loading the model in-process, so start the server separately (see `run-server-vllm` for an example) before running this. On startup the script probes `{vllm-url}/models` and swaps in whatever model the server actually has loaded if `--model` doesn't match, so the requested model name doesn't need to be exact.
+`run-vllm` is the recommended approach — it talks to a vLLM OpenAI-compatible server (`--vllm-url`, default from `config.toml` `[servers.vllm]`) rather than loading the model in-process, so start the server separately (see `run-server-vllm` for an example) before running this. On startup the script probes `{vllm-url}/models` and swaps in whatever model the server actually has loaded if `--model` doesn't match, so the requested model name doesn't need to be exact.
 
 ## Architecture
 

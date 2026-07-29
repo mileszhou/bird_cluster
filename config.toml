@@ -1,0 +1,15 @@
+# Non-secret, checked-in project configuration. Secrets (API keys) stay in .env
+# (gitignored) — this file is for anything safe to commit, starting with which
+# host each backend server runs on. Add new parameters here as they come up.
+
+[servers.vllm]
+host = "spark"
+port = 8000
+
+[servers.embed]
+host = "spark"
+port = 9100
+
+[servers.llama_cpp]
+host = "darwin"
+port = 8080

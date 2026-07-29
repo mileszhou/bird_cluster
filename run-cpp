@@ -6,5 +6,4 @@ python3 -m code.bird_label \
    --data-dir ./data \
    --output-dir ./output \
    --approach llama.cpp \
-   --llama-url http://darwin:8080/v1 \
    --model "Qwen/Qwen3-VL-32B-FP8"
