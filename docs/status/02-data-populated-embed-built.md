@@ -38,6 +38,25 @@ Full survey: `docs/reports/01-data_preview_report.md` (regenerate with
    81 photos) is an export-boundary offset — right photo, safe to accept. Cross-year
    (`2018.1` → `2024.5`) is wraparound — wrong photo. `MatchPolicy.SAME_YEAR` (default) splits
    them; this is the one design decision not anticipated by the plan.
+
+   Later confirmed empirically by hashing decoded pixels over a 300-stem sample of the 4,371
+   colliding stems: 84.3% are genuinely different photos sharing a frame number, 11.3% are the
+   *same image* exported into more than one folder, 4.3% mixed. **Every same-image case was
+   same-year (34/34); no cross-year collision in the sample was ever the same image.** So
+   refusing cross-year and accepting unique same-year is the right split. Note file bytes are
+   useless for this test — all 4,371 stems are byte-distinct even when the pixels are
+   identical (re-export changes metadata), so any dedup has to work on decoded pixels or on
+   the embedding.
+
+4. **Duplicate exports put exact duplicates in the embedding set.** 2019's 3,860 vectors
+   contain 60 groups of identical vectors, 117 redundant rows (3.0%) — the same photo exported
+   into two or three half-year folders, each with its own sidecar. The sidecars are genuinely
+   distinct files so the scan is right to take them, but exact duplicates inflate local density
+   and HDBSCAN is density-based, so **step 2 must dedupe before clustering** (exact vector
+   equality catches this class for free). Worth knowing: the duplicate sidecars sometimes carry
+   *different* species labels for the same pixels — `_D5C5957` is `grey-backed shrike` in
+   2019.2 and `grey-backed tachuri` in 2019.3/2019.4 — a direct measure of VLM label noise, and
+   a reason not to treat the labels as ground truth.
 4. **Species tail is long.** 2,401 distinct English names over 19,565 labelled bird photos;
    1,028 singletons, only 253 names with ≥20 photos and 79 with ≥50. Step 2 should expect a
    large HDBSCAN noise fraction as the shape of the data, not a failure.
@@ -70,20 +89,33 @@ Full survey: `docs/reports/01-data_preview_report.md` (regenerate with
 - `venv` now takes stage arguments (`base client test cluster server notebook`) so a non-GPU
   box need not pull torch. `.venv` currently has base+client+test only.
 
-## Verified
+## Verified — 2019 embedded with DINOv3
 
 Scan: 2019 gives 3,818 expected-folder + 42 same-year = 3,860 usable, refusing 15 cross-year
 and 18 no-jpg (`--match-policy any` would take 3,875, i.e. 15 wrong photos). All years: 14,979
 usable, 2018 contributing 0 as intended.
 
-Full client/server round trip exercised on the GB10 — but with **`facebook/dinov2-base` as a
-stand-in**, because DINOv3 is still gated (below). Vectors came back 768-d with L2 norm
-1.000000 to six places, at ~90 img/s at `--batch-size 16`; resumption re-read the checkpoint
-and produced no duplicate keys; SIGINT and the retry path were not exercised. As a smoke test
-of the embedding's usefulness, mean cosine within a species was 0.839 vs 0.773 across species
-on a 64-image sample — a real but small margin, which is roughly what DINOv2 at 224px on
-uncropped frames should give and is itself an argument for DINOv3 plus bird-region cropping.
-The dinov2 vectors were then deleted; nothing in `output/embed` is real data.
+Real run: `facebook/dinov3-vitb16-pretrain-lvd1689m` on the GB10, all 3,860 images of 2019 in
+**46 s** (~84 img/s at `--batch-size 32`), 768-d, every L2 norm 1.000000 to six places, all
+finite, no zero rows, 3,860 unique keys. `output/embed/embeddings.jsonl` is the artifact; step
+2 can consume it as-is.
+
+Signal check — the point of the exercise, since the whole premise is that appearance beats the
+VLM's per-photo guess:
+
+| metric | value |
+|---|---|
+| mean cosine, same species | 0.540 (sd 0.203) |
+| mean cosine, different species | 0.131 (sd 0.133) |
+| separation | **+0.408** |
+| 1-NN species agreement (95 species with ≥10 photos, 1,995 photos) | **0.784** |
+
+For contrast, the earlier `facebook/dinov2-base` stand-in run gave only +0.066 separation on a
+64-image sample. DINOv3 is doing real work here. 1-NN agreement of 0.78 against noisy VLM
+labels is a floor, not a ceiling — some disagreements will be the label being wrong, not the
+embedding.
+
+Not exercised: SIGINT handling and the batch retry path.
 
 ## Environment notes (spark, GB10)
 
@@ -98,23 +130,22 @@ The dinov2 vectors were then deleted; nothing in `output/embed` is real data.
   `HF_HUB_CACHE=~/.cache/huggingface-bird_cluster/hub`. The proper fix is
   `sudo chown -R "$USER" ~/.cache/huggingface/hub/.locks`; no passwordless sudo here.
 
-## Blocked on the user
+## Resolved during the session
 
-**DINOv3 is gated and this account is not on the allow list.** `HF_TOKEN` authenticates fine
-(whoami = `mileszhou`) and repo *metadata* reads, but file fetches 403 with "Access to model
-facebook/dinov3-vitb16-pretrain-lvd1689m is restricted and you are not in the authorized
-list." Accept the licence at
-<https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m>, then
-`./run-server-embed` (its `--model` default is already the DINOv3 id) and `./run-embed`.
-Note `api.model_info()` succeeding is not evidence of access — gated repos expose metadata
-publicly; only a file fetch proves it.
+DINOv3's licence was gated and the HF cache's `.locks` was root-owned; both were cleared by the
+user mid-session and the real run went through. Two diagnostic notes worth keeping:
+`api.model_info()` succeeding is **not** evidence of file access — gated repos expose metadata
+publicly, so only a file fetch proves it; and a valid token on a gated repo gives 403 (not 401),
+which is what distinguishes "not authorised" from "not authenticated".
 
 ## Next
 
-1. Real DINOv3 run once the licence lands: `./run-server-embed`, then `./run-embed`
-   (defaults to `--years 2019`, 3,860 images; ~1 min at the rate measured above).
+1. Embed the remaining years: `./run-embed --years all` (14,979 images, ~3 min at the measured
+   rate) — or year by year. The existing 2019 rows are resumable, so `--years all` extends the
+   same file rather than redoing work.
 2. Steps 2-3: `code/cluster/discover.py` + `stats.py` per the plan's §4/§5, with
    `test/cluster/` synthetic-blob fixtures. `./venv cluster` already installs the deps.
+   Dedupe identical vectors first (117 in 2019 alone, see finding 4).
 3. `requirements.txt` is a stale freeze from the labeler era and is being disregarded for now;
    generate a fresh one from `.venv` when the pipeline is close to done.
 
