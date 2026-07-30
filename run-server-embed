@@ -1,0 +1,21 @@
+#!/bin/bash
+# DINOv3 embedding server. Runs on the GPU host; host/port from config.toml
+# [servers.embed]. Needs HF_TOKEN with the DINOv3 licence accepted (from .env).
+cd "$(dirname "$0")"
+[ -d .venv ] && source .venv/bin/activate
+source .env 2>/dev/null
+
+# The shared HF cache's .locks directory is root-owned on this box (left by an
+# earlier download run as root), so huggingface_hub cannot take its file locks
+# as a normal user and every fetch dies with EACCES. Fall back to a private
+# cache when that is the case. To use the shared cache instead, hand it back to
+# your user:  sudo chown -R "$USER" ~/.cache/huggingface/hub/.locks
+LOCKS="${HF_HOME:-$HOME/.cache/huggingface}/hub/.locks"
+if [ -z "${HF_HUB_CACHE:-}" ] && [ -e "$LOCKS" ] && [ ! -w "$LOCKS" ]; then
+    export HF_HUB_CACHE="$HOME/.cache/huggingface-bird_cluster/hub"
+    echo "note: $LOCKS not writable; using HF_HUB_CACHE=$HF_HUB_CACHE"
+fi
+
+python3 -m code.embedding.embed_server \
+   --model facebook/dinov3-vitb16-pretrain-lvd1689m \
+   "$@"

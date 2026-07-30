@@ -1,0 +1,12 @@
+#!/bin/bash
+# Step 1: embed bird photos via the embed server (see run-server-embed).
+# Starts on one year; widen with --years 2019,2021 or --years all.
+cd "$(dirname "$0")"
+[ -d .venv ] && source .venv/bin/activate
+python3 -m code.embedding.embed \
+   --data-dir ./data \
+   --output-dir ./output/embed \
+   --years 2019 \
+   --batch-size 32 \
+   --match-policy same_year \
+   "$@"

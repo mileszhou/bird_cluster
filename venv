@@ -1,26 +1,78 @@
-# !/usr/bin/env bash
-# set -e
+#!/usr/bin/env bash
+# Build up .venv. Safe to re-run: creating an existing venv is a no-op and pip
+# skips what is already satisfied, so this grows the environment incrementally
+# rather than rebuilding it.
+#
+# Stages can be run selectively, so a non-GPU box does not have to pull torch:
+#
+#   ./venv                      # all stages
+#   ./venv base test            # just those two
+#   ./venv cluster              # add the clustering deps to an existing .venv
+#
+# Stages:
+#   base      pip itself, .env loading, label formatting, image IO
+#   client    embed.py / bird_label.py HTTP clients + OpenAI backend
+#   test      pytest
+#   cluster   embed/cluster/stats numeric stack (no GPU needed)
+#   server    torch + transformers for embed_server.py -- GPU host only, large
+#   notebook  Jupyter kernel
 
-# This script sets up a Python virtual environment
+set -u
+
+STAGES=("$@")
+if [ ${#STAGES[@]} -eq 0 ]; then
+    STAGES=(base client test cluster server notebook)
+fi
+
+has_stage() {
+    local s
+    for s in "${STAGES[@]}"; do [ "$s" = "$1" ] && return 0; done
+    return 1
+}
+
 python3 -m venv .venv
 source .venv/bin/activate
 
 # Easiest way to set the path
 #PATH=.venv/bin:$PATH   # not a good idea, better to activate the virtual environment
 
-pip install --upgrade pip
-# Install necessary libraries
-pip install torch transformers datasets
+if has_stage base; then
+    echo "== base =="
+    pip install --upgrade pip
+    pip install python-dotenv   # for loading environment variables from .env files
+    pip install pypinyin        # for Chinese pinyin conversion
+    pip install Pillow          # image IO, used by embed_server and the labeler
+fi
 
-# Notbook dependencies
-pip install ipykernel       # for Jupyter notebook support
+if has_stage client; then
+    echo "== client =="
+    pip install requests        # embed.py -> embed_server, vllm/llama.cpp backends
+    pip install openai          # for OpenAI API access
+fi
 
-pip install openai          # for OpenAI API access
+if has_stage test; then
+    echo "== test =="
+    pip install pytest          # run from within test/: pytest lib/
+fi
 
-pip install python-dotenv   # for loading environment variables from .env files
-pip install pypinyin        # for Chinese pinyin conversion
+if has_stage cluster; then
+    echo "== cluster =="
+    pip install numpy
+    pip install hdbscan         # step 2 clustering; its condensed tree feeds step 3
+    pip install pandas          # condensed_tree_.to_pandas() dump
+fi
 
-pip install Pillow
+if has_stage server; then
+    echo "== server (large; GPU host only) =="
+    pip install torch transformers datasets
+    pip install torchvision      # transformers' AutoImageProcessor requires it
+    pip install fastapi uvicorn  # embed_server.py HTTP surface
+fi
+
+if has_stage notebook; then
+    echo "== notebook =="
+    pip install ipykernel       # for Jupyter notebook support
+fi
 
 # pip install -e ~/projects/vllm
 
