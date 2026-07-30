@@ -96,6 +96,16 @@ usable bird photos while refusing 868 cross-year and 214 ambiguous. Note the lab
 the sidecars were produced under loose matching, so those 868 carry a species guess made from
 the wrong photo.
 
+Verified by hashing decoded pixels across a 300-stem sample of the collisions: 84% are
+different photos sharing a frame number, 11% are the same image exported into several folders,
+and every same-image case was *same-year* — no cross-year collision was ever the same image.
+File bytes cannot detect this (all colliding stems are byte-distinct even when the pixels
+match), so dedup must work on decoded pixels or on the embedding. Consequence: the embedding
+set contains exact duplicates — 60 groups / 117 rows in 2019's 3,860 — and since HDBSCAN is
+density-based, **the clustering step must dedupe identical vectors first**. Those duplicate
+sidecars sometimes disagree on species for identical pixels, which is a useful direct measure
+of VLM label noise.
+
 2018 has no `data/jpg/2018.*` export at all, so it self-excludes (0 usable) — every apparent
 match is a wraparound coincidence. 2020 originally nested trips directly under `raw/` with no
 half-year level and had a flat `jpg/2020`; both were normalised to `2020.1` so it matches
