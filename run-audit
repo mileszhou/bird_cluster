@@ -1,0 +1,6 @@
+#!/bin/bash
+# Audit the dataset: sidecars <-> JPEG exports <-> result CSVs. Read-only.
+# Writes the report and the manual-repair worklists into project/reports/.
+cd "$(dirname "$0")"
+[ -d .venv ] && source .venv/bin/activate
+python3 tools/audit_dataset.py --data-dir ./data "$@"

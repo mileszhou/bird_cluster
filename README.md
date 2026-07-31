@@ -21,7 +21,13 @@ cluster/ (marked as .)
     test/       # any test code, run at this folder
         $domain_subfolders/
         lib/        # library lide code used by test
-    docs/       # project documentation, mainly software implementation layer and below
+    project/    # everything about the work in progress -- not a deliverable
+        plans/      # design documents, dated
+        status/     # numbered session handoffs, so the next session can pick up
+        reports/    # analysis output + manual-repair worklists (csv)
+            archive/    # superseded reports, kept for comparison
+    docs/       # product documentation: output for whoever uses the result,
+                # rather than notes about building it
     research/   # theoretical and research notes, mainly above software implimentation layer
     output/     # volitile output folder. Useful contents shall be copied to restuls/ manually
     restuls/    # the usefule outputs + manual organization
