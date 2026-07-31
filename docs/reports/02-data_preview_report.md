@@ -22,13 +22,13 @@ duplicates that *disagree* on category.
 
 ## Totals
 
-- JPEGs indexed: **32172** in 38 folders, **27043** unique stems
-- Stems present in more than one jpg folder: **4371** (16.2% of unique stems) -- camera counter wraparound
+- JPEGs indexed: **39644** in 45 folders, **32268** unique stems
+- Stems present in more than one jpg folder: **6100** (18.9% of unique stems) -- camera counter wraparound
 - Sidecars scanned: **34649**
 - Bird-categorised sidecars: **19565**, of which **19565** carry a parseable `py-cn-en(NN%)` label
-- **Resolved in the expected folder: 14898** (76.1% of bird sidecars) -- the usable set under `--match-policy expected`
-- Plus **81** same-year off-folder matches, accepted under the default `--match-policy same_year`, giving **14979** usable
-- Rejected: **868** cross-year (wraparound -- wrong photo), **214** ambiguous, **3504** no JPEG anywhere
+- **Resolved in the expected folder: 19324** (98.8% of bird sidecars) -- the usable set under `--match-policy expected`
+- Plus **76** same-year off-folder matches, accepted under the default `--match-policy same_year`, giving **19400** usable
+- Rejected: **140** cross-year (wraparound -- wrong photo), **25** ambiguous, **0** no JPEG anywhere
 - Distinct English species names: **2401**
 
 ## Per year
@@ -36,17 +36,17 @@ duplicates that *disagree* on category.
 `usable` = expected-folder hits. `+same-yr` = additionally accepted by the default
 policy. `cross-yr` = silently wrong if a whole-tree stem fallback is used.
 
-| year      | xmp       | bird      | labelled  | usable    | +same-yr | cross-yr | ambig   | no jpg   | species  |
-| --------- | --------- | --------- | --------- | --------- | -------- | -------- | ------- | -------- | -------- |
-| 2018      | 6519      | 4426      | 4426      | **0**     | 0        | 729      | 211     | 3486     | 956      |
-| 2019      | 5412      | 3893      | 3893      | **3818**  | 42       | 15       | 0       | 18       | 903      |
-| 2020      | 1133      | 247       | 247       | **246**   | 0        | 1        | 0       | 0        | 92       |
-| 2021      | 6691      | 4811      | 4811      | **4811**  | 0        | 0        | 0       | 0        | 785      |
-| 2022      | 900       | 732       | 732       | **732**   | 0        | 0        | 0       | 0        | 200      |
-| 2023      | 1726      | 406       | 406       | **311**   | 2        | 93       | 0       | 0        | 151      |
-| 2024      | 7434      | 3287      | 3287      | **3266**  | 14       | 7        | 0       | 0        | 837      |
-| 2025      | 4834      | 1763      | 1763      | **1714**  | 23       | 23       | 3       | 0        | 477      |
-| **total** | **34649** | **19565** | **19565** | **14898** | **81**   | **868**  | **214** | **3504** | **2401** |
+| year | xmp | bird | labelled | usable | +same-yr | cross-yr | ambig | no jpg | species |
+|---|---|---|---|---|---|---|---|---|---|
+| 2018 | 6519 | 4426 | 4426 | **4426** | 0 | 0 | 0 | 0 | 956 |
+| 2019 | 5412 | 3893 | 3893 | **3818** | 42 | 28 | 5 | 0 | 903 |
+| 2020 | 1133 | 247 | 247 | **246** | 0 | 1 | 0 | 0 | 92 |
+| 2021 | 6691 | 4811 | 4811 | **4811** | 0 | 0 | 0 | 0 | 785 |
+| 2022 | 900 | 732 | 732 | **732** | 0 | 0 | 0 | 0 | 200 |
+| 2023 | 1726 | 406 | 406 | **311** | 1 | 86 | 8 | 0 | 151 |
+| 2024 | 7434 | 3287 | 3287 | **3266** | 12 | 4 | 5 | 0 | 837 |
+| 2025 | 4834 | 1763 | 1763 | **1714** | 21 | 21 | 7 | 0 | 477 |
+| **total** | **34649** | **19565** | **19565** | **19324** | **76** | **140** | **25** | **0** | **2401** |
 
 ### Category mix per year
 
@@ -79,34 +79,21 @@ unresolved sidecar are listed. Two very different failures live here:
 
 | year | half-year folder | bird | usable | +same-yr | cross-yr | ambig | no jpg | jpg folder exists |
 |---|---|---|---|---|---|---|---|---|
-| 2018 | `2018.1` | 914 | 0 | 0 | 161 | 42 | 711 | **NO** |
-| 2018 | `2018.2` | 615 | 0 | 0 | 15 | 3 | 597 | **NO** |
-| 2018 | `2018.3` | 539 | 0 | 0 | 110 | 27 | 402 | **NO** |
-| 2018 | `2018.4` | 650 | 0 | 0 | 173 | 49 | 428 | **NO** |
-| 2018 | `2018.5` | 860 | 0 | 0 | 144 | 61 | 655 | **NO** |
-| 2018 | `2018.6` | 528 | 0 | 0 | 77 | 16 | 435 | **NO** |
-| 2018 | `2018.7` | 320 | 0 | 0 | 49 | 13 | 258 | **NO** |
 | 2019 | `2019.11` | 138 | 137 | 1 | 0 | 0 | 0 | yes |
-| 2019 | `2019.4` | 92 | 58 | 1 | 15 | 0 | 18 | yes |
+| 2019 | `2019.4` | 92 | 58 | 1 | 28 | 5 | 0 | yes |
 | 2019 | `2019.7` | 462 | 422 | 40 | 0 | 0 | 0 | yes |
-| 2020 | `2020.1` | 247 | 246 | 0 | 1 | 0 | 0 | yes |
-| 2023 | `2023.1` | 360 | 265 | 2 | 93 | 0 | 0 | yes |
-| 2024 | `2024.3` | 321 | 316 | 1 | 4 | 0 | 0 | yes |
-| 2024 | `2024.4` | 437 | 421 | 13 | 3 | 0 | 0 | yes |
+| 2020 | `2020` | 247 | 246 | 0 | 1 | 0 | 0 | yes |
+| 2023 | `2023.1` | 360 | 265 | 1 | 86 | 8 | 0 | yes |
+| 2024 | `2024.3` | 321 | 316 | 1 | 3 | 1 | 0 | yes |
+| 2024 | `2024.4` | 437 | 421 | 11 | 1 | 4 | 0 | yes |
 | 2025 | `2025.2` | 764 | 759 | 2 | 2 | 1 | 0 | yes |
 | 2025 | `2025.3` | 379 | 369 | 3 | 5 | 2 | 0 | yes |
-| 2025 | `2025.4` | 310 | 276 | 18 | 16 | 0 | 0 | yes |
+| 2025 | `2025.4` | 310 | 276 | 16 | 14 | 4 | 0 | yes |
 
 Half-year folders present in `raw/` with **no matching jpg folder at all** (nothing in
 them can ever resolve correctly -- exclude these years or export the JPEGs):
 
-- `2018.1`
-- `2018.2`
-- `2018.3`
-- `2018.4`
-- `2018.5`
-- `2018.6`
-- `2018.7`
+- (none)
 
 ### Where the off-folder JPEGs actually live
 
@@ -116,45 +103,45 @@ offsets; cross-year pairs are wraparound.
 | count | year | expected | found in | verdict |
 |---|---|---|---|---|
 | 40 | 2019 | `2019.7` | `2019.8` | off_folder_same_year |
-| 30 | 2018 | `2018.1` | `2024.5` | off_folder_cross_year |
-| 26 | 2018 | `2018.5` | `2021.2` | off_folder_cross_year |
-| 21 | 2018 | `2018.4` | `2024.5` | off_folder_cross_year |
-| 19 | 2018 | `2018.7` | `2021.5` | off_folder_cross_year |
-| 17 | 2018 | `2018.6` | `2024.5` | off_folder_cross_year |
-| 16 | 2018 | `2018.4` | `2021.3` | off_folder_cross_year |
-| 16 | 2018 | `2018.5` | `2024.5` | off_folder_cross_year |
-| 14 | 2018 | `2018.1` | `2023.1` | off_folder_cross_year |
-| 14 | 2018 | `2018.3` | `2024.5` | off_folder_cross_year |
-| 14 | 2018 | `2018.3` | `2021.3` | off_folder_cross_year |
-| 13 | 2024 | `2024.4` | `2024.3` | off_folder_same_year |
-| 12 | 2018 | `2018.1` | `2022` | off_folder_cross_year |
-| 12 | 2018 | `2018.4` | `2020.1` | off_folder_cross_year |
-| 12 | 2018 | `2018.5` | `2024.7` | off_folder_cross_year |
-| 12 | 2018 | `2018.5` | `2024.1` | off_folder_cross_year |
-| 12 | 2018 | `2018.6` | `2021.2` | off_folder_cross_year |
-| 12 | 2025 | `2025.4` | `2021.5` | off_folder_cross_year |
-| 11 | 2018 | `2018.1` | `2021.2` | off_folder_cross_year |
-| 11 | 2018 | `2018.4` | `2022` | off_folder_cross_year |
-| 11 | 2018 | `2018.4` | `2021.4` | off_folder_cross_year |
-| 11 | 2018 | `2018.4` | `2024.4` | off_folder_cross_year |
 | 11 | 2023 | `2023.1` | `2025.2` | off_folder_cross_year |
-| 11 | 2025 | `2025.4` | `2025.2` | off_folder_same_year |
-| 10 | 2018 | `2018.3` | `2021.4` | off_folder_cross_year |
-| 10 | 2018 | `2018.5` | `2019.2;2019.3` | ambiguous |
-| 9 | 2018 | `2018.4` | `2021.5` | off_folder_cross_year |
-| 9 | 2018 | `2018.4` | `2021.2` | off_folder_cross_year |
+| 11 | 2024 | `2024.4` | `2024.3` | off_folder_same_year |
+| 10 | 2025 | `2025.4` | `2021.5` | off_folder_cross_year |
+| 10 | 2025 | `2025.4` | `2025.2` | off_folder_same_year |
+| 9 | 2019 | `2019.4` | `2018.5` | off_folder_cross_year |
 | 9 | 2023 | `2023.1` | `2024.5` | off_folder_cross_year |
 | 9 | 2023 | `2023.1` | `2024.2` | off_folder_cross_year |
-| 8 | 2018 | `2018.1` | `2021.5` | off_folder_cross_year |
-| 8 | 2018 | `2018.1` | `2021.1` | off_folder_cross_year |
-| 8 | 2018 | `2018.1` | `2021.6` | off_folder_cross_year |
-| 8 | 2018 | `2018.1` | `2024.7` | off_folder_cross_year |
-| 8 | 2018 | `2018.3` | `2021.2` | off_folder_cross_year |
-| 8 | 2018 | `2018.4` | `2024.1` | off_folder_cross_year |
-| 8 | 2018 | `2018.4` | `2024.8` | off_folder_cross_year |
-| 8 | 2018 | `2018.4` | `2024.6;2024.7` | ambiguous |
-| 8 | 2018 | `2018.5` | `2021.3` | off_folder_cross_year |
-| 8 | 2018 | `2018.5` | `2021.6` | off_folder_cross_year |
+| 8 | 2023 | `2023.1` | `2024.7` | off_folder_cross_year |
+| 7 | 2023 | `2023.1` | `2024.1` | off_folder_cross_year |
+| 7 | 2023 | `2023.1` | `2021.4` | off_folder_cross_year |
+| 6 | 2019 | `2019.4` | `2024.7` | off_folder_cross_year |
+| 6 | 2023 | `2023.1` | `2024.6` | off_folder_cross_year |
+| 6 | 2025 | `2025.4` | `2025.1` | off_folder_same_year |
+| 5 | 2019 | `2019.4` | `2024.5` | off_folder_cross_year |
+| 5 | 2019 | `2019.4` | `2018.6;2018.7` | ambiguous |
+| 5 | 2023 | `2023.1` | `2021.2` | off_folder_cross_year |
+| 5 | 2023 | `2023.1` | `2025.3` | off_folder_cross_year |
+| 4 | 2019 | `2019.4` | `2018.3` | off_folder_cross_year |
+| 4 | 2023 | `2023.1` | `2022` | off_folder_cross_year |
+| 4 | 2023 | `2023.1` | `2021.3` | off_folder_cross_year |
+| 3 | 2023 | `2023.1` | `2021.6` | off_folder_cross_year |
+| 3 | 2025 | `2025.4` | `2024.2` | off_folder_cross_year |
+| 2 | 2019 | `2019.4` | `2024.6` | off_folder_cross_year |
+| 2 | 2023 | `2023.1` | `2024.4` | off_folder_cross_year |
+| 2 | 2023 | `2023.1` | `2018.4;2021.3` | ambiguous |
+| 2 | 2023 | `2023.1` | `2024.3` | off_folder_cross_year |
+| 2 | 2023 | `2023.1` | `2025.4` | off_folder_cross_year |
+| 2 | 2025 | `2025.2` | `2021.5` | off_folder_cross_year |
+| 2 | 2025 | `2025.3` | `2025.2` | off_folder_same_year |
+| 1 | 2019 | `2019.11` | `2019.10` | off_folder_same_year |
+| 1 | 2019 | `2019.4` | `2025.1` | off_folder_cross_year |
+| 1 | 2019 | `2019.4` | `2021.5` | off_folder_cross_year |
+| 1 | 2019 | `2019.4` | `2019.5` | off_folder_same_year |
+| 1 | 2020 | `2020` | `2022` | off_folder_cross_year |
+| 1 | 2023 | `2023.1` | `2018.2;2023.2` | ambiguous |
+| 1 | 2023 | `2023.1` | `2023.2` | off_folder_same_year |
+| 1 | 2023 | `2023.1` | `2018.4;2024.3` | ambiguous |
+| 1 | 2023 | `2023.1` | `2018.4;2021.1` | ambiguous |
+| 1 | 2023 | `2023.1` | `2018.7;2021.3` | ambiguous |
 
 Full per-sidecar detail, including trip folder and species, is in
 `output/audit/unresolved_bird_sidecars.csv` (regenerate with `--issues-dir`). Filter by
@@ -226,12 +213,12 @@ estimate rather than an exact list.
 
 | year | missing-JPEG rows | resolvable now |
 |---|---|---|
-| 2018 | 3 | 0 |
+| 2018 | 3 | 3 |
 | 2019 | 211 | 1 |
 | 2020 | 243 | 241 |
 | 2021 | 1 | 0 |
 | 2023 | 619 | 0 |
 | 2024 | 122 | 69 |
 | 2025 | 281 | 13 |
-| **total** | **1480** | **324** |
+| **total** | **1480** | **327** |
 

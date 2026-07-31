@@ -80,7 +80,7 @@ the actual re-export.
   Segment 4: 2019-02-04 Hill Park35Pond  ->  2019-02-05 Hill Park11Pond & 棕背田鸡   (2 trips)
   Segment 5: 2019-02-06 Old Street & 37Pond  ->  2019-02-10 Riverton12Pond & Club Pond   (5 trips)
   Segment 6: 2019-02-11 Riverton 11 Pond & 猛隼_  ->  2019-02-12 Borderville&Hotsprings   (2 trips)
-  Segment 7: 2019-03-04 Newtown  ->  2019-06-08 Ninehill Park寿带   (18 trips)
+  Segment 7: 2019-03-04 Newtown  ->  2019-05-30 New York   (17 trips)
   Segment 8: 2019-06-08 Hill Park  ->  2019-08-31 Brussells   (11 trips)
   Segment 9: 2019-08-31 Vondelpark Amsterdam  ->  2019-09-05 Versaille Palace   (6 trips)
   Segment 10: 2019-09-06 Fontainblue Palace  ->  2019-09-07 Musee d'Orsey   (2 trips)
