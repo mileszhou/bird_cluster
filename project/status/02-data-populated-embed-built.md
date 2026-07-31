@@ -7,7 +7,7 @@ DINOv3 weights pulled on a GPU host.
 
 ## Layout correction
 
-`01-context.md` and `docs/plans/2026-07-29-embed-cluster-stats.md` both assume
+`01-context.md` and `project/plans/2026-07-29-embed-cluster-stats.md` both assume
 `results/result-*/raw/**/*.xmp` with `Photos-YYYY.NN`-style folder names. The populated
 dataset is `data/xmp/result-*/raw/<half-year>/<trip>/*.xmp` with bare `2023.1`-style names
 that match the jpg folder names verbatim. The `Photos-` mapping in
@@ -17,7 +17,7 @@ dropped — see below.
 
 ## Findings that changed the design
 
-Full survey: `docs/reports/01-data_preview_report.md` (regenerate with
+Full survey: `project/reports/data_preview_report.md` (regenerate with
 `tools/audit_dataset.py --report ... --issues-dir ...`).
 
 1. **The CSV cannot be keyed by basename.** `filename` is a bare basename with no folder, and
@@ -82,8 +82,8 @@ Full survey: `docs/reports/01-data_preview_report.md` (regenerate with
 - `code/embedding/embed.py` + `run-embed` — scan → filter → resolve → batch POST → JSONL.
   Resumable, `--dry-run`, `--years`, `--limit`, `--min-confidence`, deferred SIGINT.
 - `tools/audit_dataset.py` — read-only dataset audit; emits the markdown report plus
-  `output/audit/unresolved_bird_sidecars.csv` (per-sidecar, with year/half-year/trip/species/
-  verdict) and `output/audit/colliding_jpg_stems.csv`.
+  `project/reports/unresolved_bird_sidecars.csv` (per-sidecar, with year/half-year/trip/species/
+  verdict) and `project/reports/colliding_jpg_stems.csv`.
 - `test/conftest.py`, `test/lib/test_jpg_index.py`, `test/lib/test_xmp_labels.py` — 28 tests,
   all passing. `conftest.py` works around the project package being named `code`.
 - `venv` now takes stage arguments (`base client test cluster server notebook`) so a non-GPU

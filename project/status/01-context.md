@@ -14,7 +14,7 @@ from `code/bird_label.py`'s `find_jpg_for_xmp`), and writes `output/embed/embedd
 `code/cluster/stats.py` (step 3, cluster stats + condensed-tree dump) are pure numpy/hdbscan,
 no GPU needed.
 
-Full design: `docs/plans/2026-07-29-embed-cluster-stats.md`.
+Full design: `project/plans/2026-07-29-embed-cluster-stats.md`.
 
 **Deployment detail:** the vLLM server (and, per the plan, the new embed server) will run on
 `localhost` — the same box as the code. Hostnames are not hardcoded in scripts; they're read from
