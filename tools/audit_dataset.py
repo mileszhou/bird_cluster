@@ -22,7 +22,7 @@ With --issues-dir it also writes four worklists for manual repair, alongside the
 report (default ./project/reports -- progress/analysis output lives under
 ./project; ./docs is for product documentation):
 
-    duplicate_frames.csv         same frame in neighbouring trips -> a duplicate
+    duplicate_frames.csv         frame collisions needing a decision (see --all-collisions)
     photos_in_doubt.csv          every sidecar whose JPEG did not resolve cleanly
     unprocessed_sidecars.csv     never labelled / "missing JPEG" -> re-run bird_label
     colliding_jpg_stems.csv      raw stem-collision evidence, independent of sidecars
@@ -476,7 +476,10 @@ def render_worklists(result, dup_groups, doubt, unprocessed):
         for key, n in trip_hits.most_common(25):
             w(f"| {n} | `{key}` |")
         w("")
-    w("Full list with every filename: `project/reports/duplicate_frames.csv`.")
+    w("`project/reports/duplicate_frames.csv` lists every filename for the frames needing a")
+    w("decision -- the wraparound rows are left out, being ~95% of the collisions and never")
+    w("acted on. `./run-audit --all-collisions` writes the complete set to")
+    w("`duplicate_frames_all.csv` when the question is whether a collision was examined.")
     w("")
 
     w("## Worklist 2 -- photos in doubt")
@@ -726,6 +729,10 @@ def main():
                     help="write the per-sidecar worklist CSVs into this directory")
     ap.add_argument("--stdout", action="store_true",
                     help="print the report instead of writing any files")
+    ap.add_argument("--all-collisions", action="store_true",
+                    help="also write duplicate_frames_all.csv including the ordinary "
+                         "wraparounds. The worklist itself only carries frames needing a "
+                         "decision; this is the full audit trail")
     ap.add_argument("--snapshot", nargs="?", const="", default=None, metavar="LABEL",
                     help="also keep a numbered copy of this report under "
                          "<issues-dir>/archive/NN-<name>[-LABEL].md. The live report keeps "
@@ -792,39 +799,58 @@ def main():
 
         # Worklist 1: one row per sidecar involved in a cross-trip frame collision,
         # grouped by frame so the copies of one photo sit together.
-        path = args.issues_dir / "duplicate_frames.csv"
+        #
+        # Only the frames needing a decision go in the worklist. The ordinary
+        # wraparounds are ~95% of the rows and nothing is ever done about them,
+        # so carrying them here buries the 240 frames that do need attention.
+        # --all-collisions writes the complete set alongside, for the times the
+        # question is "was this collision looked at at all?".
         fields = ["action", "verdict", "pixels", "frame", "year", "half_year", "trip", "trip_date",
                   "stem", "category", "species", "min_rank_gap", "min_day_gap",
                   "other_trips", "jpg_path", "xmp_path"]
-        rows = 0
-        with open(path, "w", newline="") as fh:
-            wr = csv.DictWriter(fh, fieldnames=fields)
-            wr.writeheader()
-            for g in sorted(dup_groups, key=lambda x: (x["action"] != ACT_REMOVE, x["action"])):
-                gaps = [p["rank_gap"] for p in g["pairs"] if p["rank_gap"] is not None]
-                days = [p["day_gap"] for p in g["pairs"] if p["day_gap"] is not None]
-                for m in g["members"]:
-                    others = [x["trip_key"] for x in g["members"] if x is not m]
-                    for r in m["recs"]:
-                        wr.writerow({
-                            "action": g["action"],
-                            "verdict": g["verdict"], "pixels": g["pixels"] or "",
-                            "frame": f"{g['frame'].code}{g['frame'].num}",
-                            "year": r["year"], "half_year": r["half_year"], "trip": r["trip"],
-                            "trip_date": m["trip"].when.isoformat() if m["trip"] and m["trip"].when else "",
-                            "stem": r["stem"],
-                            "category": ";".join(r["categories"]) or "(none)",
-                            "species": r["species"],
-                            "min_rank_gap": min(gaps) if gaps else "",
-                            "min_day_gap": min(days) if days else "",
-                            "other_trips": " | ".join(others),
-                            "jpg_path": str(r["jpg"]) if r["jpg"] else "",
-                            "xmp_path": str(r["xmp"]),
-                        })
-                        rows += 1
-        dup_n = sum(1 for g in dup_groups if g["verdict"] in ("duplicate", "mixed"))
-        print(f"wrote {path} ({rows} rows, {len(dup_groups)} frames, "
-              f"{dup_n} duplicate/mixed)")
+
+        def write_collisions(path, groups):
+            rows = 0
+            with open(path, "w", newline="") as fh:
+                wr = csv.DictWriter(fh, fieldnames=fields)
+                wr.writeheader()
+                for g in sorted(groups, key=lambda x: (x["action"] != ACT_REMOVE, x["action"])):
+                    gaps = [p["rank_gap"] for p in g["pairs"] if p["rank_gap"] is not None]
+                    days = [p["day_gap"] for p in g["pairs"] if p["day_gap"] is not None]
+                    for m in g["members"]:
+                        others = [x["trip_key"] for x in g["members"] if x is not m]
+                        for r in m["recs"]:
+                            wr.writerow({
+                                "action": g["action"],
+                                "verdict": g["verdict"], "pixels": g["pixels"] or "",
+                                "frame": f"{g['frame'].code}{g['frame'].num}",
+                                "year": r["year"], "half_year": r["half_year"], "trip": r["trip"],
+                                "trip_date": (m["trip"].when.isoformat()
+                                              if m["trip"] and m["trip"].when else ""),
+                                "stem": r["stem"],
+                                "category": ";".join(r["categories"]) or "(none)",
+                                "species": r["species"],
+                                "min_rank_gap": min(gaps) if gaps else "",
+                                "min_day_gap": min(days) if days else "",
+                                "other_trips": " | ".join(others),
+                                "jpg_path": str(r["jpg"]) if r["jpg"] else "",
+                                "xmp_path": str(r["xmp"]),
+                            })
+                            rows += 1
+            return rows
+
+        actionable = [g for g in dup_groups if g["action"] != ACT_NONE]
+        path = args.issues_dir / "duplicate_frames.csv"
+        rows = write_collisions(path, actionable)
+        dup_n = sum(1 for g in actionable if g["action"] == ACT_REMOVE)
+        print(f"wrote {path} ({rows} rows, {len(actionable)} frames needing a decision, "
+              f"{dup_n} confirmed duplicates; "
+              f"{len(dup_groups) - len(actionable)} wraparounds omitted)")
+
+        if args.all_collisions:
+            path = args.issues_dir / "duplicate_frames_all.csv"
+            rows = write_collisions(path, dup_groups)
+            print(f"wrote {path} ({rows} rows, all {len(dup_groups)} frames)")
 
         # Worklist 2
         path = args.issues_dir / "photos_in_doubt.csv"
