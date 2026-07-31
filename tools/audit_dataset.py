@@ -27,8 +27,13 @@ report (default ./project/reports -- progress/analysis output lives under
     unprocessed_sidecars.csv     never labelled / "missing JPEG" -> re-run bird_label
     colliding_jpg_stems.csv      raw stem-collision evidence, independent of sidecars
 
+The report keeps a fixed filename so `git diff` between runs is readable; the
+worklist CSVs are gitignored, being large and fully regenerated each run.
+`--snapshot` additionally files a numbered copy under archive/ to compare against.
+
 Usage:
     ./run-audit                                  # report + worklists -> project/reports
+    ./run-audit --snapshot after-2019-fixes      # ...and archive/NN-...-after-2019-fixes.md
     python3 tools/audit_dataset.py --stdout      # report to stdout, write nothing
     python3 tools/audit_dataset.py --no-verify-pixels
 """
@@ -36,6 +41,7 @@ import argparse
 import collections
 import csv
 import hashlib
+import re
 import sys
 from pathlib import Path
 
@@ -174,6 +180,23 @@ def audit(data_dir):
             "missing_jpeg_rows": len(missing_csv), "recoverable": recoverable,
         }
     return result
+
+
+def next_snapshot_path(archive_dir: Path, stem: str, label: str = "") -> Path:
+    """Next free `NN-<stem>[-<label>].md` in the archive directory.
+
+    Snapshots are numbered so the sequence of runs stays readable, while the
+    live report keeps a fixed filename -- that stable name is what lets `git
+    diff` show what changed between two runs.
+    """
+    highest = 0
+    if archive_dir.is_dir():
+        for existing in archive_dir.glob("*.md"):
+            m = re.match(r"^(\d+)-", existing.name)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    suffix = f"-{label}" if label else ""
+    return archive_dir / f"{highest + 1:02d}-{stem}{suffix}.md"
 
 
 def pixel_hash(path):
@@ -703,6 +726,11 @@ def main():
                     help="write the per-sidecar worklist CSVs into this directory")
     ap.add_argument("--stdout", action="store_true",
                     help="print the report instead of writing any files")
+    ap.add_argument("--snapshot", nargs="?", const="", default=None, metavar="LABEL",
+                    help="also keep a numbered copy of this report under "
+                         "<issues-dir>/archive/NN-<name>[-LABEL].md. The live report keeps "
+                         "its fixed filename either way, so `git diff` between runs stays "
+                         "readable; the snapshot is for comparing against a specific past run")
     ap.add_argument("--neighbour-window", type=int, default=1,
                     help="how many timeline positions apart two trips may be and still count "
                          "as neighbours, i.e. a frame collision between them is a duplicate "
@@ -731,6 +759,13 @@ def main():
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(report)
         print(f"wrote {args.report}")
+
+        if args.snapshot is not None:
+            snap = next_snapshot_path(args.report.parent / "archive",
+                                      args.report.stem, args.snapshot)
+            snap.parent.mkdir(parents=True, exist_ok=True)
+            snap.write_text(report)
+            print(f"wrote {snap}")
     else:
         sys.stdout.write(report)
 

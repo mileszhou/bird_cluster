@@ -24,8 +24,10 @@ cluster/ (marked as .)
     project/    # everything about the work in progress -- not a deliverable
         plans/      # design documents, dated
         status/     # numbered session handoffs, so the next session can pick up
-        reports/    # analysis output + manual-repair worklists (csv)
-            archive/    # superseded reports, kept for comparison
+        reports/    # analysis output. The report is tracked under a fixed
+                    # filename so successive runs diff cleanly; the worklist
+                    # csvs beside it are gitignored (large, fully regenerated)
+            archive/    # numbered snapshots, ./run-audit --snapshot $label
     docs/       # product documentation: output for whoever uses the result,
                 # rather than notes about building it
     research/   # theoretical and research notes, mainly above software implimentation layer
