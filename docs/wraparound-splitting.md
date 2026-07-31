@@ -80,7 +80,7 @@ the actual re-export.
   Segment 4: 2019-02-04 山公园35号塘  ->  2019-02-05 山公园11号塘 & 棕背田鸡   (2 trips)
   Segment 5: 2019-02-06 旧街 & 37号塘  ->  2019-02-10 盈江12号塘 & 学会塘   (5 trips)
   Segment 6: 2019-02-11 盈江 11 号塘 & 猛隼_  ->  2019-02-12 那邦&腾冲   (2 trips)
-  Segment 7: 2019-03-04 逸城  ->  2019-06-08 九山公园寿带   (18 trips)
+  Segment 7: 2019-03-04 逸城  ->  2019-05-30 New York   (17 trips)
   Segment 8: 2019-06-08 山公园  ->  2019-08-31 Brussells   (11 trips)
   Segment 9: 2019-08-31 Vondelpark Amsterdam  ->  2019-09-05 Versaille Palace   (6 trips)
   Segment 10: 2019-09-06 Fontainblue Palace  ->  2019-09-07 Musee d'Orsey   (2 trips)
