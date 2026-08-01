@@ -90,9 +90,22 @@ regenerated every run. `./run-audit --snapshot <label>` additionally files a num
 keeping to compare against later.
 
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
-`status/` handoffs, `reports/` (analysis output and worklists). `docs/` is reserved for
-product documentation, i.e. output meant for whoever uses the result rather than notes about
-building it.
+`status/` handoffs, `reports/` (analysis output and worklists), `messages/` (correspondence
+with the user, named `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder
+file they leave). `docs/` is reserved for product documentation, i.e. output meant for whoever
+uses the result rather than notes about building it.
+
+**Sidecar deduplication** (`code/lib/sidecar_meta.py`, `tools/dedup_sidecars.py`,
+**`./run-dedup`**) — operates on `data/xmp0`, the *original unsplit* library
+(`Photos-YY/<trip>/*.xmp`), not the split `data/xmp` tree. The same photo was imported into
+two trip folders in places, which is what made neighbouring trips look like frame-counter
+collisions during splitting. Two sidecars are one capture when they share
+`xmpMM:OriginalDocumentID`; **do not compare `exif:DateTimeOriginal` as a string** — only ~10%
+of sidecars carry sub-second precision, timezone corrections move a capture across calendar
+days, and import clashes rename one copy, so the literal date+time+filename rule finds just
+265 of 534 redundant sidecars. Lightroom virtual copies (`-2`, `-3` stems) share an original
+but have their own `xmpMM:DocumentID` — deliberate alternate edits, reported separately and
+never offered for deletion. Report: `project/reports/sidecar_dedup_report.md`.
 
 **Deciding whether a filename collision is a duplicate** (`code/lib/trips.py`): trip folders
 are named `YYYY-MM-DD <place>`, so sorting them gives a timeline. A frame counter cannot
