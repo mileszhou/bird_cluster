@@ -3,7 +3,8 @@ from datetime import date
 
 import pytest
 
-from code.lib.trips import Frame, Timeline, Trip, frame_id, trip_date
+from code.lib.trips import (Frame, Timeline, Trip, frame_id, trip_date,
+                            trip_date_precision)
 
 
 @pytest.mark.parametrize("stem,expected", [
@@ -96,3 +97,12 @@ def test_from_dataset_walks_half_year_and_trip(tmp_path):
     b = tl.by_key["2019/2019.2/2019-02-01 B"]
     # Neighbouring on the timeline even though they sit in different half-years.
     assert tl.neighbours(a, b)
+
+
+@pytest.mark.parametrize("name,expected", [
+    ("2023-10-05 Lake Tahoe", "day"),
+    ("2020-11 福州.鸟", "month"),      # names a whole month, not its 1st
+    ("no date here", None),
+])
+def test_trip_date_precision(name, expected):
+    assert trip_date_precision(name) == expected

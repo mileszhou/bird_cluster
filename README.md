@@ -24,6 +24,7 @@ cluster/ (marked as .)
     project/    # everything about the work in progress -- not a deliverable
         plans/      # design documents, dated
         status/     # numbered session handoffs, so the next session can pick up
+        messages/   # correspondence with the user, YYYY-MM-DD.NN who:-topic.md
         reports/    # analysis output. The report is tracked under a fixed
                     # filename so successive runs diff cleanly; the worklist
                     # csvs beside it are gitignored (large, fully regenerated)

@@ -64,7 +64,10 @@ def trip_date(folder_name: str) -> Optional[date]:
     """Date a trip folder name starts with, or None if it has no date prefix.
 
     Day-less names (`2020-11 福州.鸟`) are treated as the 1st, which is precise
-    enough for ordering trips against each other.
+    enough for ordering trips against each other. When the distinction matters
+    -- e.g. asking how far a photo's capture date sits from its folder's date --
+    check `trip_date_precision` first, since such a folder names a whole month
+    and its photos are not "23 days late".
     """
     m = TRIP_DATE_RE.match(folder_name)
     if not m:
@@ -74,6 +77,14 @@ def trip_date(folder_name: str) -> Optional[date]:
         return date(int(year), int(month), int(day or 1))
     except ValueError:
         return None
+
+
+def trip_date_precision(folder_name: str) -> Optional[str]:
+    """`"day"`, `"month"`, or None -- how precisely the folder name is dated."""
+    if trip_date(folder_name) is None:
+        return None
+    m = TRIP_DATE_RE.match(folder_name)
+    return "day" if m.group(3) else "month"
 
 
 class Trip(NamedTuple):
