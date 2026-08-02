@@ -1,0 +1,9 @@
+#!/bin/bash
+# Analyze the wraparound of the photo library, i.e. the fact that the library is split across trips.
+
+cd "$(dirname "$0")"
+[ -d .venv ] && source .venv/bin/activate
+
+for year in {18..25}; do
+    python3 tools/analyze_wraparound.py data/Photos-$year
+done
