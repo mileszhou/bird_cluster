@@ -5,6 +5,7 @@ rsync -av --prune-empty-dirs \
     --include='*/' \
     --include='*.xmp' \
     --exclude='*' \
+    --delete \
     Photos/Photos-{18..25} \
     "localhost:$HOME/projects/bird_cluster/data/xmp0/"
 
