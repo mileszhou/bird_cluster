@@ -7,7 +7,7 @@ rsync -av --prune-empty-dirs \
     --exclude='*' \
     --delete \
     Photos/Photos-{18..25} \
-    "spark:$HOME/projects/bird_cluster/data/xmp0/"
+    "spark:$HOME/projects/bird_cluster/data/xmp/"
 
 # Copy the photo library
 rsync -av \
