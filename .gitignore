@@ -2,7 +2,7 @@
 !projects/**/.vscode/
 
 tmp/
-data/
+#data/	# ./data is a submodule
 logs/
 output*/
 
