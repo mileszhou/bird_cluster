@@ -8,5 +8,4 @@ python3 -m code.embedding.embed \
    --output-dir ./output/embed \
    --years 2019 \
    --batch-size 32 \
-   --match-policy same_year \
    "$@"

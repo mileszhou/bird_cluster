@@ -29,6 +29,7 @@ import time
 
 from code.lib.label_generator import pinyin_initials
 from code.lib.config import server_url
+from code.lib.jpg_index import JpgIndex, Verdict, library_year
 import code.lib.run_hf_bird_model_llamacpp
 
 logger = logging.getLogger("bird_label")
@@ -338,67 +339,53 @@ def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
 # ------------------------------------------------------------
 # Locate the JPEG matching an XMP sidecar.
 #
-# XMP files live in nested per-trip subfolders under a half-year folder, e.g.
-#   raw/Photos-23.01.xmp/2023-04-10 青溪古镇/_Z9C7446.xmp
-# JPEGs live flat inside the corresponding half-year folder under JPG_DIR
-# (no per-trip nesting there), e.g.
-#   jpg/Photos-2023.01/_Z9C7446.jpg
-# The half-year boundaries don't always line up between raw/ and jpg/ though
-# (a trip filed under one raw half can have its JPEGs exported into an
-# adjacent half's jpg folder), so we try the expected folder first and fall
-# back to a filename-stem index built over the whole jpg tree. Camera
-# filenames can collide across unrelated shoots (counter wraparound), so a
-# stem with more than one match outside the expected folder is treated as
-# ambiguous rather than guessed.
+# The export mirrors the photo library, so a sidecar's JPEG sits in the jpg
+# tree at the same library/trip folder under the same stem:
+#   xmp/Photos-19/2019-01-13 山公园/_D8S0025.xmp
+#   jpg/Photos-19/2019-01-13 山公园/_D8S0025.jpg
+# Camera counters wrap, so stems repeat across the library -- but with the
+# folder part of the key that no longer creates ambiguity, and the whole-tree
+# stem fallback the flat export needed (which returned photos from unrelated
+# shoots) is gone. See code/lib/jpg_index.py, shared with the embedding step,
+# for the derived-export cases: a capture whose only export is a virtual copy
+# (`-2`) or an AI Denoise render (`-Enhanced-NR`).
+#
+# The index is built over RAW_OUT, the working copy of the sidecar tree, which
+# mirrors data/xmp exactly -- so the folder keys line up either way.
 # ------------------------------------------------------------
 
-_JPG_STEM_INDEX = None
+_JPG_INDEX = None
 
 
-def _jpg_stem_index():
-    global _JPG_STEM_INDEX
-    if _JPG_STEM_INDEX is None:
-        index = {}
-        for jpg in JPG_DIR.rglob("*.jpg"):
-            index.setdefault(jpg.stem, []).append(jpg)
-        _JPG_STEM_INDEX = index
-    return _JPG_STEM_INDEX
-
-
-def _jpg_subfolders_for_raw_subfolder(raw_folder_name: str) -> list[str]:
-    """Candidate jpg subfolder names for a raw subfolder, in priority order.
-    Current convention: raw and jpg subfolders share the same name directly
-    (e.g. "2024.8" -> "2024.8"). Older data used "Photos-YY.NN.xmp" raw
-    folders mapping to "Photos-YYYY.NN" jpg folders; kept as a fallback for
-    any legacy-named folders still around.
-    """
-    candidates = [raw_folder_name]
-    match = re.match(r'^Photos-(\d{2})\.(\d{2})\.xmp$', raw_folder_name)
-    if match:
-        yy, half = match.groups()
-        candidates.append(f"Photos-20{yy}.{half}")
-    return candidates
+def jpg_index(raw_root: Path) -> JpgIndex:
+    global _JPG_INDEX
+    if _JPG_INDEX is None:
+        _JPG_INDEX = JpgIndex(raw_root, JPG_DIR)
+    return _JPG_INDEX
 
 
 def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
-    stem = xmp_file.stem
-    try:
-        rel_parts = xmp_file.relative_to(raw_root).parts
-    except ValueError:
-        rel_parts = xmp_file.parts
-
-    if rel_parts:
-        for jpg_subfolder in _jpg_subfolders_for_raw_subfolder(rel_parts[0]):
-            candidate = JPG_DIR / jpg_subfolder / f"{stem}.jpg"
-            if candidate.is_file():
-                return candidate
-
-    matches = _jpg_stem_index().get(stem, [])
-    if len(matches) == 1:
-        return matches[0]
-    if len(matches) > 1:
-        logger.info(f"⚠️  Ambiguous JPEG match for {stem} ({len(matches)} candidates); skipping.")
+    match = jpg_index(raw_root).resolve(xmp_file)
+    if match.ok:
+        return match.path
+    if match.verdict is Verdict.NO_FOLDER:
+        logger.info(f"⚠️  No exported folder for {xmp_file.parent.name}; skipping {xmp_file.name}.")
     return None
+
+
+def xmp_key(xmp_file: Path, raw_root: Path) -> str:
+    """Identity of a sidecar for the checkpoint and the CSV.
+
+    The path relative to the sidecar root, never the bare filename: 10,832 of
+    the 34,160 sidecars share a basename with another (counter wraparound
+    across trips), so a basename-keyed checkpoint marks thousands of unlabelled
+    photos as already done, and a basename-keyed CSV attaches rows to the wrong
+    photo.
+    """
+    try:
+        return xmp_file.relative_to(raw_root).as_posix()
+    except ValueError:
+        return xmp_file.as_posix()
 
 
 # ------------------------------------------------------------
@@ -424,6 +411,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         raw_json = "{}"
         keywords = []
         note = "missing JPEG"
+        category = ""
     else:
         switch = args.approach
         if switch == "llama.cpp":
@@ -448,7 +436,9 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
 
     # Write CSV row (common for both branches)
     csv_writer.writerow([
+        xmp_key(xmp_file, raw_root),
         xmp_file.name,
+        category,
         label,
         label_cn,
         f"{conf:.2f}",
@@ -464,43 +454,72 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
 # ------------------------------------------------------------
 
 def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
-    """Return a set of xmp filenames to process, based on a prior run's CSV.
+    """Return a set of sidecar keys to process, based on a prior run's CSV.
     Includes images where category == 'animal' or confidence < conf_threshold.
-    Returns None if no filter is requested."""
+    Returns None if no filter is requested.
+
+    Keyed by the CSV's `path` column -- the sidecar's path relative to the
+    sidecar root. The `filename` column is a bare basename and repeats across
+    trips, so it cannot identify a photo.
+
+    Reads the `category` column directly; older rows only encoded it inside
+    `note` ("bird (0.90)"), which is parsed as a fallback."""
     if not filter_csv:
         return None
-    filenames = set()
-    with open(filter_csv, newline='', encoding='utf-8') as f:
-        for row in csv.DictReader(f):
+    keys = set()
+    # utf-8-sig: tolerates the BOM a spreadsheet adds when the CSV is edited by
+    # hand, which would otherwise turn the first header name into "﻿path".
+    with open(filter_csv, newline='', encoding='utf-8-sig') as f:
+        reader = csv.DictReader(f)
+        if 'path' not in (reader.fieldnames or []):
+            sys.exit(f"error: {filter_csv} has no 'path' column -- it predates the mirrored "
+                     f"export and its basename keys cannot identify a photo. Re-run without "
+                     f"--filter-csv, or filter against a CSV from a current run.")
+        for row in reader:
             note = row.get('note', '')
-            category = note.split('(')[0].strip() if '(' in note else ''
+            category = (row.get('category')
+                        or (note.split('(')[0].strip() if '(' in note else '')).strip()
             try:
                 conf = float(row.get('confidence', 1.0))
             except ValueError:
                 conf = 1.0
             if category == 'animal' or conf < conf_threshold:
-                # CSV has jpg filename; derive xmp name
-                stem = Path(row['filename']).stem
-                filenames.add(stem + '.xmp')
-    return filenames
+                keys.add(row['path'])
+    return keys
+
+
+def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
+    """Library folders under the sidecar root, filtered by --years."""
+    libraries = sorted(d for d in xmp_root.iterdir() if d.is_dir())
+    if years is None:
+        return libraries
+    kept = [d for d in libraries if library_year(d.name) in years]
+    if not kept:
+        sys.exit(f"error: --years {','.join(years)} matched no library under {xmp_root} "
+                 f"(found: {', '.join(d.name for d in libraries) or 'nothing'})")
+    return kept
+
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     # Determine a deterministic order for processing files
-    # Half-year raw folders are themselves named "Photos-YY.NN.xmp", so rglob
-    # would also match those directories; filter to actual sidecar files.
-    xmp_files = sorted((p for p in xmp_root.rglob('*.xmp') if p.is_file()), key=lambda p: p.as_posix())
+    xmp_files = sorted(
+        (p for d in select_libraries(xmp_root, getattr(args, 'years', None))
+         for p in d.rglob('*.xmp') if p.is_file()),
+        key=lambda p: p.as_posix())
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:
         logger.info(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
-    # Checkpoint file to record processed filenames
+    # Checkpoint keyed by path relative to xmp_root -- see xmp_key() for why a
+    # bare filename silently skips thousands of sidecars.
     checkpoint_path = csv_path.parent / "processed.txt"
     processed: set = set()
     if checkpoint_path.is_file():
         processed = set(line.strip() for line in checkpoint_path.read_text().splitlines())
 
+    keys = {xmp: xmp_key(xmp, xmp_root) for xmp in xmp_files}
     pending = [
         xmp for xmp in xmp_files
-        if xmp.name not in processed and (filter_set is None or xmp.name in filter_set)
+        if keys[xmp] not in processed and (filter_set is None or keys[xmp] in filter_set)
     ]
 
     batch_size = getattr(args, 'batch_size', 1)
@@ -515,7 +534,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     with open(csv_path, csv_mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not resuming:
-            writer.writerow(['filename', 'label', 'label_cn', 'confidence', 'note', 'run_label', 'response_json'])
+            writer.writerow(['path', 'filename', 'category', 'label', 'label_cn',
+                             'confidence', 'note', 'run_label', 'response_json'])
 
         interrupted = False
         def _sigint_handler(sig, frame):
@@ -536,7 +556,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                         jpg = find_jpg_for_xmp(xmp, xmp_root)
                         (valid_items if jpg is not None else missing).append((xmp, jpg))
                     for xmp, _ in missing:
-                        writer.writerow([xmp.name, "unknown", "未知", "0.00", "missing JPEG", args.run_label, "{}"])
+                        writer.writerow([keys[xmp], xmp.name, "", "unknown", "未知", "0.00",
+                                         "missing JPEG", args.run_label, "{}"])
                         logger.info(f"⚠️  JPEG missing for {xmp.name}, skipping.")
                     if valid_items:
                         try:
@@ -547,7 +568,9 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 keywords = [category, mk_label(category, label, label_cn, conf)]
                                 note = f"{category} ({conf:.2f})"
                                 add_keywords_to_xmp(xmp_file, keywords)
-                                writer.writerow([xmp_file.name, label, label_cn, f"{conf:.2f}", note, args.run_label, raw_json])
+                                writer.writerow([keys[xmp_file], xmp_file.name, category,
+                                                 label, label_cn, f"{conf:.2f}", note,
+                                                 args.run_label, raw_json])
                                 logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
                         except Exception as e:
                             logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
@@ -555,13 +578,13 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                     # Checkpoint entire batch (including skipped missing-JPEG files)
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                         for xmp in batch:
-                            cp.write(f"{xmp.name}\n")
+                            cp.write(f"{keys[xmp]}\n")
                 else:
                     xmp_file = pending[i]
                     try:
                         process_single_xmp(xmp_file, writer, args, raw_root=xmp_root)
                         with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                            cp.write(f"{xmp_file.name}\n")
+                            cp.write(f"{keys[xmp_file]}\n")
                     except Exception as e:
                         logger.info(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
                         break
@@ -588,7 +611,12 @@ if __name__ == "__main__":
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
+    parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
     args = parser.parse_args()
+
+    args.years = None if args.years.strip().lower() == "all" else [
+        y.strip() for y in args.years.split(",") if y.strip()
+    ]
 
     if args.approach == "vllm" and not args.vllm_url:
         args.vllm_url = server_url("vllm", path="/v1")
@@ -614,10 +642,13 @@ if __name__ == "__main__":
     elif args.approach == "vllm" and args.vllm_url:
         args.model = get_actual_vllm_model_name(args.vllm_url, args.model)
 
-    # Paths
+    # Paths. `data/` is treated as read-only: the sidecar tree is copied into
+    # output/raw and keywords are injected there, never back into the submodule.
     DATA_DIR = Path(args.data_dir)
     JPG_DIR = DATA_DIR / "jpg"
-    RAW_DIR = DATA_DIR / "raw"
+    RAW_DIR = DATA_DIR / "xmp"
+    if not RAW_DIR.is_dir() or not JPG_DIR.is_dir():
+        sys.exit(f"error: expected {RAW_DIR} and {JPG_DIR} to exist")
 
     # Use a single output folder (no per‑run subdirectory)
     RUN_DIR = OUTPUT_DIR

@@ -3,4 +3,4 @@
 # Read-only; writes the report and CSVs into project/reports/.
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
-python3 tools/dedup_sidecars.py --xmp-dir ./data/xmp0 "$@"
+python3 tools/dedup_sidecars.py --xmp-dir ./data/xmp "$@"

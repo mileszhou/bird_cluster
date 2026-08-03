@@ -1,25 +1,35 @@
-"""Resolve an XMP sidecar to its exported JPEG.
+"""Resolve an XMP sidecar to its exported JPEG(s).
 
-Layout: sidecars are nested `raw/<half-year>/<trip>/*.xmp`, JPEGs are flat
-`jpg/<half-year>/*.jpg`. The half-year folder names match, so the primary
-lookup is `raw/2023.1/<trip>/_X.xmp` -> `jpg/2023.1/_X.jpg`.
+The jpg tree mirrors the sidecar tree exactly -- same library folder, same trip
+folder, same stem:
 
-Filename stems are *not* globally unique. Camera frame counters wrap around, so
-in the current dataset 4371 of 27043 stems appear in more than one jpg folder.
-Falling back to a whole-tree stem lookup therefore silently returns a photo
-from an unrelated shoot -- in the current dataset that misresolves 949 bird
-sidecars, 729 of them in a year whose JPEGs were never exported at all. Hence
-`MatchPolicy`: the default refuses cross-year matches.
+    xmp/Photos-19/2019-01-13 山公园/20190113-_D8S0025.xmp
+    jpg/Photos-19/2019-01-13 山公园/20190113-_D8S0025.jpg
 
-Two distinct things produce an off-folder match, and they need opposite
-treatment:
+so a match is a plain lookup inside one folder. This replaces the half-year /
+whole-tree-stem machinery the flat export needed: stems repeat across the
+library (camera counter wraparound), but that no longer matters when the folder
+is part of the key, so there is nothing left to be ambiguous about.
 
-* Same year, adjacent folder (`2019.7` -> `2019.8`): the export split fell in a
-  slightly different place than the sidecar split, so the trip's JPEGs landed
-  in the neighbouring half. Same shoot, right photo.
-* Different year (`2018.1` -> `2024.5`): counter wraparound. Wrong photo.
+**Derived exports.** Lightroom does not always export a raw under its own name:
 
-`SAME_YEAR` accepts the first and rejects the second.
+* a virtual copy exports as `<stem>-2`, `-3`, ... (its copy name), and when the
+  master itself was not in the export set, that decorated file is the *only*
+  export of the capture -- 5,990 sidecars in the current dataset;
+* AI Denoise writes a separate `<stem>-Enhanced-NR.dng`, which carries its
+  metadata internally and so has **no sidecar of its own**; if only that DNG was
+  exported, the raw's sidecar again has no same-named JPEG.
+
+Both are the right photo for the sidecar, so `resolve()` accepts them and says
+`derived` rather than pretending the export is missing. Matching is done a whole
+folder at a time because exact hits must be claimed first: where sidecars `A`
+and `A-2` both exist, `A-2.jpg` belongs to `A-2`, not to `A` as a virtual copy.
+Ties among prefixes go to the longest sidecar stem.
+
+A JPEG nothing claims is an *extra*: usually a photo that was never raw (phone
+shots), so there is no sidecar to have. `extras()` splits those from the
+decorated siblings of an already-matched sidecar, which are ordinary virtual
+copies rather than unaccounted files.
 """
 
 import re
@@ -28,7 +38,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 
 JPG_SUFFIXES = (".jpg", ".jpeg")
-_YEAR_RE = re.compile(r"^(\d{4})")
+_YEAR_RE = re.compile(r"^Photos-(\d{2})$")
 
 
 class _NamedByValue(str, Enum):
@@ -38,109 +48,164 @@ class _NamedByValue(str, Enum):
         return self.value
 
 
-class MatchPolicy(_NamedByValue):
-    EXPECTED = "expected"    # only the half-year folder matching the sidecar's
-    SAME_YEAR = "same_year"  # + a unique match elsewhere in the same year
-    ANY = "any"              # + a unique match anywhere (legacy; unsafe)
-
-
 class Verdict(_NamedByValue):
-    OK = "ok"                                # in the expected folder
-    OFF_FOLDER_SAME_YEAR = "off_folder_same_year"
-    OFF_FOLDER_CROSS_YEAR = "off_folder_cross_year"
-    AMBIGUOUS = "ambiguous"                  # several candidates, none expected
-    NO_JPG = "no_jpg"                        # stem absent from the jpg tree
-    REJECTED = "rejected"                    # found, but policy refused it
+    OK = "ok"                # a JPEG of the same stem, in the mirrored folder
+    DERIVED = "derived"      # only a decorated export exists (virtual copy / -Enhanced-NR)
+    NO_JPG = "no_jpg"        # the folder was exported, this photo was not
+    NO_FOLDER = "no_folder"  # no exported folder mirrors this trip at all
+
+
+class ExtraKind(_NamedByValue):
+    DERIVED = "derived"  # decorated sibling of a sidecar that already matched
+    ORPHAN = "orphan"    # nothing claims it -- not a raw file, so never had a sidecar
 
 
 class JpgMatch(NamedTuple):
-    path: Optional[Path]          # None unless the match was accepted
+    paths: tuple[Path, ...]  # more than one when several virtual copies were exported
     verdict: Verdict
-    expected_folder: Optional[str]
-    candidates: tuple[Path, ...]  # everything found, accepted or not
+    folder: str              # trip folder, relative to the tree root
+
+    @property
+    def path(self) -> Optional[Path]:
+        return self.paths[0] if self.paths else None
 
     @property
     def ok(self) -> bool:
-        return self.path is not None
+        return bool(self.paths)
 
 
-def folder_year(folder_name: str) -> Optional[str]:
-    """Leading year of a half-year folder name ('2019.7' -> '2019')."""
-    m = _YEAR_RE.match(folder_name)
-    return m.group(1) if m else None
+class Extra(NamedTuple):
+    path: Path
+    kind: ExtraKind
+    folder: str
+    parent_stem: str  # the sidecar it decorates, "" for an orphan
+
+
+def library_year(library: str) -> Optional[str]:
+    """Full year of a library folder name (`Photos-19` -> `2019`)."""
+    m = _YEAR_RE.match(library)
+    return f"20{m.group(1)}" if m else None
+
+
+def _relfolder(path: Path, root: Path) -> str:
+    return str(path.parent.relative_to(root))
+
+
+class _Folder(NamedTuple):
+    matches: dict[str, tuple[Path, ...]]
+    verdicts: dict[str, Verdict]
+    extras: tuple[Extra, ...]
+
+
+def _resolve_folder(folder: str, xmp_stems: dict[str, Path],
+                    jpgs: dict[str, list[Path]]) -> _Folder:
+    """Assign one trip folder's JPEGs to its sidecars: exact first, then derived."""
+    matches: dict[str, tuple[Path, ...]] = {}
+    verdicts: dict[str, Verdict] = {}
+    claimed: set[str] = set()
+
+    for stem in xmp_stems:
+        if stem in jpgs:
+            matches[stem] = tuple(jpgs[stem])
+            verdicts[stem] = Verdict.OK
+            claimed.add(stem)
+
+    # Longest stem first so `A-2` claims `A-2-3.jpg` ahead of `A`. A JPEG whose
+    # stem is itself a sidecar stem is never a derived export of another one.
+    free = {s for s in jpgs if s not in claimed and s not in xmp_stems}
+    for stem in sorted(set(xmp_stems) - claimed, key=len, reverse=True):
+        taken = sorted(s for s in free if s.startswith(stem + "-"))
+        if not taken:
+            verdicts[stem] = Verdict.NO_JPG
+            continue
+        matches[stem] = tuple(p for s in taken for p in jpgs[s])
+        verdicts[stem] = Verdict.DERIVED
+        free -= set(taken)
+        claimed |= set(taken)
+
+    extras = []
+    for stem in sorted(set(jpgs) - claimed):
+        parents = [s for s in xmp_stems if stem.startswith(s + "-")]
+        parent = max(parents, key=len) if parents else ""
+        kind = ExtraKind.DERIVED if parent else ExtraKind.ORPHAN
+        extras += [Extra(p, kind, folder, parent) for p in jpgs[stem]]
+
+    return _Folder(matches, verdicts, tuple(extras))
 
 
 class JpgIndex:
-    """Stem -> JPEG paths over one jpg tree, built lazily and cached."""
+    """Sidecar <-> JPEG assignment over a mirrored `xmp/` + `jpg/` pair."""
 
-    def __init__(self, jpg_dir, policy: MatchPolicy = MatchPolicy.SAME_YEAR):
+    def __init__(self, xmp_dir, jpg_dir):
+        self.xmp_dir = Path(xmp_dir)
         self.jpg_dir = Path(jpg_dir)
-        self.policy = MatchPolicy(policy)
-        self._stems: Optional[dict[str, list[Path]]] = None
+        self._folders: Optional[dict[str, _Folder]] = None
+        self._xmp: Optional[dict[str, dict[str, Path]]] = None
+        self._jpg: Optional[dict[str, dict[str, list[Path]]]] = None
+
+    # -- scanning ---------------------------------------------------------
+
+    def _scan(self):
+        if self._folders is not None:
+            return
+        xmp: dict[str, dict[str, Path]] = {}
+        for path in sorted(self.xmp_dir.rglob("*.xmp")):
+            xmp.setdefault(_relfolder(path, self.xmp_dir), {})[path.stem] = path
+        jpg: dict[str, dict[str, list[Path]]] = {}
+        for path in sorted(self.jpg_dir.rglob("*")):
+            if path.is_file() and path.suffix.lower() in JPG_SUFFIXES:
+                folder = jpg.setdefault(_relfolder(path, self.jpg_dir), {})
+                folder.setdefault(path.stem, []).append(path)
+        self._xmp, self._jpg = xmp, jpg
+        self._folders = {
+            folder: _resolve_folder(folder, stems, jpg.get(folder, {}))
+            for folder, stems in xmp.items()
+        }
 
     @property
-    def stems(self) -> dict[str, list[Path]]:
-        if self._stems is None:
-            index: dict[str, list[Path]] = {}
-            for path in self.jpg_dir.rglob("*"):
-                if path.is_file() and path.suffix.lower() in JPG_SUFFIXES:
-                    index.setdefault(path.stem, []).append(path)
-            self._stems = index
-        return self._stems
+    def xmp_folders(self) -> dict[str, dict[str, Path]]:
+        self._scan()
+        return self._xmp
 
-    def colliding_stems(self) -> dict[str, list[Path]]:
-        """Stems whose copies span more than one folder -- the wraparound set."""
-        out = {}
-        for stem, paths in self.stems.items():
-            if len({p.parent.name for p in paths}) > 1:
-                out[stem] = paths
-        return out
+    @property
+    def jpg_folders(self) -> dict[str, dict[str, list[Path]]]:
+        self._scan()
+        return self._jpg
 
-    @staticmethod
-    def expected_folder(xmp_file, raw_root) -> Optional[str]:
-        """The half-year folder a sidecar's JPEG should live in.
+    def sidecars(self):
+        """Every sidecar path, in folder order."""
+        for folder in sorted(self.xmp_folders):
+            for stem in sorted(self.xmp_folders[folder]):
+                yield self.xmp_folders[folder][stem]
 
-        The first path component under `raw_root`, so both
-        `raw/<half-year>/<trip>/x.xmp` and `raw/<half-year>/x.xmp` give
-        `<half-year>` -- the trip level is optional. Returns None only when
-        there is no folder component at all (a sidecar directly in `raw/`) or
-        the sidecar is not under `raw_root`.
-        """
-        xmp_file, raw_root = Path(xmp_file), Path(raw_root)
-        try:
-            parts = xmp_file.relative_to(raw_root).parts
-        except ValueError:
-            return None
-        return parts[0] if len(parts) > 1 else None
+    # -- lookups ----------------------------------------------------------
 
-    def find(self, xmp_file, raw_root) -> JpgMatch:
-        xmp_file = Path(xmp_file)
-        stem = xmp_file.stem
-        expected = self.expected_folder(xmp_file, raw_root)
-        candidates = tuple(self.stems.get(stem, ()))
+    def resolve(self, xmp_path) -> JpgMatch:
+        self._scan()
+        xmp_path = Path(xmp_path)
+        folder = _relfolder(xmp_path, self.xmp_dir)
+        if folder not in self._jpg:
+            return JpgMatch((), Verdict.NO_FOLDER, folder)
+        entry = self._folders[folder]
+        verdict = entry.verdicts.get(xmp_path.stem, Verdict.NO_JPG)
+        return JpgMatch(entry.matches.get(xmp_path.stem, ()), verdict, folder)
 
-        if not candidates:
-            return JpgMatch(None, Verdict.NO_JPG, expected, ())
+    def extras(self):
+        """JPEGs no sidecar claims, including whole folders with no sidecars."""
+        self._scan()
+        for folder in sorted(self._folders):
+            yield from self._folders[folder].extras
+        for folder in sorted(set(self._jpg) - set(self._xmp)):
+            for stem in sorted(self._jpg[folder]):
+                for path in self._jpg[folder][stem]:
+                    yield Extra(path, ExtraKind.ORPHAN, folder, "")
 
-        if expected is not None:
-            for path in candidates:
-                if path.parent.name == expected:
-                    return JpgMatch(path, Verdict.OK, expected, candidates)
+    def orphan_folders(self) -> list[str]:
+        """Exported folders with no sidecar folder mirroring them."""
+        self._scan()
+        return sorted(set(self._jpg) - set(self._xmp))
 
-        if self.policy is MatchPolicy.EXPECTED:
-            return JpgMatch(None, Verdict.REJECTED, expected, candidates)
-
-        folders = {p.parent.name for p in candidates}
-        if len(folders) > 1:
-            return JpgMatch(None, Verdict.AMBIGUOUS, expected, candidates)
-
-        # Exactly one folder holds this stem, and it is not the expected one.
-        only = candidates[0]
-        same_year = (
-            expected is not None
-            and folder_year(expected) is not None
-            and folder_year(expected) == folder_year(only.parent.name)
-        )
-        verdict = Verdict.OFF_FOLDER_SAME_YEAR if same_year else Verdict.OFF_FOLDER_CROSS_YEAR
-        accept = same_year or self.policy is MatchPolicy.ANY
-        return JpgMatch(only if accept else None, verdict, expected, candidates)
+    def unexported_folders(self) -> list[str]:
+        """Sidecar folders with no exported folder mirroring them."""
+        self._scan()
+        return sorted(set(self._xmp) - set(self._jpg))

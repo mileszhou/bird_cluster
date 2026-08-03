@@ -9,14 +9,22 @@ resolves each to its exported JPEG, and POSTs batches to the embed server
     python3 -m code.embedding.embed --years 2019    # one year
     python3 -m code.embedding.embed --years 2019 --dry-run
 
-Dataset layout (any dataset in this shape works -- nothing is hardcoded per year):
+Dataset layout -- the export mirrors the photo library, so nothing is hardcoded
+per year:
 
-    <data-dir>/xmp/result-<YYYY>/raw/<half-year>/<trip>/*.xmp
-    <data-dir>/jpg/<half-year>/*.jpg
+    <data-dir>/xmp/<library>/<trip>/*.xmp     # Photos-19/2019-01-13 山公园/_D8S0025.xmp
+    <data-dir>/jpg/<library>/<trip>/*.jpg     # same folder, same stem
+
+`--years 2019` selects by the library's year (`Photos-19`).
 
 Categories come from each sidecar's own keywords, not from
 `bird_identification_output.csv` -- see `code/lib/xmp_labels.py` for why the CSV
 is not safe to key by basename.
+
+Where a capture was exported more than once -- a master plus its Lightroom
+virtual copies -- only the first export is embedded. The copies are alternate
+edits of one frame, so embedding each would pile near-duplicate vectors into a
+density-based clustering step for no extra information.
 
 Output is JSONL rather than one array so the run is append-friendly and
 resumable: the checkpoint is just the set of keys already in the file, matching
@@ -37,7 +45,7 @@ from pathlib import Path
 import requests
 
 from code.lib.config import server_url
-from code.lib.jpg_index import JpgIndex, MatchPolicy, Verdict
+from code.lib.jpg_index import JpgIndex, Verdict, library_year
 from code.lib.xmp_labels import read_labels
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -58,12 +66,15 @@ def _on_sigint(signum, frame):
 class Candidate:
     """One bird sidecar that resolved to a JPEG."""
 
-    __slots__ = ("key", "year", "half_year", "trip", "xmp", "jpg", "species", "confidence", "verdict")
+    __slots__ = ("key", "year", "library", "trip", "xmp", "jpg", "species",
+                 "confidence", "verdict", "copies")
 
-    def __init__(self, key, year, half_year, trip, xmp, jpg, species, confidence, verdict):
-        self.key, self.year, self.half_year, self.trip = key, year, half_year, trip
+    def __init__(self, key, year, library, trip, xmp, jpg, species, confidence,
+                 verdict, copies=1):
+        self.key, self.year, self.library, self.trip = key, year, library, trip
         self.xmp, self.jpg = xmp, jpg
         self.species, self.confidence, self.verdict = species, confidence, verdict
+        self.copies = copies  # exported files for this capture; only jpg is embedded
 
     @property
     def stem(self):
@@ -71,60 +82,69 @@ class Candidate:
         return self.xmp.stem
 
 
-def year_dirs(data_dir: Path, years: list[str] | None):
+def library_dirs(data_dir: Path, years: list[str] | None):
+    """(year, library folder) pairs under `xmp/`, filtered by `--years`."""
     out = []
-    for d in sorted((data_dir / "xmp").glob("result-*")):
-        year = d.name[len("result-"):]
-        if years and year not in years:
+    for d in sorted((data_dir / "xmp").iterdir()):
+        if not d.is_dir():
             continue
-        if (d / "raw").is_dir():
-            out.append((year, d / "raw"))
+        year = library_year(d.name)
+        if year is None or (years and year not in years):
+            continue
+        out.append((year, d))
     return out
 
 
-def collect(data_dir: Path, years, policy: MatchPolicy, min_confidence: float):
+def collect(data_dir: Path, years, min_confidence: float):
     """Find every bird sidecar with a resolvable JPEG. Returns (candidates, counters)."""
-    index = JpgIndex(data_dir / "jpg", policy=policy)
+    index = JpgIndex(data_dir / "xmp", data_dir / "jpg")
     stats = Counter()
     per_year = Counter()
     candidates = []
+    wanted = {d.name for _, d in library_dirs(data_dir, years)}
 
-    for year, raw in year_dirs(data_dir, years):
-        for xmp in sorted(raw.rglob("*.xmp")):
-            stats["xmp"] += 1
-            labels = read_labels(xmp)
-            if labels is None:
-                stats["unparseable_xmp"] += 1
-                continue
-            if not labels.is_bird:
-                continue
-            stats["bird"] += 1
+    for xmp in index.sidecars():
+        rel = xmp.relative_to(data_dir / "xmp")
+        library = rel.parts[0]
+        if library not in wanted:
+            continue
+        stats["xmp"] += 1
+        labels = read_labels(xmp)
+        if labels is None:
+            stats["unparseable_xmp"] += 1
+            continue
+        if not labels.is_bird:
+            continue
+        stats["bird"] += 1
 
-            if labels.label is None:
-                stats["bird_without_label"] += 1
-            elif labels.label.confidence < min_confidence:
-                stats["below_min_confidence"] += 1
-                continue
+        if labels.label is None:
+            stats["bird_without_label"] += 1
+        elif labels.label.confidence < min_confidence:
+            stats["below_min_confidence"] += 1
+            continue
 
-            match = index.find(xmp, raw)
-            stats[f"verdict_{match.verdict.value}"] += 1
-            if not match.ok:
-                stats["unresolved"] += 1
-                continue
+        match = index.resolve(xmp)
+        stats[f"verdict_{match.verdict.value}"] += 1
+        if not match.ok:
+            stats["unresolved"] += 1
+            continue
+        if len(match.paths) > 1:
+            stats["multiple_copies"] += 1
 
-            rel = xmp.relative_to(raw)
-            candidates.append(Candidate(
-                key=f"{year}/{rel.as_posix()}",
-                year=year,
-                half_year=rel.parts[0] if len(rel.parts) > 1 else "",
-                trip=rel.parts[1] if len(rel.parts) > 2 else "",
-                xmp=xmp, jpg=match.path,
-                species=labels.species,
-                confidence=labels.label.confidence if labels.label else None,
-                verdict=match.verdict.value,
-            ))
-            per_year[year] += 1
-            stats["resolved"] += 1
+        year = library_year(library)
+        candidates.append(Candidate(
+            key=rel.as_posix(),
+            year=year,
+            library=library,
+            trip=str(Path(*rel.parts[1:-1])) if len(rel.parts) > 2 else "",
+            xmp=xmp, jpg=match.path,
+            species=labels.species,
+            confidence=labels.label.confidence if labels.label else None,
+            verdict=match.verdict.value,
+            copies=len(match.paths),
+        ))
+        per_year[year] += 1
+        stats["resolved"] += 1
 
     return candidates, stats, per_year
 
@@ -201,6 +221,9 @@ def report(stats: Counter, per_year: Counter, candidates, title):
     if stats["bird_without_label"]:
         logger.info(f"  bird, no parsed label : {stats['bird_without_label']}")
     logger.info(f"  resolved to a JPEG    : {stats['resolved']}")
+    if stats["multiple_copies"]:
+        logger.info(f"      exported >1 time  : {stats['multiple_copies']} "
+                    f"(virtual copies; first export embedded)")
     logger.info(f"  unresolved            : {stats['unresolved']}")
     for verdict in Verdict:
         n = stats.get(f"verdict_{verdict.value}", 0)
@@ -226,12 +249,6 @@ def main():
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (0 = no limit)")
     ap.add_argument("--min-confidence", type=float, default=0.0,
                     help="skip bird sidecars whose label confidence is below this")
-    ap.add_argument("--match-policy", type=MatchPolicy, choices=list(MatchPolicy),
-                    default=MatchPolicy.SAME_YEAR,
-                    help="how hard to try when the JPEG is not in the expected folder. "
-                         "'expected' is strictest; 'same_year' also takes a unique match "
-                         "elsewhere in the same year; 'any' takes a unique match anywhere "
-                         "and will return photos from unrelated shoots (default: same_year)")
     ap.add_argument("--encode-workers", type=int, default=8,
                     help="threads used to read and base64 the JPEGs of a batch")
     ap.add_argument("--dry-run", action="store_true",
@@ -246,9 +263,8 @@ def main():
         sys.exit(f"error: expected {args.data_dir}/xmp and {args.data_dir}/jpg to exist")
 
     logger.info(f"scanning {args.data_dir} for years="
-                f"{'all' if years is None else ','.join(years)} policy={args.match_policy.value}")
-    candidates, stats, per_year = collect(args.data_dir, years, args.match_policy,
-                                          args.min_confidence)
+                f"{'all' if years is None else ','.join(years)}")
+    candidates, stats, per_year = collect(args.data_dir, years, args.min_confidence)
     report(stats, per_year, candidates, "scan")
 
     if args.dry_run:
@@ -288,7 +304,7 @@ def main():
         return
 
     (args.output_dir / "run.json").write_text(json.dumps({
-        "years": years, "match_policy": args.match_policy.value,
+        "years": years,
         "batch_size": args.batch_size, "min_confidence": args.min_confidence,
         "embed_url": embed_url, "server": info, "model": model,
         "data_dir": str(args.data_dir), "candidates": len(candidates),
@@ -311,7 +327,7 @@ def main():
 
             for cand, vector in zip(batch, vectors):
                 fh.write(json.dumps({
-                    "key": cand.key, "year": cand.year, "half_year": cand.half_year,
+                    "key": cand.key, "year": cand.year, "library": cand.library,
                     "trip": cand.trip, "stem": cand.stem,
                     "jpg_path": str(cand.jpg), "xmp_path": str(cand.xmp),
                     "species": cand.species, "confidence": cand.confidence,
