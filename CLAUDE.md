@@ -105,7 +105,21 @@ of sidecars carry sub-second precision, timezone corrections move a capture acro
 days, and import clashes rename one copy, so the literal date+time+filename rule finds just
 265 of 534 redundant sidecars. Lightroom virtual copies (`-2`, `-3` stems) share an original
 but have their own `xmpMM:DocumentID` — deliberate alternate edits, reported separately and
-never offered for deletion. Report: `project/reports/sidecar_dedup_report.md`.
+never offered for deletion. Report: `project/reports/sidecar_dedup_report.md`. The
+duplicates were cleared on 2026-08-02; `./run-dedup` now reports 0 cross-trip duplicates.
+
+**Wraparound splitting** (`tools/analyze_wraparound.py`, **`./run-split`**) — proposes how
+to cut each year of `data/xmp0` into date-contiguous segments (`2019.1`, `2019.2`, ...)
+whose photo filenames are unique, so a jpg export folder can be keyed by filename. Run
+`./run-dedup` first: a photo filed into two neighbouring trips reads exactly like a counter
+collision and forces a cut that is not real, which is what made the previous splits so
+dense. **Nothing is renamed** — a Lightroom rename is not a local edit and the filename ties
+an exported jpg back to the separately-held raw, so the split absorbs the whole problem.
+The collision key is the **sidecar stem** = the exported jpg's basename, *not* `frame_id()`:
+Lightroom already disambiguated import clashes with a `YYYYMMDD-` prefix and virtual copies
+with `-N`, and both survive into the export, so those need no cut (35 segments against 41
+if keyed by `frame_id`). Report: `project/reports/wraparound_split_report.md`, assignment:
+`project/reports/split_plan.csv`. Method: `docs/wraparound-splitting.md`.
 
 **Deciding whether a filename collision is a duplicate** (`code/lib/trips.py`): trip folders
 are named `YYYY-MM-DD <place>`, so sorting them gives a timeline. A frame counter cannot
