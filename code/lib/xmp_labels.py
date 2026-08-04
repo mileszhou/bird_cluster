@@ -26,6 +26,24 @@ CATEGORIES = ("bird", "animal", "people", "scenery")
 # must not be mistaken for a model label.
 LABEL_RE = re.compile(r"^(?P<pinyin>[^-]+)-(?P<chinese>[^-]+)-(?P<english>.+)\((?P<confidence>\d+)%\)$")
 
+# Any injected label, not just a species one. `label_generator` only produces
+# the `py-cn-en` shape for bird/animal; scenery and people get a bare
+# description plus the confidence -- "person playing tennis(98%)" -- so LABEL_RE
+# does not match them and the trailing "(NN%)" is the only common marker.
+CONFIDENCE_SUFFIX_RE = re.compile(r"^_?.+\(\d{1,3}%\)$")
+
+# The earliest GPT-4o runs wrote a capitalised category and no confidence
+# suffix, so their output is not recognisable by shape alone.
+EARLY_CATEGORIES = ("People", "Unknown")
+
+# A hand-written species keyword: the same `py-cn-en` shape as a model label
+# but with no confidence. "xs-小隼-Kestrel", "bhl-山公园". These are the user's
+# own work and are never claimed, even in a sidecar this pipeline has labelled.
+HAND_WRITTEN_RE = re.compile(r"^[A-Za-z]+-\s*[^-]*[一-鿿]")
+# mk_label() prefixes a low-confidence result with an underscore; "_nb" is the
+# no-bird marker an early run wrote.
+NO_BIRD_MARKER = "_nb"
+
 
 class Label(NamedTuple):
     pinyin: str
@@ -78,6 +96,49 @@ class SidecarLabels(NamedTuple):
     @property
     def species(self) -> Optional[str]:
         return self.label.english if self.label else None
+
+
+def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Partition a sidecar's keywords into (ours, theirs).
+
+    "Ours" is anything a bird_label run injected, across all three generations
+    it has written: a bare category keyword, anything carrying a `(NN%)`
+    confidence suffix (species labels *and* the bare scenery/people
+    descriptions, which have no `py-cn-en` shape at all), the `_nb` marker, and
+    the early GPT-4o output that carried neither a suffix nor a lowercase
+    category.
+
+    That last generation is not recognisable by shape -- `mountain landscape
+    with glacier` looks like an ordinary keyword. Two signals together identify
+    it. The sidecar: a category keyword is only ever written by this pipeline.
+    And the text: that generation always wrote a *descriptive phrase*, while
+    the user's own keywords are single tokens (`Family`, `Rivertown`, `jx`) or
+    the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `qq-昵称`).
+
+    Measured over the dataset, the two signals together claim 2,241 free-text
+    entries -- every one a scene description -- while sparing 45 single tokens,
+    of which 44 are plainly the user's. The one arguable loss is `waterfall`
+    (8 photos), left behind as a stale keyword.
+
+    That asymmetry is deliberate. Leaving a stale keyword is a cosmetic problem
+    the user can fix; deleting a keyword they wrote by hand destroys work that
+    exists nowhere else. The `HAND_WRITTEN_RE` exemption matters most *after* a
+    full re-label, when every sidecar carries a category and the rule would
+    otherwise claim any species keyword added afterwards.
+    """
+    subjects = tuple(subjects)
+    has_category = any(s in CATEGORIES or s in EARLY_CATEGORIES for s in subjects)
+    ours, theirs = [], []
+    for keyword in subjects:
+        text = keyword.strip()
+        descriptive = " " in text and not HAND_WRITTEN_RE.match(text)
+        mine = (text in CATEGORIES
+                or text in EARLY_CATEGORIES
+                or text == NO_BIRD_MARKER
+                or CONFIDENCE_SUFFIX_RE.match(text) is not None
+                or (has_category and descriptive))
+        (ours if mine else theirs).append(keyword)
+    return tuple(ours), tuple(theirs)
 
 
 def read_labels(xmp_path) -> Optional[SidecarLabels]:

@@ -59,7 +59,7 @@ def write_csv(path, rows, fieldnames, encoding="utf-8"):
 
 
 FIELDS = ["path", "filename", "category", "label", "label_cn", "confidence", "note",
-          "run_label", "response_json"]
+          "prior_category", "prior_label", "applied", "run_label", "response_json"]
 
 
 def test_filter_csv_selects_animals_and_low_confidence(tmp_path):
@@ -118,3 +118,120 @@ def test_filter_csv_without_a_path_column_is_refused(tmp_path):
 def test_no_filter_requested(tmp_path):
     assert bl.load_filter_set(None, 0.6) is None
     assert bl.load_filter_set("", 0.6) is None
+
+
+# --- keyword writing: bird wins, anything else defers -----------------------
+
+XMP = """<?xml version="1.0"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+ <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+  <rdf:Description xmlns:dc="http://purl.org/dc/elements/1.1/"
+                   xmlns:lr="http://ns.adobe.com/lightroom/1.0/">
+   <dc:subject><rdf:{box}>{items}</rdf:{box}></dc:subject>
+   <lr:hierarchicalSubject><rdf:Bag>{items}</rdf:Bag></lr:hierarchicalSubject>
+  </rdf:Description>
+ </rdf:RDF>
+</x:xmpmeta>
+"""
+
+
+def sidecar(tmp_path, keywords, box="Bag", name="a.xmp"):
+    items = "".join(f"<rdf:li>{k}</rdf:li>" for k in keywords)
+    p = tmp_path / name
+    p.write_text(XMP.format(items=items, box=box), encoding="utf-8")
+    return p
+
+
+def subjects(path):
+    from code.lib.xmp_labels import read_subjects
+    return tuple(read_subjects(path))
+
+
+def test_bird_overwrites_an_existing_bird_label(tmp_path):
+    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
+    action, removed = bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("bird", "new-新-new bird(88%)")
+    assert removed == ("bird", "old-旧-old bird(95%)")
+
+
+def test_bird_overwrites_a_non_bird_category(tmp_path):
+    """Promotion to bird is the one judgement this pipeline is trusted on."""
+    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
+    action, _ = bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("bird", "new-新-new bird(88%)")
+
+
+def test_non_bird_defers_to_an_existing_category(tmp_path):
+    """The existing category is finer-grained; a fresh `scenery` loses detail."""
+    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
+    action, _ = bl.set_keywords_in_xmp(p, "scenery", "a hillside(70%)")
+    assert action == bl.APPLIED_KEPT
+    assert subjects(p) == ("mountain landscape with glacier", "scenery")
+
+
+def test_non_bird_never_demotes_an_existing_bird(tmp_path):
+    """Follows from the rule, and guards the clustering set against a false negative."""
+    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
+    action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)")
+    assert action == bl.APPLIED_KEPT
+    assert subjects(p) == ("bird", "old-旧-old bird(95%)")
+
+
+def test_non_bird_writes_when_nothing_is_there(tmp_path):
+    """Otherwise the 24,918 unlabelled sidecars would never get a category."""
+    p = sidecar(tmp_path, [])
+    action, _ = bl.set_keywords_in_xmp(p, "scenery", "a hillside(70%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("scenery", "a hillside(70%)")
+
+
+def test_non_bird_writes_over_user_keywords_without_a_category(tmp_path):
+    """A hand-written keyword is not a category, so it does not block the write."""
+    p = sidecar(tmp_path, ["xs-小隼-Kestrel"])
+    action, _ = bl.set_keywords_in_xmp(p, "scenery", "a hillside(70%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("xs-小隼-Kestrel", "scenery", "a hillside(70%)")
+
+
+def test_user_keywords_survive_and_stay_first(tmp_path):
+    p = sidecar(tmp_path, ["bhl-山公园", "bird", "old-旧-old bird(95%)"])
+    bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    assert subjects(p) == ("bhl-山公园", "bird", "new-新-new bird(88%)")
+
+
+def test_hierarchical_subject_is_written_in_step(tmp_path):
+    """Left stale, Lightroom resurrects the old keywords from it on import."""
+    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
+    bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    text = p.read_text(encoding="utf-8")
+    hierarchical = text[text.index("hierarchicalSubject"):]
+    assert "new-新-new bird(88%)" in hierarchical
+    assert "old-旧-old bird(95%)" not in hierarchical
+
+
+@pytest.mark.parametrize("box", ["Bag", "Seq"])
+def test_existing_container_kind_is_reused(tmp_path, box):
+    """Adding a second container makes the keyword list reader-dependent."""
+    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"], box=box)
+    bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    text = p.read_text(encoding="utf-8")
+    body = text[text.index("<dc:subject"):text.index("</dc:subject>")]
+    assert body.count("<rdf:Bag") + body.count("<rdf:Seq") == 1
+    assert f"<rdf:{box}" in body
+
+
+def test_writing_is_idempotent(tmp_path):
+    """A resumed run re-processes sidecars it already wrote; they must not stack."""
+    p = sidecar(tmp_path, ["bhl-山公园"])
+    for _ in range(3):
+        bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    assert subjects(p) == ("bhl-山公园", "bird", "new-新-new bird(88%)")
+
+
+def test_unparseable_sidecar_reports_failure(tmp_path):
+    p = tmp_path / "bad.xmp"
+    p.write_text("<not xml")
+    action, removed = bl.set_keywords_in_xmp(p, "bird", "x-y-z(90%)")
+    assert action == bl.APPLIED_FAILED and removed == ()

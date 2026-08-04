@@ -30,6 +30,7 @@ import time
 from code.lib.label_generator import pinyin_initials
 from code.lib.config import server_url
 from code.lib.jpg_index import JpgIndex, Verdict, library_year
+from code.lib.xmp_labels import CATEGORIES, EARLY_CATEGORIES, read_labels, split_keywords
 import code.lib.run_hf_bird_model_llamacpp
 
 logger = logging.getLogger("bird_label")
@@ -84,26 +85,93 @@ def _openai_chat_completion(messages, model_name):
 # XMP keyword handling (unchanged from original).
 # ------------------------------------------------------------
 
-def add_keywords_to_xmp(xmp_path: Path, keywords):
-    """Add keywords to an XMP side‑car file.
-    This version catches permission errors (e.g., when files are read‑only) and
-    attempts to fix the file mode before retrying. If it still fails, it logs a
-    warning and skips the file so the overall processing does not abort.
+XMP_NS = {
+    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
+    "dc": "http://purl.org/dc/elements/1.1/",
+    # Lightroom mirrors dc:subject here. Leaving it stale makes Lightroom
+    # resurrect the old keywords on import, so both are written together.
+    "lr": "http://ns.adobe.com/lightroom/1.0/",
+}
+
+# Lightroom writes dc:subject as an rdf:Bag; earlier runs of this script wrote
+# an rdf:Seq. Both appear in the dataset (13,879 Bags against 1,794 Seqs), so
+# reading must accept either and writing must reuse whichever is already there
+# -- adding a second container under one dc:subject yields a sidecar whose
+# keyword list depends on which container the reader happens to pick.
+_CONTAINERS = ("Bag", "Seq", "Alt")
+
+
+def _container(node, ns):
+    """The rdf:Bag/Seq/Alt inside a subject node, or None."""
+    for kind in _CONTAINERS:
+        found = node.find(f"rdf:{kind}", ns)
+        if found is not None:
+            return found
+    return None
+
+
+def _read_items(node, ns):
+    box = _container(node, ns)
+    return [] if box is None else [li.text or "" for li in box.findall("rdf:li", ns)]
+
+
+def _write_items(node, items, ns, ET):
+    """Replace a subject node's contents with `items`, keeping its container kind."""
+    box = _container(node, ns)
+    if box is None:
+        box = ET.SubElement(node, f"{{{ns['rdf']}}}Bag")
+    for li in list(box):
+        box.remove(li)
+    for text in items:
+        ET.SubElement(box, f"{{{ns['rdf']}}}li").text = text
+
+
+# What set_keywords_in_xmp() did, recorded in the CSV's `applied` column.
+APPLIED_WRITTEN = "written"        # the new label replaced whatever was there
+APPLIED_KEPT = "kept-existing"     # a non-bird result deferred to the prior label
+APPLIED_FAILED = "failed"
+
+
+def existing_category(keywords) -> str:
+    """The category keyword already on a sidecar, across both generations."""
+    return next((k for k in keywords
+                 if k in CATEGORIES or k in EARLY_CATEGORIES), "")
+
+
+def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
+    """Write this run's label into a sidecar, preserving the user's keywords.
+
+    **`bird` wins; anything else defers.** The new label replaces the previous
+    one only when this run identified a bird, or when the sidecar carries no
+    category at all. A non-bird result over an existing category leaves the
+    sidecar untouched: the categories already there are finer-grained than what
+    this run produces -- the early GPT-4o pass wrote specific scene
+    descriptions, and a fresh `scenery` would be a loss of information, not a
+    correction. Bird identification is the one axis this pipeline is
+    authoritative on, so it is the one it overwrites.
+
+    Note this also means a photo previously called `bird` is never demoted by a
+    non-bird result. That follows from the rule as stated and is deliberate --
+    a false negative would silently drop the photo from the clustering set --
+    but the CSV records both verdicts, so the disagreements stay recoverable.
+
+    Returns (action, previous keywords). The previous labels are *not* written
+    back into the sidecar anywhere: these files go back into Lightroom, and an
+    archive property would either pollute the catalog's keyword list or be
+    dropped on a round-trip. They are kept in the result CSV instead.
+
+    Catches permission errors (library-managed files are often read-only) and
+    retries once after a chmod, so one bad file does not abort the run.
     """
-    ns = {
-        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-        "dc": "http://purl.org/dc/elements/1.1/",
-    }
-    # Ensure namespaces are registered for new files.
     import xml.etree.ElementTree as ET
-    for prefix, uri in ns.items():
+    for prefix, uri in XMP_NS.items():
         ET.register_namespace(prefix, uri)
+    ns = XMP_NS
 
     try:
         tree = ET.parse(xmp_path)
         root = tree.getroot()
 
-        # Find or create the RDF Description block
         desc = root.find('.//rdf:Description', ns)
         if desc is None:
             rdf_elem = root.find('rdf:RDF', ns)
@@ -111,89 +179,56 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
                 rdf_elem = ET.SubElement(root, f"{{{ns['rdf']}}}RDF")
             desc = ET.SubElement(rdf_elem, f"{{{ns['rdf']}}}Description")
 
-        # Find or create dc:subject
         subject = desc.find('dc:subject', ns)
         if subject is None:
             subject = ET.SubElement(desc, f"{{{ns['dc']}}}subject")
 
-        # Find or create rdf:Seq within subject
-        seq = subject.find('rdf:Seq', ns)
-        if seq is None:
-            seq = ET.SubElement(subject, f"{{{ns['rdf']}}}Seq")
+        existing = _read_items(subject, ns)
+        ours, theirs = split_keywords(existing)
 
-        existing = {li.text for li in seq.findall('rdf:li', ns) if li.text}
-        for kw in keywords:
-            if kw not in existing:
-                li = ET.SubElement(seq, f"{{{ns['rdf']}}}li")
-                li.text = kw
+        if category != "bird" and existing_category(ours):
+            return APPLIED_KEPT, ours
 
-        # Write back, handling PermissionError.
+        # The user's own keywords first, in their original order, then ours.
+        keywords = [category, label]
+        merged = list(theirs) + [k for k in keywords if k not in theirs]
+        _write_items(subject, merged, ns, ET)
+
+        hierarchical = desc.find('lr:hierarchicalSubject', ns)
+        if hierarchical is not None:
+            _write_items(hierarchical, merged, ns, ET)
+
         try:
             tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
         except PermissionError:
-            # Try to make file writable and retry once.
             try:
                 xmp_path.chmod(0o666)
                 tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
                 logger.info(f"⚠️  Fixed permissions and updated {xmp_path.name}")
             except Exception as e2:
                 logger.info(f"⚠️  Could not write XMP file {xmp_path.name}: {e2}. Skipping.")
+                return APPLIED_FAILED, ours
+        return APPLIED_WRITTEN, ours
     except Exception as e:
         logger.info(f"⚠️  Failed to process XMP file {xmp_path.name}: {e}. Skipping.")
+        return APPLIED_FAILED, ()
 
 
-_INJECTED_CATEGORIES = {"bird", "animal", "people", "scenery"}
-_INJECTED_LABEL_RE = re.compile(r'^_?.+\(\d+%\)$')
+def prior_labels(xmp_file: Path, raw_root: Path) -> tuple[str, str]:
+    """(category, label) a previous run left on this photo, for the CSV.
 
-
-def _is_injected_keyword(text: str) -> bool:
-    return text in _INJECTED_CATEGORIES or bool(_INJECTED_LABEL_RE.match(text or ""))
-
-
-def strip_injected_keywords(raw_out: Path) -> int:
-    """Remove keywords previously written by add_keywords_to_xmp() from a fresh
-    copy of the raw XMP tree, so re-running against leftover output doesn't
-    treat a prior run's own labels as pre-existing metadata. Only removes the
-    rdf:Seq (or its parent dc:subject, if the Seq was its only content) that
-    matches the exact category/label shapes add_keywords_to_xmp() writes;
-    any other pre-existing dc:subject content (e.g. rdf:Bag, rdf:Alt) is left
-    untouched. Returns the number of files modified.
+    Read from the pristine `data/xmp` rather than from the working copy, so the
+    answer is the same whether or not `output/raw` already holds a partial
+    re-label. Reading the working copy would make a resumed run record its own
+    fresh labels as the prior ones, quietly destroying the very comparison this
+    column exists for.
     """
-    ns = {
-        "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-        "dc": "http://purl.org/dc/elements/1.1/",
-    }
-    import xml.etree.ElementTree as ET
-    for prefix, uri in ns.items():
-        ET.register_namespace(prefix, uri)
-
-    modified = 0
-    for xmp_path in raw_out.rglob('*.xmp'):
-        if not xmp_path.is_file():
-            continue
-        try:
-            tree = ET.parse(xmp_path)
-        except Exception as e:
-            logger.info(f"⚠️  Could not parse {xmp_path.name} while stripping keywords: {e}. Skipping.")
-            continue
-        root = tree.getroot()
-        changed = False
-        for desc in root.findall('.//rdf:Description', ns):
-            subject = desc.find('dc:subject', ns)
-            if subject is None:
-                continue
-            for seq in subject.findall('rdf:Seq', ns):
-                lis = seq.findall('rdf:li', ns)
-                if lis and all(_is_injected_keyword(li.text) for li in lis):
-                    subject.remove(seq)
-                    changed = True
-            if len(subject) == 0:
-                desc.remove(subject)
-                changed = True
-        if changed:
-            tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
-            modified += 1
-    return modified
+    labels = read_labels(PRISTINE_XMP_DIR / xmp_key(xmp_file, raw_root))
+    if labels is None or not labels.subjects:
+        return "", ""
+    ours, _ = split_keywords(labels.subjects)
+    category = next((s for s in ours if s in CATEGORIES or s in EARLY_CATEGORIES), "")
+    return category, ";".join(s for s in ours if s != category)
 
 # ------------------------------------------------------------
 # vLLM query (via OpenAI-compatible vLLM server, e.g. http://galileo:8000/v1).
@@ -412,6 +447,7 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         keywords = []
         note = "missing JPEG"
         category = ""
+        applied = APPLIED_FAILED
     else:
         switch = args.approach
         if switch == "llama.cpp":
@@ -425,14 +461,16 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
 
         # Choose keywords based on the returned category
-        keywords = []
-        keywords.append(category)
         spec = mk_label(category, label, label_cn, conf)
-        keywords.append(spec)
+        keywords = [category, spec]
         note = f"{category} ({conf:.2f})"
 
-        # Update XMP file (handles permission issues internally)
-        add_keywords_to_xmp(xmp_file, keywords)
+        # `bird` overwrites; anything else defers to an existing category.
+        applied, _ = set_keywords_in_xmp(xmp_file, category, spec)
+
+    # The label the previous run left, preserved in the CSV rather than in the
+    # sidecar -- these files go back into Lightroom and must stay clean.
+    prior_category, prior_label = prior_labels(xmp_file, raw_root)
 
     # Write CSV row (common for both branches)
     csv_writer.writerow([
@@ -443,10 +481,17 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         label_cn,
         f"{conf:.2f}",
         note,
+        prior_category,
+        prior_label,
+        applied,
         args.run_label,
         raw_json,
     ])
-    logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+    if applied == APPLIED_KEPT:
+        logger.info(f"↩️  {xmp_file.name} → {category} ({conf:.2f}); kept existing "
+                    f"'{prior_category}' label")
+    else:
+        logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
 
 
 # ------------------------------------------------------------
@@ -535,7 +580,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         writer = csv.writer(csvfile)
         if not resuming:
             writer.writerow(['path', 'filename', 'category', 'label', 'label_cn',
-                             'confidence', 'note', 'run_label', 'response_json'])
+                             'confidence', 'note', 'prior_category', 'prior_label',
+                             'applied', 'run_label', 'response_json'])
 
         interrupted = False
         def _sigint_handler(sig, frame):
@@ -556,8 +602,10 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                         jpg = find_jpg_for_xmp(xmp, xmp_root)
                         (valid_items if jpg is not None else missing).append((xmp, jpg))
                     for xmp, _ in missing:
+                        prior_cat, prior_lab = prior_labels(xmp, xmp_root)
                         writer.writerow([keys[xmp], xmp.name, "", "unknown", "未知", "0.00",
-                                         "missing JPEG", args.run_label, "{}"])
+                                         "missing JPEG", prior_cat, prior_lab,
+                                         APPLIED_FAILED, args.run_label, "{}"])
                         logger.info(f"⚠️  JPEG missing for {xmp.name}, skipping.")
                     if valid_items:
                         try:
@@ -565,13 +613,22 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 [jpg for _, jpg in valid_items], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
                             for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
-                                keywords = [category, mk_label(category, label, label_cn, conf)]
+                                spec = mk_label(category, label, label_cn, conf)
+                                keywords = [category, spec]
                                 note = f"{category} ({conf:.2f})"
-                                add_keywords_to_xmp(xmp_file, keywords)
+                                applied, _ = set_keywords_in_xmp(xmp_file, category, spec)
+                                prior_cat, prior_lab = prior_labels(xmp_file, xmp_root)
                                 writer.writerow([keys[xmp_file], xmp_file.name, category,
                                                  label, label_cn, f"{conf:.2f}", note,
+                                                 prior_cat, prior_lab, applied,
                                                  args.run_label, raw_json])
-                                logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+                                if applied == APPLIED_KEPT:
+                                    logger.info(f"↩️  {xmp_file.name} → {category} "
+                                                f"({conf:.2f}); kept existing "
+                                                f"'{prior_cat}' label")
+                                else:
+                                    logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} "
+                                                f"(conf={conf:.2f})")
                         except Exception as e:
                             logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
                             break
@@ -647,6 +704,9 @@ if __name__ == "__main__":
     DATA_DIR = Path(args.data_dir)
     JPG_DIR = DATA_DIR / "jpg"
     RAW_DIR = DATA_DIR / "xmp"
+    # Prior labels are always read from here, never from the working copy --
+    # see prior_labels().
+    PRISTINE_XMP_DIR = RAW_DIR
     if not RAW_DIR.is_dir() or not JPG_DIR.is_dir():
         sys.exit(f"error: expected {RAW_DIR} and {JPG_DIR} to exist")
 
@@ -656,12 +716,15 @@ if __name__ == "__main__":
     CSV_PATH = RUN_DIR / "bird_identification_output.csv"
 
     # Ensure output directories exist; copy raw data only if not already present
+    # The sidecar tree is copied here and keywords are injected into the copy;
+    # data/ is never written to. Prior labels are no longer stripped up front:
+    # set_keywords_in_xmp() replaces this pipeline's own keywords per sidecar as
+    # it goes, which makes a re-run idempotent whether or not the copy already
+    # holds labels, and prior_labels() reads the originals from data/ regardless.
     RUN_DIR.mkdir(parents=True, exist_ok=True)
     if not RAW_OUT.exists():
+        logger.info(f"📄 Copying sidecar tree {RAW_DIR} → {RAW_OUT} …")
         shutil.copytree(RAW_DIR, RAW_OUT)
-        stripped = strip_injected_keywords(RAW_OUT)
-        if stripped:
-            logger.info(f"🧹 Stripped leftover injected keywords from {stripped} XMP file(s) in {RAW_OUT}.")
     else:
         logger.info(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
     # Save command‑line args for reproducibility (overwrites previous args.json)

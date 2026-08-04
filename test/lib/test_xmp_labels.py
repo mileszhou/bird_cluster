@@ -1,7 +1,7 @@
 """Tests for code/lib/xmp_labels.py -- run from within test/: `pytest lib/`."""
 import pytest
 
-from code.lib.xmp_labels import parse_label, read_labels, read_subjects
+from code.lib.xmp_labels import parse_label, read_labels, read_subjects, split_keywords
 
 XMP_TEMPLATE = """<?xml version="1.0"?>
 <x:xmpmeta xmlns:x="adobe:ns:meta/">
@@ -91,3 +91,65 @@ def test_malformed_sidecar_is_none(tmp_path):
 
 def test_missing_file_is_none(tmp_path):
     assert read_labels(tmp_path / "nope.xmp") is None
+
+
+# --- split_keywords: which entries did this pipeline write? -----------------
+#
+# Three generations of injected labels exist in the dataset, and the earliest
+# is indistinguishable from an ordinary keyword by shape alone. The category
+# keyword is the discriminator: only this pipeline writes one.
+
+def test_current_generation_is_ours(tmp_path):
+    ours, theirs = split_keywords(["bird", "dhbo-大黑背鸥-great black-backed gull(95%)"])
+    assert ours == ("bird", "dhbo-大黑背鸥-great black-backed gull(95%)")
+    assert theirs == ()
+
+
+def test_early_free_text_is_ours_when_a_category_is_present(tmp_path):
+    """`mountain landscape with glacier` carries no confidence suffix."""
+    ours, theirs = split_keywords(["mountain landscape with glacier", "scenery"])
+    assert ours == ("mountain landscape with glacier", "scenery")
+    assert theirs == ()
+
+
+def test_hand_written_species_keywords_are_never_touched(tmp_path):
+    """The user's own py-cn-en keywords carry no confidence and no category."""
+    subjects = ["gycl- Andean Motmot-高原翠鴗", "add=20231014", "Rivertown"]
+    ours, theirs = split_keywords(subjects)
+    assert ours == ()
+    assert theirs == tuple(subjects)
+
+
+def test_a_stray_label_is_ours_even_without_a_category(tmp_path):
+    """The `(NN%)` shape is self-identifying wherever it appears."""
+    ours, theirs = split_keywords(["Rivertown", "person playing tennis(98%)", "_nb"])
+    assert ours == ("person playing tennis(98%)", "_nb")
+    assert theirs == ("Rivertown",)
+
+
+def test_a_category_claims_descriptive_phrases_only(tmp_path):
+    """A category marks the sidecar as ours, but single tokens stay the user's.
+
+    `People` sits beside the user's own `Family`/`Miles` tags in this dataset,
+    so the category alone must not be enough to claim them.
+    """
+    ours, theirs = split_keywords(["Family", "Miles", "a person on a beach", "People"])
+    assert theirs == ("Family", "Miles")
+    assert ours == ("a person on a beach", "People")
+
+
+def test_hand_written_names_survive_a_labelled_sidecar(tmp_path):
+    """After a full re-label every sidecar has a category; this must still hold."""
+    ours, theirs = split_keywords(["qq-昵称", "xs-小隼-Kestrel", "bird", "x-y-z(90%)"])
+    assert theirs == ("qq-昵称", "xs-小隼-Kestrel")
+    assert ours == ("bird", "x-y-z(90%)")
+
+
+def test_ordering_is_preserved(tmp_path):
+    ours, theirs = split_keywords(["a-b-c", "bird(90%)", "x-y-z", "q-r-s(10%)"])
+    assert ours == ("bird(90%)", "q-r-s(10%)")
+    assert theirs == ("a-b-c", "x-y-z")
+
+
+def test_empty_is_empty(tmp_path):
+    assert split_keywords([]) == ((), ())
