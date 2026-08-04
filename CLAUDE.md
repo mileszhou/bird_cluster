@@ -211,7 +211,7 @@ exists because the project package is named `code`, which shadows the stdlib mod
 same name once pytest preloads it.
 
 **Outputs** (in `output/`):
-- `bird_identification_output.csv` — main results (path, filename, category, label, label_cn, confidence, note, run_label, response_json). `path` is the key; `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string
+- `bird_identification_output.csv` — main results (path, filename, category, label, label_cn, confidence, note, prior_category, prior_label, run_label, response_json). `path` is the key; `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), or `failed`
 - `args.json` — CLI arguments for reproducibility
 - `processed.txt` — checkpoint, one `path` per line; delete to reprocess all images
 - `raw/` — the working copy of `data/xmp`, with keywords added. Getting labels back into the Lightroom library is a separate manual step; `data/` is never written to
@@ -224,6 +224,51 @@ same name once pytest preloads it.
 **Supporting library** (`code/lib/`):
 - `label_generator.py` — formats `{pinyin_initials}-{chinese_name}-{english_name}({confidence}%)` labels
 - `transformers_engine.py` — HuggingFace Transformers backend (in progress)
+
+## Re-labelling an already-labelled library
+
+`./clean && ./run-vllm` relabels everything — the checkpoint is what causes skipping, and
+`./clean` removes it. Nothing keys off whether a sidecar already carries a label.
+
+**Sidecars must stay clean**: they go back into Lightroom, so no archive property, no versioned
+keywords, nothing Lightroom would show in its keyword list. The previous label is preserved in
+the CSV's `prior_category` / `prior_label` columns instead, and `data/xmp` (read-only, versioned)
+still holds every original.
+
+**`bird` wins; anything else defers.** `set_keywords_in_xmp(xmp, category, label)` writes the new
+label only when this run said `bird`, or when the sidecar carries no category at all. A non-bird
+result over an existing category leaves the sidecar untouched — the categories already there are
+finer-grained than what a fresh run produces (the early GPT-4o pass wrote specific scene
+descriptions, so a new bare `scenery` would lose information rather than correct anything). Bird
+identification is the one axis this pipeline is authoritative on, so it is the one it overwrites.
+Current dataset: 24,783 sidecars have no category and always take the new label; 9,377 are
+protected (6,363 `bird`, 2,349 `scenery`, 336 `animal`, 179 `People`, 150 `Unknown`).
+
+A consequence worth knowing: a photo already called `bird` is **never demoted** by a non-bird
+result. That follows from the rule and guards the clustering set against a false negative, but it
+also preserves any genuine over-call from the old run. The CSV's `category` (this run) against
+`prior_category` (previous) plus `applied` (`written` / `kept-existing`) makes every disagreement
+recoverable without reading the sidecars.
+
+`set_keywords_in_xmp()` preserves the user's own keywords and is idempotent on re-run. Three
+things it has to get right:
+
+- **`rdf:Bag` vs `rdf:Seq`** — Lightroom writes `dc:subject` as a Bag (13,879 sidecars), earlier
+  runs of this script wrote a Seq (1,794). Read either; reuse whichever is present. Adding a
+  second container under one `dc:subject` makes the keyword list depend on which the reader picks.
+- **`lr:hierarchicalSubject`** — Lightroom mirrors `dc:subject` there and will resurrect old
+  keywords from it on import. Write both together or not at all.
+- **Which keywords are ours** (`split_keywords()` in `code/lib/xmp_labels.py`) — three
+  generations exist: bare categories, `py-cn-en(NN%)` labels, and early GPT-4o free text with no
+  confidence at all (`mountain landscape with glacier`). Note the `(NN%)` suffix is the *only*
+  common marker: scenery/people labels are a bare description, so `LABEL_RE` does not match them.
+  Early free text is claimed on two signals together — the sidecar carries a category (only this
+  pipeline writes one) *and* the text is a descriptive phrase. Single tokens (`Family`,
+  `Rivertown`) and the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `qq-昵称`) are always
+  the user's. Err towards leaving a stale keyword, never towards deleting hand-written work.
+
+`prior_labels()` reads the previous label from `data/xmp`, **not** from the working copy —
+otherwise a resumed run records its own fresh labels as the prior ones.
 
 ## Key Behaviors
 
