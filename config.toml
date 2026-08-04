@@ -3,7 +3,7 @@
 # host each backend server runs on. Add new parameters here as they come up.
 
 [servers.vllm]
-host = "spark"
+host = "darwin"
 port = 8000
 
 [servers.embed]

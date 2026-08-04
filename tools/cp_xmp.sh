@@ -1,13 +1,16 @@
 #!/bin/bash
 
 # Copy *.xmp to ./data/xmp0     # for analysis
-rsync -av --prune-empty-dirs \
+rsync -avu --prune-empty-dirs \
     --include='*/' \
     --include='*.xmp' \
     --exclude='*' \
-    --delete \
-    Photos/Photos-{18..25} \
-    "spark:$HOME/projects/bird_cluster/data/xmp/"
+    kepler:/mnt/d/Lightroom/MediaFiles/Photos/Photos-{18..25} \
+    "$HOME/projects/bird_cluster/data/xmp/" --dry-run
+
+rsync -avc --prune-empty-dirs \
+    kepler:/mnt/d/_Staging/jpg/ \
+    "$HOME/projects/bird_cluster/data/jpg/" --dry-run
 
 # Copy the photo library
 rsync -av \
