@@ -2,15 +2,17 @@
 
 # Copy *.xmp to ./data/xmp0     # for analysis
 rsync -avu --prune-empty-dirs \
+    --delete \
     --include='*/' \
     --include='*.xmp' \
     --exclude='*' \
-    kepler:/mnt/d/Lightroom/MediaFiles/Photos/Photos-{18..25} \
+    kepler:/mnt/d/Lightroom/MediaFiles/Photos/Photos-{16..25} \
     "$HOME/projects/bird_cluster/data/xmp/" --dry-run
 
 rsync -avc --prune-empty-dirs \
+    --delete \
     kepler:/mnt/d/_Staging/jpg/ \
-    "$HOME/projects/bird_cluster/data/jpg/" --dry-run
+    "$HOME/projects/bird_cluster/data/jpg/_flat/" --dry-run
 
 # Copy the photo library
 rsync -av \
