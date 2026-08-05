@@ -58,8 +58,8 @@ def write_csv(path, rows, fieldnames, encoding="utf-8"):
         wr.writerows(rows)
 
 
-FIELDS = ["path", "filename", "category", "label", "label_cn", "confidence", "note",
-          "prior_category", "prior_label", "applied", "run_label", "response_json"]
+FIELDS = ["path", "source", "filename", "category", "label", "label_cn", "confidence",
+          "note", "prior_category", "prior_label", "applied", "run_label", "response_json"]
 
 
 def test_filter_csv_selects_animals_and_low_confidence(tmp_path):
@@ -235,3 +235,59 @@ def test_unparseable_sidecar_reports_failure(tmp_path):
     p.write_text("<not xml")
     action, removed = bl.set_keywords_in_xmp(p, "bird", "x-y-z(90%)")
     assert action == bl.APPLIED_FAILED and removed == ()
+
+
+# --- work items: sidecars, plus JPEGs that never had one --------------------
+
+@pytest.fixture
+def dataset(tmp_path):
+    """A sidecar with a jpg, a sidecar without, and two jpgs with no sidecar."""
+    from code.lib.jpg_index import JpgIndex
+    trip = "Photos-19/2019-01-13 crane"
+    (tmp_path / "xmp" / trip).mkdir(parents=True)
+    (tmp_path / "jpg" / trip).mkdir(parents=True)
+    sidecar(tmp_path / "xmp" / trip, ["bird", "old-旧-old bird(95%)"], name="paired.xmp")
+    sidecar(tmp_path / "xmp" / trip, [], name="unexported.xmp")
+    for stem in ("paired", "IMG_0001", "_D5C1940"):
+        (tmp_path / "jpg" / trip / f"{stem}.jpg").write_bytes(b"\xff\xd8\xff")
+    return tmp_path, JpgIndex(tmp_path / "xmp", tmp_path / "jpg")
+
+
+def test_orphan_jpgs_are_excluded_by_default(dataset):
+    root, index = dataset
+    items = bl.build_items(index, root / "xmp", root / "jpg", None, False)
+    assert {i.source for i in items} == {bl.SOURCE_XMP}
+    assert sorted(i.name for i in items) == ["paired.xmp", "unexported.xmp"]
+
+
+def test_orphan_jpgs_are_included_on_request(dataset):
+    root, index = dataset
+    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
+    orphans = [i for i in items if i.source == bl.SOURCE_JPG_ONLY]
+    assert sorted(i.name for i in orphans) == ["IMG_0001.jpg", "_D5C1940.jpg"]
+    assert all(i.xmp is None and i.jpg is not None for i in orphans)
+
+
+def test_orphan_key_is_the_jpg_path_and_cannot_collide_with_a_sidecar(dataset):
+    """Both trees are keyed the same way; the extension keeps them distinct."""
+    root, index = dataset
+    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
+    keys = [i.key for i in items]
+    assert len(set(keys)) == len(keys)
+    assert "Photos-19/2019-01-13 crane/paired.xmp" in keys
+    assert "Photos-19/2019-01-13 crane/IMG_0001.jpg" in keys
+
+
+def test_sidecar_without_an_export_still_becomes_an_item(dataset):
+    """It gets a `missing JPEG` CSV row rather than being dropped silently."""
+    root, index = dataset
+    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
+    unexported = next(i for i in items if i.name == "unexported.xmp")
+    assert unexported.jpg is None and unexported.xmp is not None
+
+
+def test_year_filter_applies_to_orphans_too(dataset):
+    root, index = dataset
+    assert bl.build_items(index, root / "xmp", root / "jpg", ["2019"], True)
+    with pytest.raises(SystemExit):
+        bl.build_items(index, root / "xmp", root / "jpg", ["2024"], True)
