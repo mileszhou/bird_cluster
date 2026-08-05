@@ -21,6 +21,7 @@ import signal
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import NamedTuple, Optional
 import csv
 import urllib.request
 import re
@@ -29,7 +30,7 @@ import time
 
 from code.lib.label_generator import pinyin_initials
 from code.lib.config import server_url
-from code.lib.jpg_index import JpgIndex, Verdict, library_year
+from code.lib.jpg_index import ExtraKind, JpgIndex, library_year
 from code.lib.xmp_labels import CATEGORIES, EARLY_CATEGORIES, read_labels, split_keywords
 import code.lib.run_hf_bird_model_llamacpp
 
@@ -129,6 +130,7 @@ def _write_items(node, items, ns, ET):
 # What set_keywords_in_xmp() did, recorded in the CSV's `applied` column.
 APPLIED_WRITTEN = "written"        # the new label replaced whatever was there
 APPLIED_KEPT = "kept-existing"     # a non-bird result deferred to the prior label
+APPLIED_CSV_ONLY = "csv-only"      # no sidecar exists; the CSV is the only record
 APPLIED_FAILED = "failed"
 
 
@@ -214,7 +216,7 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
         return APPLIED_FAILED, ()
 
 
-def prior_labels(xmp_file: Path, raw_root: Path) -> tuple[str, str]:
+def prior_labels(key: str) -> tuple[str, str]:
     """(category, label) a previous run left on this photo, for the CSV.
 
     Read from the pristine `data/xmp` rather than from the working copy, so the
@@ -222,13 +224,69 @@ def prior_labels(xmp_file: Path, raw_root: Path) -> tuple[str, str]:
     re-label. Reading the working copy would make a resumed run record its own
     fresh labels as the prior ones, quietly destroying the very comparison this
     column exists for.
+
+    A JPEG-only item's key names a `.jpg`, so nothing is found and the columns
+    come back empty -- which is the truth: it never had a sidecar.
     """
-    labels = read_labels(PRISTINE_XMP_DIR / xmp_key(xmp_file, raw_root))
+    labels = read_labels(PRISTINE_XMP_DIR / key)
     if labels is None or not labels.subjects:
         return "", ""
     ours, _ = split_keywords(labels.subjects)
     category = next((s for s in ours if s in CATEGORIES or s in EARLY_CATEGORIES), "")
     return category, ";".join(s for s in ours if s != category)
+
+
+# Where a work item came from, recorded in the CSV's `source` column, which
+# says what `path` refers to.
+SOURCE_XMP = "xmp"            # a sidecar; `path` is relative to data/xmp
+SOURCE_JPG_ONLY = "jpg-only"  # a JPEG with no sidecar; `path` is relative to data/jpg
+
+
+class WorkItem(NamedTuple):
+    """One photo to label. `xmp` is None when the JPEG has no sidecar."""
+    key: str                # checkpoint entry and the CSV's `path`
+    name: str               # the CSV's `filename`
+    jpg: Optional[Path]     # image to send to the model; None if never exported
+    xmp: Optional[Path]     # sidecar to update; None for a JPEG-only item
+    source: str
+
+
+def build_items(index, xmp_root: Path, jpg_root: Path, years, include_orphans: bool):
+    """Everything this run should label, sidecars first then JPEG-only extras.
+
+    JPEG-only items are exports with no raw behind them, so there is no sidecar
+    to write and their label lives in the CSV alone. Most are phone photos, but
+    607 come from interchangeable-lens bodies and cluster in birding trips, so
+    they are not safely assumed to be non-birds.
+    """
+    wanted = {d.name for d in select_libraries(xmp_root, years)}
+    items = []
+    for xmp in index.sidecars():
+        if xmp.relative_to(xmp_root).parts[0] not in wanted:
+            continue
+        items.append(WorkItem(xmp_key(xmp, xmp_root), xmp.name,
+                              index.resolve(xmp).path, xmp, SOURCE_XMP))
+    if include_orphans:
+        for extra in index.extras():
+            if extra.kind is not ExtraKind.ORPHAN:
+                continue
+            if extra.folder.split("/")[0] not in wanted:
+                continue
+            items.append(WorkItem(extra.path.relative_to(jpg_root).as_posix(),
+                                  extra.path.name, extra.path, None, SOURCE_JPG_ONLY))
+    items.sort(key=lambda item: item.key)
+    return items
+
+
+def write_row(csv_writer, item, category, label, label_cn, conf, note, applied,
+              raw_json, args):
+    prior_category, prior_label = prior_labels(item.key)
+    csv_writer.writerow([
+        item.key, item.source, item.name, category, label, label_cn,
+        f"{conf:.2f}", note, prior_category, prior_label, applied,
+        args.run_label, raw_json,
+    ])
+    return prior_category
 
 # ------------------------------------------------------------
 # vLLM query (via OpenAI-compatible vLLM server, e.g. http://galileo:8000/v1).
@@ -399,15 +457,6 @@ def jpg_index(raw_root: Path) -> JpgIndex:
     return _JPG_INDEX
 
 
-def find_jpg_for_xmp(xmp_file: Path, raw_root: Path):
-    match = jpg_index(raw_root).resolve(xmp_file)
-    if match.ok:
-        return match.path
-    if match.verdict is Verdict.NO_FOLDER:
-        logger.info(f"⚠️  No exported folder for {xmp_file.parent.name}; skipping {xmp_file.name}.")
-    return None
-
-
 def xmp_key(xmp_file: Path, raw_root: Path) -> str:
     """Identity of a sidecar for the checkpoint and the CSV.
 
@@ -427,18 +476,16 @@ def xmp_key(xmp_file: Path, raw_root: Path) -> str:
 # Process a single XMP file (extracted for notebook testing)
 # ------------------------------------------------------------
 
-def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None:
-    """Process one XMP side‑car file.
-    - Finds the matching JPEG.
-    - Calls the GPT‑4o model.
-    - Updates the XMP with keyword tags.
+def process_single_item(item: "WorkItem", csv_writer, args) -> None:
+    """Process one photo.
+    - Calls the selected model on its JPEG.
+    - Updates the sidecar with keyword tags, if it has one.
     - Writes a row to the provided CSV writer.
     - Prints a concise status line.
     """
-    jpg_file = find_jpg_for_xmp(xmp_file, raw_root)
     # Avoid early return: handle missing JPEG with an else block.
-    if jpg_file is None:
-        logger.info(f"⚠️  JPEG missing for {xmp_file.name}, skipping.")
+    if item.jpg is None:
+        logger.info(f"⚠️  JPEG missing for {item.name}, skipping.")
         # Populate placeholder values so the CSV row can still be written if desired.
         label = "unknown"
         label_cn = "未知"
@@ -451,13 +498,13 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
     else:
         switch = args.approach
         if switch == "llama.cpp":
-            category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(jpg_file, args.model, args.conf_threshold, args.no_bird, args.llama_url)
+            category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
         elif switch == "chatgpt":
-            category, label, label_cn, conf, raw_json = predict_with_gpt4o(jpg_file, args.model, args.conf_threshold, args.no_bird)
+            category, label, label_cn, conf, raw_json = predict_with_gpt4o(item.jpg, args.model, args.conf_threshold, args.no_bird)
         elif switch == "vllm":
-            category, label, label_cn, conf, raw_json = predict_with_vllm(jpg_file, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
-        else: # should not happen due to argparse choices, but handle gracefully:else: # should not happen due to argparse choices, but handle gracefully:
-            logger.info(f"⚠️  Unknown approach '{switch}' for {xmp_file.name}, skipping.")
+            category, label, label_cn, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
+        else: # should not happen due to argparse choices, but handle gracefully:
+            logger.info(f"⚠️  Unknown approach '{switch}' for {item.name}, skipping.")
             category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
 
         # Choose keywords based on the returned category
@@ -465,33 +512,22 @@ def process_single_xmp(xmp_file: Path, csv_writer, args, raw_root: Path) -> None
         keywords = [category, spec]
         note = f"{category} ({conf:.2f})"
 
-        # `bird` overwrites; anything else defers to an existing category.
-        applied, _ = set_keywords_in_xmp(xmp_file, category, spec)
+        if item.xmp is None:
+            # No sidecar to carry the label; the CSV is the only record.
+            applied = APPLIED_CSV_ONLY
+        else:
+            # `bird` overwrites; anything else defers to an existing category.
+            applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
 
-    # The label the previous run left, preserved in the CSV rather than in the
-    # sidecar -- these files go back into Lightroom and must stay clean.
-    prior_category, prior_label = prior_labels(xmp_file, raw_root)
-
-    # Write CSV row (common for both branches)
-    csv_writer.writerow([
-        xmp_key(xmp_file, raw_root),
-        xmp_file.name,
-        category,
-        label,
-        label_cn,
-        f"{conf:.2f}",
-        note,
-        prior_category,
-        prior_label,
-        applied,
-        args.run_label,
-        raw_json,
-    ])
+    prior_category = write_row(csv_writer, item, category, label, label_cn, conf,
+                               note, applied, raw_json, args)
     if applied == APPLIED_KEPT:
-        logger.info(f"↩️  {xmp_file.name} → {category} ({conf:.2f}); kept existing "
+        logger.info(f"↩️  {item.name} → {category} ({conf:.2f}); kept existing "
                     f"'{prior_category}' label")
+    elif applied == APPLIED_CSV_ONLY:
+        logger.info(f"📄 {item.name} → {', '.join(keywords)} (conf={conf:.2f}); CSV only")
     else:
-        logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} (conf={conf:.2f})")
+        logger.info(f"✅ {item.name} → {', '.join(keywords)} (conf={conf:.2f})")
 
 
 # ------------------------------------------------------------
@@ -546,25 +582,26 @@ def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
 
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
-    # Determine a deterministic order for processing files
-    xmp_files = sorted(
-        (p for d in select_libraries(xmp_root, getattr(args, 'years', None))
-         for p in d.rglob('*.xmp') if p.is_file()),
-        key=lambda p: p.as_posix())
+    items = build_items(jpg_index(xmp_root), xmp_root, JPG_DIR,
+                        getattr(args, 'years', None),
+                        getattr(args, 'include_orphan_jpg', False))
+    orphans = sum(1 for it in items if it.source == SOURCE_JPG_ONLY)
+    if orphans:
+        logger.info(f"⚙️  Including {orphans} JPEGs with no sidecar -- labelled to the CSV only.")
+
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:
         logger.info(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
-    # Checkpoint keyed by path relative to xmp_root -- see xmp_key() for why a
-    # bare filename silently skips thousands of sidecars.
+    # Checkpoint keyed by path relative to the tree root -- see xmp_key() for
+    # why a bare filename silently skips thousands of sidecars.
     checkpoint_path = csv_path.parent / "processed.txt"
     processed: set = set()
     if checkpoint_path.is_file():
         processed = set(line.strip() for line in checkpoint_path.read_text().splitlines())
 
-    keys = {xmp: xmp_key(xmp, xmp_root) for xmp in xmp_files}
     pending = [
-        xmp for xmp in xmp_files
-        if keys[xmp] not in processed and (filter_set is None or keys[xmp] in filter_set)
+        item for item in items
+        if item.key not in processed and (filter_set is None or item.key in filter_set)
     ]
 
     batch_size = getattr(args, 'batch_size', 1)
@@ -579,7 +616,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     with open(csv_path, csv_mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not resuming:
-            writer.writerow(['path', 'filename', 'category', 'label', 'label_cn',
+            writer.writerow(['path', 'source', 'filename', 'category', 'label', 'label_cn',
                              'confidence', 'note', 'prior_category', 'prior_label',
                              'applied', 'run_label', 'response_json'])
 
@@ -596,54 +633,51 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
             for i in range(0, len(pending), step):
                 if use_batch:
                     batch = pending[i:i + batch_size]
-                    # Separate missing JPEGs from valid ones
-                    valid_items, missing = [], []
-                    for xmp in batch:
-                        jpg = find_jpg_for_xmp(xmp, xmp_root)
-                        (valid_items if jpg is not None else missing).append((xmp, jpg))
-                    for xmp, _ in missing:
-                        prior_cat, prior_lab = prior_labels(xmp, xmp_root)
-                        writer.writerow([keys[xmp], xmp.name, "", "unknown", "未知", "0.00",
-                                         "missing JPEG", prior_cat, prior_lab,
-                                         APPLIED_FAILED, args.run_label, "{}"])
-                        logger.info(f"⚠️  JPEG missing for {xmp.name}, skipping.")
+                    valid_items = [it for it in batch if it.jpg is not None]
+                    for item in (it for it in batch if it.jpg is None):
+                        write_row(writer, item, "", "unknown", "未知", 0.0,
+                                  "missing JPEG", APPLIED_FAILED, "{}", args)
+                        logger.info(f"⚠️  JPEG missing for {item.name}, skipping.")
                     if valid_items:
                         try:
                             batch_results = predict_with_vllm_batch(
-                                [jpg for _, jpg in valid_items], args.vllm_url, args.model, args.conf_threshold, args.no_bird
+                                [it.jpg for it in valid_items], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
-                            for (xmp_file, _), (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
+                            for item, (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
                                 spec = mk_label(category, label, label_cn, conf)
                                 keywords = [category, spec]
                                 note = f"{category} ({conf:.2f})"
-                                applied, _ = set_keywords_in_xmp(xmp_file, category, spec)
-                                prior_cat, prior_lab = prior_labels(xmp_file, xmp_root)
-                                writer.writerow([keys[xmp_file], xmp_file.name, category,
-                                                 label, label_cn, f"{conf:.2f}", note,
-                                                 prior_cat, prior_lab, applied,
-                                                 args.run_label, raw_json])
+                                if item.xmp is None:
+                                    applied = APPLIED_CSV_ONLY
+                                else:
+                                    applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
+                                prior_cat = write_row(writer, item, category, label, label_cn,
+                                                      conf, note, applied, raw_json, args)
                                 if applied == APPLIED_KEPT:
-                                    logger.info(f"↩️  {xmp_file.name} → {category} "
+                                    logger.info(f"↩️  {item.name} → {category} "
                                                 f"({conf:.2f}); kept existing "
                                                 f"'{prior_cat}' label")
+                                elif applied == APPLIED_CSV_ONLY:
+                                    logger.info(f"📄 {item.name} → {', '.join(keywords)} "
+                                                f"(conf={conf:.2f}); CSV only")
                                 else:
-                                    logger.info(f"✅ {xmp_file.name} → {', '.join(keywords)} "
+                                    logger.info(f"✅ {item.name} → {', '.join(keywords)} "
                                                 f"(conf={conf:.2f})")
                         except Exception as e:
                             logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
                             break
                     # Checkpoint entire batch (including skipped missing-JPEG files)
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                        for xmp in batch:
-                            cp.write(f"{keys[xmp]}\n")
+                        for item in batch:
+                            cp.write(f"{item.key}\n")
                 else:
-                    xmp_file = pending[i]
+                    item = pending[i]
                     try:
-                        process_single_xmp(xmp_file, writer, args, raw_root=xmp_root)
+                        process_single_item(item, writer, args)
                         with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                            cp.write(f"{keys[xmp_file]}\n")
+                            cp.write(f"{item.key}\n")
                     except Exception as e:
-                        logger.info(f"⚠️  Error processing {xmp_file.name}: {e}. Stopping batch to preserve checkpoint.")
+                        logger.info(f"⚠️  Error processing {item.name}: {e}. Stopping batch to preserve checkpoint.")
                         break
                 if interrupted:
                     logger.info("Stopped cleanly. Re-run to resume.")
@@ -669,6 +703,11 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
+    parser.add_argument("--include-orphan-jpg", action="store_true",
+                        help="Also label exported JPEGs that have no sidecar (photos that "
+                             "were never raw). They have nowhere to carry a keyword, so the "
+                             "result is written to the CSV only, flagged source=jpg-only and "
+                             "applied=csv-only")
     args = parser.parse_args()
 
     args.years = None if args.years.strip().lower() == "all" else [

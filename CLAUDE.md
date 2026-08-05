@@ -60,11 +60,25 @@ Reset output: `./clean`
 6. `code/lib/label_generator.py` formats a compact label with pinyin initials and confidence
 7. XMP sidecar gets keywords injected; CSV row appended; checkpoint updated
 
-**JPEG matching** (`find_jpg_for_xmp` in `code/bird_label.py`, backed by `code/lib/jpg_index.py`
+**JPEG matching** (`build_items()` in `code/bird_label.py`, backed by `code/lib/jpg_index.py`
 — the same resolver the embedding step uses): the export mirrors the library, so a sidecar's
 JPEG is a lookup inside its own trip folder. Camera counters wrap and stems repeat across the
 library, but with the folder part of the key that creates no ambiguity, so the whole-tree stem
 fallback the old flat export needed (and the cross-shoot mismatches it caused) is gone.
+
+**Decorated exports.** A JPEG whose stem is `<sidecar stem>-<something>` is a derived export:
+`-2`/`-3` (Lightroom silently renaming on an unnecessary re-import — *not* virtual copies),
+`-Enhanced-NR` (AI Denoise), `-Pano`, `-HDR`, `-Edit`. Matching is prefix-based, so a new
+decoration needs no code change. Two cases, treated oppositely: where the plain `X.jpg` is
+**absent** the decorated file is the capture's only export and is used (5,990 sidecars); where
+`X.jpg` **exists** the decorated file is surplus and ignored (193, all with an intact pair).
+
+**JPEG-only items** (`--include-orphan-jpg`) — 4,857 exported JPEGs have no sidecar, the source
+never having been raw. They have nowhere to carry a keyword, so their label goes to the CSV alone,
+flagged `source=jpg-only` / `applied=csv-only` and keyed by the path relative to `data/jpg` (the
+extension keeps those keys from colliding with sidecar keys). Do not assume they are non-birds:
+607 come from interchangeable-lens bodies (Nikon Z9/D500/D850/D5/Z8, Canon R5, Sony) and cluster
+in birding trips — `2025-04-25.1 Birding Birds` alone holds 118.
 
 **Never key anything by basename** — not the checkpoint, not the CSV, not a filter set. 10,832
 of the 34,160 sidecars share a basename with another. `output/processed.txt` and the CSV's
@@ -211,7 +225,7 @@ exists because the project package is named `code`, which shadows the stdlib mod
 same name once pytest preloads it.
 
 **Outputs** (in `output/`):
-- `bird_identification_output.csv` — main results (path, filename, category, label, label_cn, confidence, note, prior_category, prior_label, run_label, response_json). `path` is the key; `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), or `failed`
+- `bird_identification_output.csv` — main results (path, source, filename, category, label, label_cn, confidence, note, prior_category, prior_label, run_label, response_json). `path` is the key; `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar exists) or `failed`. `source` says what `path` refers to: `xmp` (relative to `data/xmp`) or `jpg-only` (relative to `data/jpg`)
 - `args.json` — CLI arguments for reproducibility
 - `processed.txt` — checkpoint, one `path` per line; delete to reprocess all images
 - `raw/` — the working copy of `data/xmp`, with keywords added. Getting labels back into the Lightroom library is a separate manual step; `data/` is never written to
