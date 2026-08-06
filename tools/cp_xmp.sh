@@ -1,8 +1,7 @@
 #!/bin/bash
 
 # Copy *.xmp to ./data/xmp0     # for analysis
-rsync -avu --prune-empty-dirs \
-    --delete \
+rsync -avu \
     --include='*/' \
     --include='*.xmp' \
     --exclude='*' \
