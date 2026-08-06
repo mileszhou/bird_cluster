@@ -9,7 +9,7 @@ rsync -avu --prune-empty-dirs \
     kepler:/mnt/d/Lightroom/MediaFiles/Photos/Photos-{16..25} \
     "$HOME/projects/bird_cluster/data/xmp/" --dry-run
 
-rsync -avc --prune-empty-dirs \
+rsync -av --prune-empty-dirs \
     --delete \
     kepler:/mnt/d/_Staging/jpg/ \
     "$HOME/projects/bird_cluster/data/jpg/_flat/" --dry-run
