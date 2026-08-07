@@ -90,8 +90,9 @@ committing 11+ hours of labelling to it.
 
 ## 5. Nothing was labelled with stale keys
 
-- [ ] `./clean` — the current `output/` references the pre-dedup trees. Its checkpoint keys are
-      JPEG paths, so anything renamed or removed would resume onto the wrong photo.
+- [ ] `./clean pre-dedup` — the current `output/` references the pre-dedup trees. Its checkpoint
+      keys are JPEG paths, so anything renamed or removed would resume onto the wrong photo.
+      This archives rather than deletes, so the old run stays readable for comparison.
 - [ ] Confirm `output/` is empty apart from `raw/` being re-copied on the next run.
 
 ---
@@ -109,15 +110,17 @@ committing 11+ hours of labelling to it.
       - Header is the 14-column schema starting `jpg,xmp,filename`.
       - A written sidecar's diff against `data/xmp` is 4–6 lines, all `<rdf:li>`.
       - At least one `applied=csv-only` row appears (sidecar-less JPEGs are in scope now).
-- [ ] `./clean` again, then start the real run.
+- [ ] `./clean smoke` again, then start the real run.
 
 ---
 
 ## 7. After the full run completes
 
-- [ ] Archive the CSV **outside** `output*/` before any later `./clean` — `output*/` is
-      gitignored and `./clean` is `rm -rf`. The `results/<label>/` pattern from git history is
-      the precedent.
+- [ ] `./clean full-run-<date>` — this *archives* `output/` to
+      `output_NNN_full-run-<date>/` rather than deleting it, so the CSV survives in place.
+      Still worth copying it somewhere tracked if it is the run of record: `output*/` is
+      gitignored, so an archive is safe from `./clean` but not from a stray `rm`. The
+      `results/<label>/` pattern from git history is the precedent.
 - [ ] `rsync` `output/raw/` into the library, then *Metadata → Read Metadata from File* in
       Lightroom. The writer does not bump `xmp:MetadataDate`, so Lightroom will not flag the
       change on its own.

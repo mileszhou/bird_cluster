@@ -40,7 +40,13 @@ Key CLI flags:
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--years LIST` — label only these years, e.g. `--years 2019,2021` (default `all`). Selects library folders by year: `2019` → `Photos-19`
 
-Reset output: `./clean`
+Start a fresh run: **`./clean`** — it *archives* `output/` to `output_NNN/` (one beyond the
+highest present) and creates an empty one. Nothing is deleted. `./clean first-full-run` appends
+a description, and an archive can be renamed by hand later (`output_003_qwen32b`) without
+breaking the numbering — only the leading digits are read. `output*/` is gitignored, so the
+archives are too. `raw/` is a full copy of the sidecar tree (739 MB) and dominates each
+archive's size; it is safe to drop from an archive once its labels have been rsynced into the
+library, keeping the CSV, log, `args.json` and checkpoint.
 
 `run-vllm` is the recommended approach — it talks to a vLLM OpenAI-compatible server (`--vllm-url`, default from `config.toml` `[servers.vllm]`) rather than loading the model in-process, so start the server separately (see `run-server-vllm` for an example) before running this. On startup the script probes `{vllm-url}/models` and swaps in whatever model the server actually has loaded if `--model` doesn't match, so the requested model name doesn't need to be exact.
 
@@ -322,7 +328,8 @@ same name once pytest preloads it.
 ## Re-labelling an already-labelled library
 
 `./clean && ./run-vllm` relabels everything — the checkpoint is what causes skipping, and
-`./clean` removes it. Nothing keys off whether a sidecar already carries a label.
+`./clean` moves it aside with the rest of `output/`. Nothing keys off whether a sidecar already
+carries a label.
 
 **Sidecars must stay clean**: they go back into Lightroom, so no archive property, no versioned
 keywords, nothing Lightroom would show in its keyword list. The previous label is preserved in

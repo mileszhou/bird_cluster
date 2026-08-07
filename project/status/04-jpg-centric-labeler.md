@@ -116,7 +116,8 @@ reconciles exactly: 49,270 = 49,270.
 
 1. Lightroom dedup + re-export (see `05-post-dedup-checklist.md`).
 2. `./clean`, then the full run: 49,270 images, ~11–18 hours at the 0.75–1.33 img/s observed.
-3. Archive the finished CSV outside `output*/` before any later `./clean`.
+3. `./clean <description>` between runs — it archives `output/` to `output_NNN_<description>/`
+   rather than deleting it, so no run's CSV is ever lost.
 4. Then embedding — `embed.py` still walks sidecars and needs pointing at the CSV.
 
 ## Open, not blocking
