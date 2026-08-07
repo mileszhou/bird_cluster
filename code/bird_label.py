@@ -208,18 +208,27 @@ class WorkItem(NamedTuple):
     """One exported JPEG to label.
 
     `key` is the JPEG's path relative to `data/jpg` -- the checkpoint entry and
-    the CSV's `jpg` column. `xmp` is the sidecar this label writes into, or None
-    when the JPEG has none of its own: either it never had a raw behind it, or
-    its capture's sidecar was already claimed by the exact-stem export and this
-    file is an alternate edit.
+    the CSV's `jpg` column.
+
+    `xmp` is the sidecar this image *belongs to*, and `owns_xmp` says whether
+    this image is the one that writes it. The two are separate on purpose. An
+    alternate edit (`X-2.jpg`, whose capture's sidecar went to `X.jpg`) still
+    names its capture, so grouping the CSV by `xmp` recovers every export of one
+    frame -- which is what a post-hoc dedup needs. Collapsing the two would make
+    it indistinguishable from a photo that never had a raw at all, and there are
+    5,229 of those against 313 alternate edits.
+
+    So `xmp` is None only for a genuine orphan, and `applied` says what happened:
+    `csv-only` covers both, `xmp` tells them apart.
     """
     key: str                # checkpoint entry and the CSV's `jpg`
     name: str               # the CSV's `filename`, a bare basename for reading
     jpg: Path               # image sent to the model
-    xmp: Optional[Path]     # sidecar to update; None means CSV-only
+    xmp: Optional[Path]     # the capture's sidecar; None only if it never had one
+    owns_xmp: bool          # whether this image is the one that writes it
 
     def xmp_key(self, xmp_root: Path) -> str:
-        """The CSV's `xmp` column, relative to `data/xmp`. Empty when none."""
+        """The CSV's `xmp` column, relative to `data/xmp`. Empty for an orphan."""
         return "" if self.xmp is None else self.xmp.relative_to(xmp_root).as_posix()
 
 
@@ -252,12 +261,12 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years):
         if folder.split("/")[0] not in wanted:
             continue
         base = claims.claim(folder, stem)
-        xmp = None
-        if base is not None and (folder, base) not in taken:
+        xmp = None if base is None else claims.path_for(folder, base)
+        owns = base is not None and (folder, base) not in taken
+        if owns:
             taken.add((folder, base))
-            xmp = claims.path_for(folder, base)
         items.append(WorkItem(path.relative_to(jpg_root).as_posix(), path.name,
-                              path, xmp))
+                              path, xmp, owns))
     return items, taken
 
 
@@ -486,9 +495,10 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
     keywords = [category, spec]
     note = f"{category} ({conf:.2f})"
 
-    if item.xmp is None:
-        # Nothing to carry the label: either this JPEG never had a raw, or its
-        # capture's sidecar already went to the exact-stem export.
+    if not item.owns_xmp:
+        # Nothing for this image to write: either it never had a raw, or its
+        # capture's sidecar already went to the exact-stem export. `item.xmp`
+        # still names the capture in the latter case.
         applied = APPLIED_CSV_ONLY
     else:
         # `bird` overwrites; anything else defers to an existing category.
@@ -561,9 +571,11 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     claims = SidecarClaims(xmp_root)
     items, taken = build_items(claims, xmp_root, JPG_DIR, getattr(args, 'years', None))
 
-    csv_only = sum(1 for it in items if it.xmp is None)
+    csv_only = sum(1 for it in items if not it.owns_xmp)
+    orphans = sum(1 for it in items if it.xmp is None)
     logger.info(f"⚙️  {len(items)} JPEGs to label; {len(items) - csv_only} write to a "
-                f"sidecar, {csv_only} to the CSV only.")
+                f"sidecar, {csv_only} to the CSV only "
+                f"({orphans} never had one, {csv_only - orphans} are alternate edits).")
 
     # The blind spot of walking the JPEG tree: a sidecar no JPEG reaches is not
     # skipped with a warning, it is never enumerated at all. Zero today, and the
@@ -628,7 +640,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 spec = mk_label(category, label, label_cn, conf)
                                 keywords = [category, spec]
                                 note = f"{category} ({conf:.2f})"
-                                if item.xmp is None:
+                                if not item.owns_xmp:
                                     applied = APPLIED_CSV_ONLY
                                 else:
                                     applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
@@ -771,7 +783,7 @@ if __name__ == "__main__":
     logger.info(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
 
     # Process and generate CSV
-    logger.info("\n🔧 Processing side‑car XMP files…")
+    logger.info("\n🔧 Labelling exported JPEGs…")
     process_folder(RAW_OUT, CSV_PATH, args)
 
     end_time = time.perf_counter()

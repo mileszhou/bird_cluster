@@ -27,7 +27,7 @@ def tree(tmp_path):
 
 def test_keys_carry_the_folder_not_just_the_basename(tree):
     """The whole point: one basename, three photos, three distinct keys."""
-    keys = {bl.WorkItem(p.relative_to(tree).as_posix(), p.name, p, None).key
+    keys = {bl.WorkItem(p.relative_to(tree).as_posix(), p.name, p, None, False).key
             for p in tree.rglob("*.xmp")}
     assert keys == {
         "Photos-19/2019-01-13 crane/_D8S0025.xmp",
@@ -321,15 +321,34 @@ def test_the_exact_match_wins_the_sidecar_not_the_virtual_copy(dataset):
     items, _ = build(root, claims)
     master = next(i for i in items if i.name == "copied.jpg")
     copy = next(i for i in items if i.name == "copied-2.jpg")
-    assert master.xmp is not None and master.xmp.name == "copied.xmp"
-    assert copy.xmp is None, "an alternate edit must not overwrite the capture's label"
+    assert master.xmp.name == "copied.xmp" and master.owns_xmp
+    # The copy still *names* its capture -- that is what lets a post-hoc dedup
+    # group every export of one frame -- but it does not write it.
+    assert copy.xmp.name == "copied.xmp"
+    assert not copy.owns_xmp, "an alternate edit must not overwrite the capture's label"
 
 
 def test_orphans_are_ordinary_items_with_no_sidecar(dataset):
     root, claims = dataset
     items, _ = build(root, claims)
     orphans = [i for i in items if i.name in ("IMG_0001.jpg", "_D5C1940.jpg")]
-    assert len(orphans) == 2 and all(i.xmp is None for i in orphans)
+    assert len(orphans) == 2
+    assert all(i.xmp is None and not i.owns_xmp for i in orphans)
+
+
+def test_an_orphan_and_an_alternate_edit_are_distinguishable(dataset):
+    """Both are csv-only, but only the orphan has no capture at all.
+
+    Collapsing them would lose the link from `copied-2.jpg` back to the frame it
+    is an edit of -- 313 alternate edits against 5,229 photos that never had a raw.
+    """
+    root, claims = dataset
+    items, _ = build(root, claims)
+    orphan = next(i for i in items if i.name == "IMG_0001.jpg")
+    edit = next(i for i in items if i.name == "copied-2.jpg")
+    assert not orphan.owns_xmp and not edit.owns_xmp      # both are csv-only
+    assert orphan.xmp is None                             # ...but tell them apart
+    assert edit.xmp is not None
 
 
 def test_a_sidecar_no_jpg_reaches_is_reported_not_silently_dropped(dataset):
