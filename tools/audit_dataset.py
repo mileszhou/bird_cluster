@@ -54,6 +54,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from code.lib.export_report import NOT_FOUND, ExportReport  # noqa: E402
+from code.lib.jpg_claim import SidecarClaims, sort_key  # noqa: E402
 from code.lib.jpg_index import ExtraKind, JpgIndex, Verdict, library_year  # noqa: E402
 from code.lib.xmp_labels import CATEGORIES, read_labels  # noqa: E402
 
@@ -146,7 +147,45 @@ def audit(data_dir):
     result["jpg_total"] = sum(len(paths)
                               for folder in index.jpg_folders.values()
                               for paths in folder.values())
+    result["multi_claim"] = find_multi_claim(index, xmp_root, jpg_root)
     return result
+
+
+def find_multi_claim(index, xmp_root: Path, jpg_root: Path):
+    """Sidecars that more than one JPEG would claim, under the labeler's rule.
+
+    `bird_label.py` walks the JPEG tree and each image claims a sidecar locally
+    (`code/lib/jpg_claim.py`), so a capture exported more than once -- master
+    plus a `-2` virtual copy, say -- produces several JPEGs reaching one sidecar.
+    The first in stem-sorted order keeps it, which is always the exact-stem
+    match; the rest are labelled to the CSV alone.
+
+    That resolution is correct and needs no repair, so this is reported rather
+    than flagged as an error. It is worth watching all the same: the count is a
+    fingerprint of the export's shape, and a jump in it after a re-export means
+    something changed about how virtual copies were emitted.
+    """
+    claims = SidecarClaims(xmp_root)
+    by_sidecar: dict[tuple[str, str], list[str]] = {}
+    for folder in sorted(index.jpg_folders):
+        for stem in sorted(index.jpg_folders[folder]):
+            base = claims.claim(folder, stem)
+            if base is not None:
+                by_sidecar.setdefault((folder, base), []).append(stem)
+    groups = []
+    for (folder, base), stems in sorted(by_sidecar.items()):
+        if len(stems) < 2:
+            continue
+        winner = min(stems, key=lambda s: sort_key(folder, s))
+        groups.append({
+            "path": f"{folder}/{base}.xmp",
+            "folder": folder, "library": folder.split("/")[0],
+            "trip": folder.split("/", 1)[-1], "stem": base,
+            "keeps": winner,
+            "csv_only": ";".join(s for s in stems if s != winner),
+            "exact_match_wins": winner == base,
+        })
+    return groups
 
 
 MISSING_FIELDS = ["reason", "verdict", "year", "library", "trip", "stem", "category",
@@ -208,6 +247,11 @@ def find_unprocessed(result):
 
 
 EXTRA_FIELDS = ["kind", "year", "library", "folder", "jpg", "decorates_sidecar", "jpg_path"]
+
+# `path` is the sidecar, relative to data/xmp -- the audit tools' key. `keeps`
+# and `csv_only` are JPEG stems within the same folder.
+MULTI_CLAIM_FIELDS = ["path", "library", "trip", "stem", "keeps", "csv_only",
+                      "exact_match_wins", "folder"]
 
 # Trip folders are named in Chinese as often as not, and these worklists get
 # opened in Excel on the Windows box the library lives on. Excel reads a
@@ -284,6 +328,8 @@ def render(result, data_dir, missing, unprocessed):
     w(f"- **Sidecars with no JPEG: {len(missing)}** ({pct(len(missing), tot['xmp'])}) — worklist below")
     w(f"- JPEGs exported: **{result['jpg_total']}**, of which **{len(orphans)}** have no sidecar "
       f"(harmless — never a raw file, so never had one)")
+    w(f"- JPEGs claiming a sidecar another JPEG also claims: **{sum(len(g['csv_only'].split(';')) for g in result['multi_claim'])}** "
+      f"across {len(result['multi_claim'])} sidecars — resolved, see below")
     w(f"- Bird-categorised sidecars: **{tot['bird']}**, of which **{tot['labelled']}** carry a "
       f"parseable `py-cn-en(NN%)` label")
     w(f"- Bird sidecars with a JPEG: **{tot['bird_' + OK] + tot['bird_' + DERIVED]}** — the "
@@ -387,6 +433,43 @@ def render(result, data_dir, missing, unprocessed):
         if suffix:
             w(f"| {n} | `{suffix}` |")
     w("")
+
+    # ------------------------------------------------------------ multi-claim
+    groups = result["multi_claim"]
+    extra_claimants = sum(len(g["csv_only"].split(";")) for g in groups)
+    w("## Sidecars claimed by more than one JPEG")
+    w("")
+    w("The labeler walks the JPEG tree, so a capture exported more than once sends several")
+    w("images at one sidecar. **This is resolved, not a defect** — the first claimant in")
+    w("stem-sorted order keeps the sidecar and the rest are labelled to the CSV alone. That")
+    w("winner is always the exact-stem match, because `A` is a proper prefix of `A-2` and so")
+    w("sorts first.")
+    w("")
+    w(f"- Sidecars with several claimants: **{len(groups)}**")
+    w(f"- JPEGs downgraded to CSV-only as a result: **{extra_claimants}**")
+    anomalies = [g for g in groups if not g["exact_match_wins"]]
+    if anomalies:
+        w(f"- **{len(anomalies)} where the winner is not the exact-stem export** — every one of")
+        w("  these is a capture whose master was never exported, so a decorated file is the only")
+        w("  candidate. Listed below; check them if the count moved unexpectedly.")
+    else:
+        w("- The exact-stem export wins in every group.")
+    w("")
+    w("Worth watching rather than fixing: the count is a fingerprint of the export's shape, so a")
+    w("jump after a re-export means something changed about how virtual copies were emitted.")
+    w("Full listing in `multi_claim.csv`.")
+    w("")
+    if groups:
+        by_lib = collections.Counter(g["library"] for g in groups)
+        w("| library | sidecars with several claimants |")
+        w("|---|---|")
+        for lib, n in sorted(by_lib.items()):
+            w(f"| {lib} | {n} |")
+        w("")
+    for g in anomalies[:15]:
+        w(f"- `{g['path']}` → keeps `{g['keeps']}.jpg`, CSV-only: `{g['csv_only']}`")
+    if anomalies:
+        w("")
 
     # ------------------------------------------------------------ per library
     w("## Per library")
@@ -529,6 +612,12 @@ def main():
     write_csv(path, UNPROCESSED_FIELDS, unprocessed)
     ready = sum(1 for r in unprocessed if r["jpg_available"])
     print(f"wrote {path} ({len(unprocessed)} rows, {ready} ready to run)")
+
+    path = args.issues_dir / "multi_claim.csv"
+    write_csv(path, MULTI_CLAIM_FIELDS, result["multi_claim"])
+    odd = sum(1 for g in result["multi_claim"] if not g["exact_match_wins"])
+    print(f"wrote {path} ({len(result['multi_claim'])} rows, "
+          f"{odd} where the exact-stem export is not the winner)")
 
 
 if __name__ == "__main__":
