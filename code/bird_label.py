@@ -30,8 +30,10 @@ import time
 
 from code.lib.label_generator import pinyin_initials
 from code.lib.config import server_url
-from code.lib.jpg_index import ExtraKind, JpgIndex, library_year
+from code.lib.jpg_index import library_year
+from code.lib.jpg_claim import SidecarClaims, sort_key
 from code.lib.xmp_labels import CATEGORIES, EARLY_CATEGORIES, read_labels, split_keywords
+from code.lib import xmp_write
 import code.lib.run_hf_bird_model_llamacpp
 
 logger = logging.getLogger("bird_label")
@@ -86,45 +88,12 @@ def _openai_chat_completion(messages, model_name):
 # XMP keyword handling (unchanged from original).
 # ------------------------------------------------------------
 
-XMP_NS = {
-    "rdf": "http://www.w3.org/1999/02/22-rdf-syntax-ns#",
-    "dc": "http://purl.org/dc/elements/1.1/",
-    # Lightroom mirrors dc:subject here. Leaving it stale makes Lightroom
-    # resurrect the old keywords on import, so both are written together.
-    "lr": "http://ns.adobe.com/lightroom/1.0/",
-}
-
 # Lightroom writes dc:subject as an rdf:Bag; earlier runs of this script wrote
-# an rdf:Seq. Both appear in the dataset (13,879 Bags against 1,794 Seqs), so
+# an rdf:Seq. Both appear in the dataset (17,590 Bags against 1,748 Seqs), so
 # reading must accept either and writing must reuse whichever is already there
 # -- adding a second container under one dc:subject yields a sidecar whose
-# keyword list depends on which container the reader happens to pick.
-_CONTAINERS = ("Bag", "Seq", "Alt")
-
-
-def _container(node, ns):
-    """The rdf:Bag/Seq/Alt inside a subject node, or None."""
-    for kind in _CONTAINERS:
-        found = node.find(f"rdf:{kind}", ns)
-        if found is not None:
-            return found
-    return None
-
-
-def _read_items(node, ns):
-    box = _container(node, ns)
-    return [] if box is None else [li.text or "" for li in box.findall("rdf:li", ns)]
-
-
-def _write_items(node, items, ns, ET):
-    """Replace a subject node's contents with `items`, keeping its container kind."""
-    box = _container(node, ns)
-    if box is None:
-        box = ET.SubElement(node, f"{{{ns['rdf']}}}Bag")
-    for li in list(box):
-        box.remove(li)
-    for text in items:
-        ET.SubElement(box, f"{{{ns['rdf']}}}li").text = text
+# keyword list depends on which container the reader happens to pick. The
+# reuse, and the file-preserving edit itself, live in `code/lib/xmp_write.py`.
 
 
 # What set_keywords_in_xmp() did, recorded in the CSV's `applied` column.
@@ -162,30 +131,21 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
     archive property would either pollute the catalog's keyword list or be
     dropped on a round-trip. They are kept in the result CSV instead.
 
+    The file is read with the XML parser but edited as text (see
+    `code/lib/xmp_write.py`): reserialising rewrites every line of a sidecar,
+    and these files are rsynced back into a Lightroom library, so the diff has
+    to stay readable. Every edit is re-parsed and checked before it is written.
+
     Catches permission errors (library-managed files are often read-only) and
     retries once after a chmod, so one bad file does not abort the run.
     """
     import xml.etree.ElementTree as ET
-    for prefix, uri in XMP_NS.items():
-        ET.register_namespace(prefix, uri)
-    ns = XMP_NS
 
     try:
-        tree = ET.parse(xmp_path)
-        root = tree.getroot()
+        before = xmp_path.read_text(encoding='utf-8')
+        root = ET.fromstring(before)
 
-        desc = root.find('.//rdf:Description', ns)
-        if desc is None:
-            rdf_elem = root.find('rdf:RDF', ns)
-            if rdf_elem is None:
-                rdf_elem = ET.SubElement(root, f"{{{ns['rdf']}}}RDF")
-            desc = ET.SubElement(rdf_elem, f"{{{ns['rdf']}}}Description")
-
-        subject = desc.find('dc:subject', ns)
-        if subject is None:
-            subject = ET.SubElement(desc, f"{{{ns['dc']}}}subject")
-
-        existing = _read_items(subject, ns)
+        existing = xmp_write.items_of(root, xmp_write.SUBJECT_TAG)
         ours, theirs = split_keywords(existing)
 
         if category != "bird" and existing_category(ours):
@@ -194,18 +154,23 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
         # The user's own keywords first, in their original order, then ours.
         keywords = [category, label]
         merged = list(theirs) + [k for k in keywords if k not in theirs]
-        _write_items(subject, merged, ns, ET)
 
-        hierarchical = desc.find('lr:hierarchicalSubject', ns)
-        if hierarchical is not None:
-            _write_items(hierarchical, merged, ns, ET)
+        # hierarchicalSubject holds keyword *paths*; only our own entries are
+        # replaced, so "People|Family|Miles" survives a run that says `bird`.
+        prior_hier = xmp_write.items_of(root, xmp_write.HIER_TAG)
+        hier_ours, _ = split_keywords([(h or "").split("|")[-1] for h in prior_hier])
+        hierarchical = xmp_write.merge_hierarchical(
+            prior_hier, set(ours) | set(hier_ours), keywords)
+
+        after = xmp_write.set_subject_keywords(before, merged, hierarchical)
+        xmp_write.verify_only_keywords_changed(before, after, merged, hierarchical)
 
         try:
-            tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
+            xmp_path.write_text(after, encoding='utf-8')
         except PermissionError:
             try:
                 xmp_path.chmod(0o666)
-                tree.write(xmp_path, encoding='utf-8', xml_declaration=True)
+                xmp_path.write_text(after, encoding='utf-8')
                 logger.info(f"⚠️  Fixed permissions and updated {xmp_path.name}")
             except Exception as e2:
                 logger.info(f"⚠️  Could not write XMP file {xmp_path.name}: {e2}. Skipping.")
@@ -225,9 +190,12 @@ def prior_labels(key: str) -> tuple[str, str]:
     fresh labels as the prior ones, quietly destroying the very comparison this
     column exists for.
 
-    A JPEG-only item's key names a `.jpg`, so nothing is found and the columns
-    come back empty -- which is the truth: it never had a sidecar.
+    An empty key means the JPEG writes to no sidecar, so there is no prior label
+    to report -- the truth for a photo that never had a raw, and for an alternate
+    edit whose capture's sidecar was claimed by the exact-stem export.
     """
+    if not key:
+        return "", ""
     labels = read_labels(PRISTINE_XMP_DIR / key)
     if labels is None or not labels.subjects:
         return "", ""
@@ -236,53 +204,98 @@ def prior_labels(key: str) -> tuple[str, str]:
     return category, ";".join(s for s in ours if s != category)
 
 
-# Where a work item came from, recorded in the CSV's `source` column, which
-# says what `path` refers to.
-SOURCE_XMP = "xmp"            # a sidecar; `path` is relative to data/xmp
-SOURCE_JPG_ONLY = "jpg-only"  # a JPEG with no sidecar; `path` is relative to data/jpg
-
-
 class WorkItem(NamedTuple):
-    """One photo to label. `xmp` is None when the JPEG has no sidecar."""
-    key: str                # checkpoint entry and the CSV's `path`
-    name: str               # the CSV's `filename`
-    jpg: Optional[Path]     # image to send to the model; None if never exported
-    xmp: Optional[Path]     # sidecar to update; None for a JPEG-only item
-    source: str
+    """One exported JPEG to label.
+
+    `key` is the JPEG's path relative to `data/jpg` -- the checkpoint entry and
+    the CSV's `jpg` column. `xmp` is the sidecar this label writes into, or None
+    when the JPEG has none of its own: either it never had a raw behind it, or
+    its capture's sidecar was already claimed by the exact-stem export and this
+    file is an alternate edit.
+    """
+    key: str                # checkpoint entry and the CSV's `jpg`
+    name: str               # the CSV's `filename`, a bare basename for reading
+    jpg: Path               # image sent to the model
+    xmp: Optional[Path]     # sidecar to update; None means CSV-only
+
+    def xmp_key(self, xmp_root: Path) -> str:
+        """The CSV's `xmp` column, relative to `data/xmp`. Empty when none."""
+        return "" if self.xmp is None else self.xmp.relative_to(xmp_root).as_posix()
 
 
-def build_items(index, xmp_root: Path, jpg_root: Path, years, include_orphans: bool):
-    """Everything this run should label, sidecars first then JPEG-only extras.
+def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years):
+    """One work item per exported JPEG -- the unit the model actually sees.
 
-    JPEG-only items are exports with no raw behind them, so there is no sidecar
-    to write and their label lives in the CSV alone. Most are phone photos, but
-    607 come from interchangeable-lens bodies and cluster in birding trips, so
-    they are not safely assumed to be non-birds.
+    The JPEG is the source: it is what gets embedded downstream, and 5,229 of
+    them have no sidecar at all yet are ordinary members of the population. So
+    the walk is over `data/jpg`, and a sidecar is a *destination* for the label
+    rather than the thing being enumerated.
+
+    Each JPEG claims its sidecar locally (see `code/lib/jpg_claim.py`), and the
+    first claimant in stem-sorted order keeps it -- which is always the exact
+    stem match. Later claimants are the capture's alternate edits; they keep
+    their CSV row and write no sidecar.
+
+    Claims are assigned over the **whole** sorted tree before the checkpoint
+    filters anything, so a resumed run reproduces the same assignment: the
+    function is a pure function of the two trees. Tracking claims only across a
+    single process would hand the sidecar to a virtual copy after a Ctrl-C.
     """
     wanted = {d.name for d in select_libraries(xmp_root, years)}
-    items = []
-    for xmp in index.sidecars():
-        if xmp.relative_to(xmp_root).parts[0] not in wanted:
+    jpgs = sorted(
+        ((p.parent.relative_to(jpg_root).as_posix(), p.stem, p)
+         for p in jpg_root.rglob("*.jpg")),
+        key=lambda t: sort_key(t[0], t[1]),
+    )
+    items, taken = [], set()
+    for folder, stem, path in jpgs:
+        if folder.split("/")[0] not in wanted:
             continue
-        items.append(WorkItem(xmp_key(xmp, xmp_root), xmp.name,
-                              index.resolve(xmp).path, xmp, SOURCE_XMP))
-    if include_orphans:
-        for extra in index.extras():
-            if extra.kind is not ExtraKind.ORPHAN:
-                continue
-            if extra.folder.split("/")[0] not in wanted:
-                continue
-            items.append(WorkItem(extra.path.relative_to(jpg_root).as_posix(),
-                                  extra.path.name, extra.path, None, SOURCE_JPG_ONLY))
-    items.sort(key=lambda item: item.key)
-    return items
+        base = claims.claim(folder, stem)
+        xmp = None
+        if base is not None and (folder, base) not in taken:
+            taken.add((folder, base))
+            xmp = claims.path_for(folder, base)
+        items.append(WorkItem(path.relative_to(jpg_root).as_posix(), path.name,
+                              path, xmp))
+    return items, taken
+
+
+CSV_COLUMNS = ['jpg', 'xmp', 'filename',
+               'category', 'label', 'label_cn',
+               'confidence', 'note', 'prior_category', 'prior_label',
+               'applied', 'run_label', 'response_json']
+
+
+def check_csv_schema(csv_path: Path) -> None:
+    """Refuse to append rows of one shape under a header of another.
+
+    A resumed run opens the CSV in append mode, so a column added since the
+    first run would silently shift every later row one field left of its header
+    -- and the checkpoint would mark those photos done, so the damage would not
+    be retried. Cheaper to stop and ask for a fresh output dir.
+    """
+    if not csv_path.is_file() or csv_path.stat().st_size == 0:
+        return
+    with open(csv_path, newline='', encoding='utf-8-sig') as f:
+        header = next(csv.reader(f), [])
+    if header and header != CSV_COLUMNS:
+        missing = [c for c in CSV_COLUMNS if c not in header]
+        sys.exit(f"error: {csv_path} was written with a different column set "
+                 f"(missing {missing or 'nothing; order differs'}). Appending would "
+                 f"misalign every new row. Start a fresh --output-dir, or ./clean "
+                 f"and re-run from the beginning.")
 
 
 def write_row(csv_writer, item, category, label, label_cn, conf, note, applied,
               raw_json, args):
-    prior_category, prior_label = prior_labels(item.key)
+    # item.xmp points into the working copy; the relative part is identical in
+    # data/xmp, which is where prior_labels() reads from.
+    xmp_rel = item.xmp_key(RAW_OUT)
+    prior_category, prior_label = prior_labels(xmp_rel)
     csv_writer.writerow([
-        item.key, item.source, item.name, category, label, label_cn,
+        item.key, xmp_rel, item.name,
+        category, label, label_cn,
         f"{conf:.2f}", note, prior_category, prior_label, applied,
         args.run_label, raw_json,
     ])
@@ -430,47 +443,22 @@ def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
     return ret
 
 # ------------------------------------------------------------
-# Locate the JPEG matching an XMP sidecar.
+# Sidecar lookup for a JPEG.
 #
-# The export mirrors the photo library, so a sidecar's JPEG sits in the jpg
-# tree at the same library/trip folder under the same stem:
-#   xmp/Photos-19/2019-01-13 山公园/_D8S0025.xmp
+# The export mirrors the photo library, so a JPEG's sidecar sits in the xmp tree
+# at the same library/trip folder under the same stem:
 #   jpg/Photos-19/2019-01-13 山公园/_D8S0025.jpg
-# Camera counters wrap, so stems repeat across the library -- but with the
-# folder part of the key that no longer creates ambiguity, and the whole-tree
-# stem fallback the flat export needed (which returned photos from unrelated
-# shoots) is gone. See code/lib/jpg_index.py, shared with the embedding step,
-# for the derived-export cases: a capture whose only export is a virtual copy
-# (`-2`) or an AI Denoise render (`-Enhanced-NR`).
+#   xmp/Photos-19/2019-01-13 山公园/_D8S0025.xmp
+# Camera counters wrap, so stems repeat across the library -- keys therefore
+# always carry the folder, never a bare basename. The decorated-export cases
+# (`-2` virtual copies, `-Enhanced-NR` denoise renders) and the reasoning behind
+# the local claim rule live in code/lib/jpg_claim.py.
 #
-# The index is built over RAW_OUT, the working copy of the sidecar tree, which
-# mirrors data/xmp exactly -- so the folder keys line up either way.
+# The claim index is built over RAW_OUT, the working copy of the sidecar tree,
+# which mirrors data/xmp exactly -- so the relative keys line up either way.
+# `JpgIndex` still resolves the other direction for the audit and the embedding
+# step; this module no longer needs it.
 # ------------------------------------------------------------
-
-_JPG_INDEX = None
-
-
-def jpg_index(raw_root: Path) -> JpgIndex:
-    global _JPG_INDEX
-    if _JPG_INDEX is None:
-        _JPG_INDEX = JpgIndex(raw_root, JPG_DIR)
-    return _JPG_INDEX
-
-
-def xmp_key(xmp_file: Path, raw_root: Path) -> str:
-    """Identity of a sidecar for the checkpoint and the CSV.
-
-    The path relative to the sidecar root, never the bare filename: 10,832 of
-    the 34,160 sidecars share a basename with another (counter wraparound
-    across trips), so a basename-keyed checkpoint marks thousands of unlabelled
-    photos as already done, and a basename-keyed CSV attaches rows to the wrong
-    photo.
-    """
-    try:
-        return xmp_file.relative_to(raw_root).as_posix()
-    except ValueError:
-        return xmp_file.as_posix()
-
 
 # ------------------------------------------------------------
 # Process a single XMP file (extracted for notebook testing)
@@ -483,41 +471,28 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
     - Writes a row to the provided CSV writer.
     - Prints a concise status line.
     """
-    # Avoid early return: handle missing JPEG with an else block.
-    if item.jpg is None:
-        logger.info(f"⚠️  JPEG missing for {item.name}, skipping.")
-        # Populate placeholder values so the CSV row can still be written if desired.
-        label = "unknown"
-        label_cn = "未知"
-        conf = 0.0
-        raw_json = "{}"
-        keywords = []
-        note = "missing JPEG"
-        category = ""
-        applied = APPLIED_FAILED
+    switch = args.approach
+    if switch == "llama.cpp":
+        category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
+    elif switch == "chatgpt":
+        category, label, label_cn, conf, raw_json = predict_with_gpt4o(item.jpg, args.model, args.conf_threshold, args.no_bird)
+    elif switch == "vllm":
+        category, label, label_cn, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
+    else:  # should not happen due to argparse choices, but handle gracefully:
+        logger.info(f"⚠️  Unknown approach '{switch}' for {item.name}, skipping.")
+        category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
+
+    spec = mk_label(category, label, label_cn, conf)
+    keywords = [category, spec]
+    note = f"{category} ({conf:.2f})"
+
+    if item.xmp is None:
+        # Nothing to carry the label: either this JPEG never had a raw, or its
+        # capture's sidecar already went to the exact-stem export.
+        applied = APPLIED_CSV_ONLY
     else:
-        switch = args.approach
-        if switch == "llama.cpp":
-            category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
-        elif switch == "chatgpt":
-            category, label, label_cn, conf, raw_json = predict_with_gpt4o(item.jpg, args.model, args.conf_threshold, args.no_bird)
-        elif switch == "vllm":
-            category, label, label_cn, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
-        else: # should not happen due to argparse choices, but handle gracefully:
-            logger.info(f"⚠️  Unknown approach '{switch}' for {item.name}, skipping.")
-            category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
-
-        # Choose keywords based on the returned category
-        spec = mk_label(category, label, label_cn, conf)
-        keywords = [category, spec]
-        note = f"{category} ({conf:.2f})"
-
-        if item.xmp is None:
-            # No sidecar to carry the label; the CSV is the only record.
-            applied = APPLIED_CSV_ONLY
-        else:
-            # `bird` overwrites; anything else defers to an existing category.
-            applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
+        # `bird` overwrites; anything else defers to an existing category.
+        applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
 
     prior_category = write_row(csv_writer, item, category, label, label_cn, conf,
                                note, applied, raw_json, args)
@@ -535,13 +510,13 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
 # ------------------------------------------------------------
 
 def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
-    """Return a set of sidecar keys to process, based on a prior run's CSV.
+    """Return a set of JPEG keys to process, based on a prior run's CSV.
     Includes images where category == 'animal' or confidence < conf_threshold.
     Returns None if no filter is requested.
 
-    Keyed by the CSV's `path` column -- the sidecar's path relative to the
-    sidecar root. The `filename` column is a bare basename and repeats across
-    trips, so it cannot identify a photo.
+    Keyed by the CSV's `jpg` column -- the JPEG's path relative to `data/jpg`,
+    which is what this run enumerates. The `filename` column is a bare basename
+    and repeats across trips, so it cannot identify a photo.
 
     Reads the `category` column directly; older rows only encoded it inside
     `note` ("bird (0.90)"), which is parsed as a fallback."""
@@ -549,13 +524,14 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
         return None
     keys = set()
     # utf-8-sig: tolerates the BOM a spreadsheet adds when the CSV is edited by
-    # hand, which would otherwise turn the first header name into "﻿path".
+    # hand, which would otherwise turn the first header name into "﻿jpg".
     with open(filter_csv, newline='', encoding='utf-8-sig') as f:
         reader = csv.DictReader(f)
-        if 'path' not in (reader.fieldnames or []):
-            sys.exit(f"error: {filter_csv} has no 'path' column -- it predates the mirrored "
-                     f"export and its basename keys cannot identify a photo. Re-run without "
-                     f"--filter-csv, or filter against a CSV from a current run.")
+        if 'jpg' not in (reader.fieldnames or []):
+            sys.exit(f"error: {filter_csv} has no 'jpg' column -- it predates the "
+                     f"JPEG-driven walk, so its keys name sidecars rather than the "
+                     f"images this run enumerates. Re-run without --filter-csv, or "
+                     f"filter against a CSV from a current run.")
         for row in reader:
             note = row.get('note', '')
             category = (row.get('category')
@@ -565,7 +541,7 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
             except ValueError:
                 conf = 1.0
             if category == 'animal' or conf < conf_threshold:
-                keys.add(row['path'])
+                keys.add(row['jpg'])
     return keys
 
 
@@ -582,18 +558,27 @@ def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
 
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
-    items = build_items(jpg_index(xmp_root), xmp_root, JPG_DIR,
-                        getattr(args, 'years', None),
-                        getattr(args, 'include_orphan_jpg', False))
-    orphans = sum(1 for it in items if it.source == SOURCE_JPG_ONLY)
-    if orphans:
-        logger.info(f"⚙️  Including {orphans} JPEGs with no sidecar -- labelled to the CSV only.")
+    claims = SidecarClaims(xmp_root)
+    items, taken = build_items(claims, xmp_root, JPG_DIR, getattr(args, 'years', None))
+
+    csv_only = sum(1 for it in items if it.xmp is None)
+    logger.info(f"⚙️  {len(items)} JPEGs to label; {len(items) - csv_only} write to a "
+                f"sidecar, {csv_only} to the CSV only.")
+
+    # The blind spot of walking the JPEG tree: a sidecar no JPEG reaches is not
+    # skipped with a warning, it is never enumerated at all. Zero today, and the
+    # audit is what keeps it that way -- but a partial re-export would otherwise
+    # drop those photos in silence.
+    unreached = claims.total() - len(taken)
+    if unreached:
+        logger.info(f"⚠️  {unreached} sidecars have no JPEG and will not be labelled. "
+                    f"Run ./run-audit to list them.")
 
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:
         logger.info(f"⚙️  Filter active: {len(filter_set)} images selected from prior CSV.")
-    # Checkpoint keyed by path relative to the tree root -- see xmp_key() for
-    # why a bare filename silently skips thousands of sidecars.
+    # Checkpoint keyed by the JPEG's path relative to data/jpg. Never a bare
+    # basename: stems repeat across trips as camera counters wrap.
     checkpoint_path = csv_path.parent / "processed.txt"
     processed: set = set()
     if checkpoint_path.is_file():
@@ -613,12 +598,11 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     csv_mode = 'a' if resuming else 'w'
     if resuming:
         logger.info(f"⚙️  Resuming: {len(processed)} already processed, {len(pending)} remaining.")
+        check_csv_schema(csv_path)
     with open(csv_path, csv_mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not resuming:
-            writer.writerow(['path', 'source', 'filename', 'category', 'label', 'label_cn',
-                             'confidence', 'note', 'prior_category', 'prior_label',
-                             'applied', 'run_label', 'response_json'])
+            writer.writerow(CSV_COLUMNS)
 
         interrupted = False
         def _sigint_handler(sig, frame):
@@ -632,18 +616,15 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         try:
             for i in range(0, len(pending), step):
                 if use_batch:
+                    # Every item is a JPEG that exists -- the walk enumerates the
+                    # image tree, so there is no missing-image case to handle.
                     batch = pending[i:i + batch_size]
-                    valid_items = [it for it in batch if it.jpg is not None]
-                    for item in (it for it in batch if it.jpg is None):
-                        write_row(writer, item, "", "unknown", "未知", 0.0,
-                                  "missing JPEG", APPLIED_FAILED, "{}", args)
-                        logger.info(f"⚠️  JPEG missing for {item.name}, skipping.")
-                    if valid_items:
+                    if batch:
                         try:
                             batch_results = predict_with_vllm_batch(
-                                [it.jpg for it in valid_items], args.vllm_url, args.model, args.conf_threshold, args.no_bird
+                                [it.jpg for it in batch], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
-                            for item, (category, label, label_cn, conf, raw_json) in zip(valid_items, batch_results):
+                            for item, (category, label, label_cn, conf, raw_json) in zip(batch, batch_results):
                                 spec = mk_label(category, label, label_cn, conf)
                                 keywords = [category, spec]
                                 note = f"{category} ({conf:.2f})"
@@ -666,7 +647,14 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                         except Exception as e:
                             logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
                             break
-                    # Checkpoint entire batch (including skipped missing-JPEG files)
+                    # Checkpoint entire batch (including skipped missing-JPEG files).
+                    # Flush the CSV first: the checkpoint is closed (and so
+                    # durable) every batch while the CSV stays in Python's
+                    # buffer, so a hard kill between the two would mark photos
+                    # done that have no row. Ctrl-C is unaffected -- it exits
+                    # through the `with`, which flushes -- but a SIGKILL or a
+                    # power cut is exactly what a checkpoint is for.
+                    csvfile.flush()
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                         for item in batch:
                             cp.write(f"{item.key}\n")
@@ -674,6 +662,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                     item = pending[i]
                     try:
                         process_single_item(item, writer, args)
+                        csvfile.flush()      # see the batch path: row before checkpoint
                         with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                             cp.write(f"{item.key}\n")
                     except Exception as e:
@@ -703,11 +692,8 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
-    parser.add_argument("--include-orphan-jpg", action="store_true",
-                        help="Also label exported JPEGs that have no sidecar (photos that "
-                             "were never raw). They have nowhere to carry a keyword, so the "
-                             "result is written to the CSV only, flagged source=jpg-only and "
-                             "applied=csv-only")
+    # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
+    # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
 
     args.years = None if args.years.strip().lower() == "all" else [

@@ -46,6 +46,41 @@ Reset output: `./clean`
 
 ## Architecture
 
+### The JPEG is the centre
+
+Four principles. Most of the design decisions below follow from them, and a change that
+contradicts one is probably wrong.
+
+1. **The JPEG is what the project is about, and the thing that gets embedded.** Everything
+   downstream — the vectors, the clustering, the species structure — is computed from pixels.
+   So the JPEG is the unit of work and the key: the labeler walks `data/jpg`, one row per
+   image, and the checkpoint and the embedding are keyed the same way.
+2. **The sidecar is a medium, a bridge to what happens to be Lightroom.** It is a *destination*
+   for a label, not the subject of the pipeline. 5,229 JPEGs have no sidecar and are ordinary
+   members of the population; a photo is not less real for having no XMP to carry its keyword.
+3. **Filter the CSV; do not manipulate the Lightroom database by hand.** Deduplicating,
+   re-scoping, or re-selecting is a query over a text file. Doing the equivalent in Lightroom
+   means manual surgery and a re-extract, and it cannot be replayed or reviewed.
+4. **Anything that conflicts with the JPEG-centric view is audited and flagged**, and fixed only
+   where it matters. `./run-audit` is where that lives: sidecars no JPEG reaches (0 today — the
+   blind spot of walking the image tree), JPEGs claiming a sidecar another already claimed (307,
+   resolved deterministically), JPEGs with no sidecar (5,229, expected).
+
+A corollary about labels: **embedding does not depend on labels.** The premise is that a vector
+carries more than a label does, so embeddings are used to *study* the labelling, not the reverse.
+Labelling only scopes the set — it filters out the non-birds. Selecting the embedding set by
+label therefore bounds what can be learned from it: label noise *within* the bird set is
+measurable, false negatives are not, since they are excluded by construction. Embedding the whole
+library is what would close that loop, and it is cheap (~453 MB, well under an hour of GPU
+against ~11 hours to label). Left for when the requirements are clearer.
+
+A **manifest** — an inclusion list naming the rows to embed, with room for collection or
+predicate syntax so different studies can select different subsets — is the intended shape for
+that selection. Deferred deliberately: a selector language designed before the first clusters
+exist would be a guess. The one thing to keep forward-compatible is the **key**: the JSONL must
+be keyed by the JPEG path relative to `data/jpg`, because re-keying stored vectors means
+re-embedding, while any filter can be added later without touching a vector already written.
+
 **Data flow:**
 1. Input: `data/xmp/<Photos-YY>/<trip>/*.xmp` sidecars; the JPEG export **mirrors the same
    folder structure** at `data/jpg/<Photos-YY>/<trip>/*.jpg`.
@@ -53,39 +88,55 @@ Reset output: `./clean`
    **`data/` is treated as read-only** (it is a git submodule holding the organised dataset;
    only curated data is copied in and tracked). Labels therefore land in `output/raw/`, and
    getting them back into the Lightroom library is a separate, manual step.
-3. It iterates the copied XMP files, finds the matching JPEG (see JPEG matching below), calls
-   the selected backend
+3. It walks **`data/jpg`** — one work item per exported JPEG — and looks up the sidecar each
+   one writes into (see JPEG-driven walk below)
 4. Each backend sends a system prompt + base64-encoded JPEG to the model (vLLM/llama.cpp backends call an OpenAI-compatible HTTP server; chatgpt calls OpenAI directly)
 5. Model returns JSON: `{category, label, label_cn, confidence}`
 6. `code/lib/label_generator.py` formats a compact label with pinyin initials and confidence
-7. XMP sidecar gets keywords injected; CSV row appended; checkpoint updated
+7. XMP sidecar gets keywords injected (when the JPEG has one); CSV row appended; checkpoint updated
 
-**JPEG matching** (`build_items()` in `code/bird_label.py`, backed by `code/lib/jpg_index.py`
-— the same resolver the embedding step uses): the export mirrors the library, so a sidecar's
-JPEG is a lookup inside its own trip folder. Camera counters wrap and stems repeat across the
-library, but with the folder part of the key that creates no ambiguity, so the whole-tree stem
-fallback the old flat export needed (and the cross-shoot mismatches it caused) is gone.
+**The JPEG is the unit of work.** The walk is over `data/jpg`, not the sidecar tree: the JPEG is
+what the model sees and what gets embedded downstream, and 5,229 exports have no sidecar at all
+yet are ordinary members of the population. A sidecar is a *destination* for the label, not the
+thing being enumerated. One row per JPEG — 49,270 today: 43,728 write to a sidecar, 5,542 to the
+CSV alone.
 
-**Decorated exports.** A JPEG whose stem is `<sidecar stem>-<something>` is a derived export:
-`-2`/`-3` (Lightroom silently renaming on an unnecessary re-import — *not* virtual copies),
-`-Enhanced-NR` (AI Denoise), `-Pano`, `-HDR`, `-Edit`. Matching is prefix-based, so a new
-decoration needs no code change. Two cases, treated oppositely: where the plain `X.jpg` is
-**absent** the decorated file is the capture's only export and is used (5,990 sidecars); where
-`X.jpg` **exists** the decorated file is surplus and ignored (193, all with an intact pair).
+**The claim rule** (`code/lib/jpg_claim.py`, `SidecarClaims.claim()`) is **local** — it looks only
+at the JPEG's own name and the sidecar tree, never at another JPEG, so per-photo processing stays
+independent. Exact stem first; otherwise strip trailing `-<decoration>` segments, longest base
+first, and take the first sidecar that exists. Prefix-based, so a new decoration needs no code
+change: `-2`/`-3` (Lightroom virtual copies), `-Enhanced-NR` (AI Denoise), `-Pano`, `-HDR`,
+`-Edit`.
 
-**JPEG-only items** (`--include-orphan-jpg`) — 4,857 exported JPEGs have no sidecar, the source
-never having been raw. They have nowhere to carry a keyword, so their label goes to the CSV alone,
-flagged `source=jpg-only` / `applied=csv-only` and keyed by the path relative to `data/jpg` (the
-extension keeps those keys from colliding with sidecar keys). Do not assume they are non-birds:
-607 come from interchangeable-lens bodies (Nikon Z9/D500/D850/D5/Z8, Canon R5, Sony) and cluster
-in birding trips — `2025-04-25.1 Birding Birds` alone holds 118.
+307 sidecars are claimed by more than one JPEG (`X.jpg` and `X-2.jpg` both reach `X.xmp`).
+**First claimant in stem-sorted order wins, and that is always the exact match** — `X` is a proper
+prefix of `X-2`, so it sorts first; verified for every one of the 307 groups. So this is not a
+tie-break heuristic, it is the right answer reached without comparing candidates. The 313 later
+claimants are alternate edits of a capture whose label already reached its sidecar; they keep
+their CSV row as `csv-only`. Sort on the **stem**, never the filename: `X-2.jpg` sorts *before*
+`X.jpg` ('-' is 0x2D, '.' is 0x2E), which would hand the sidecar to the virtual copy.
 
-**Never key anything by basename** — not the checkpoint, not the CSV, not a filter set. 10,832
-of the 34,160 sidecars share a basename with another. `output/processed.txt` and the CSV's
-`path` column both hold the sidecar's path relative to the sidecar root (`xmp_key()`); the
-CSV's `filename` column is kept for readability only. A basename-keyed checkpoint marks ~5,845
-unlabelled photos as already done; `--filter-csv` refuses a CSV with no `path` column for the
-same reason.
+Claims are assigned over the whole sorted tree **before** the checkpoint filters anything, so
+`build_items()` is a pure function of the two trees and a resumed run reproduces the same
+assignment. Tracking claims only within one process would hand a sidecar to a virtual copy after
+a Ctrl-C.
+
+**The blind spot** of walking the image tree: a sidecar no JPEG reaches is not skipped with a
+warning, it is never enumerated. That is 0 today — every one of the 43,728 is reached — but it is
+a property of the current export, not an invariant, so `process_folder()` counts unreached
+sidecars and warns. A partial re-export would otherwise drop those photos in silence.
+
+**JPEG-only rows** — 5,229 exports never had a raw behind them (phone shots, in-camera JPEGs,
+raws lost to a filing mistake). They have nowhere to carry a keyword, so their label goes to the
+CSV alone as `applied=csv-only`. Do not assume they are non-birds: 607 come from
+interchangeable-lens bodies (Nikon Z9/D500/D850/D5/Z8, Canon R5, Sony) and cluster in birding
+trips — `2025-04-25.1 Birding Birds` alone holds 118.
+
+**Never key anything by basename** — not the checkpoint, not the CSV, not a filter set. Stems
+repeat across trips as camera counters wrap (10,832 of the sidecars share a basename with
+another). `output/processed.txt` and the CSV's `jpg` column both hold the JPEG's path relative to
+`data/jpg`; the CSV's `filename` column is kept for readability only. `--filter-csv` refuses a CSV
+with no `jpg` column for the same reason.
 
 ## Clustering pipeline (branch `cluster`)
 
@@ -111,32 +162,46 @@ range (`--years 2019`, `--years 2019,2021`, `--years all`); it selects library f
 
 A full survey of the current dataset is in `project/reports/data_preview_report.md`,
 regenerated by **`./run-audit`** (read-only, ~12s). It also writes the worklists next to the
-report: `missing_jpg.csv`, `extra_jpg.csv`, `unprocessed_sidecars.csv`.
+report: `missing_jpg.csv`, `extra_jpg.csv`, `unprocessed_sidecars.csv`, `multi_claim.csv`.
 
-**Every CSV in this project carries a `path` column** — the sidecar's path relative to
-`data/xmp` — and that is the join key across all of them: the audit worklists, the labeler's
-`bird_identification_output.csv`, `output/processed.txt`, and `embed.py`'s JSONL `key`. Nothing
-is ever keyed by basename (see above). `missing_jpg.csv` additionally carries `raw_name` (the
+`multi_claim.csv` is the principle-4 check for the JPEG-driven walk: sidecars several JPEGs
+reach (307 today, 313 JPEGs downgraded to `csv-only`). Nothing to repair — the resolution is
+deterministic — but the count is a fingerprint of the export's shape, so a jump after a
+re-export means something changed about how virtual copies were emitted. `exact_match_wins` is
+false only where the master was never exported and every candidate is decorated (1 today).
+
+**Two key spaces, deliberately.** The audit tools ask questions *about sidecars*, so their
+worklists carry a `path` column — the sidecar's path relative to `data/xmp`. The labeler and the
+embedding step ask questions *about images*, so they key on the JPEG's path relative to
+`data/jpg`: the labeler's `jpg` column, `output/processed.txt`, and `embed.py`'s JSONL. The
+labeler's CSV carries **both** (`jpg` and `xmp`, the latter empty where the JPEG has no sidecar),
+so it is the bridge between the two spaces. Nothing is ever keyed by basename (see above).
+
+Note `project/reports/sidecar_duplicates.csv` writes its `path` with the `data/xmp/` prefix
+rather than relative to it — the one CSV deviating from the convention; strip it when joining.
+
+`missing_jpg.csv` additionally carries `raw_name` (the
 raw as the exporter named it — `X-Enhanced-NR.dng` and `X.nef` are different files on disk even
 though one sidecar covers both) and `expected_jpg` (where the JPEG would have landed, so a
 re-export can be checked). The worklists are written **UTF-8 with BOM**: trip folders are named
 in Chinese and Excel reads a BOM-less UTF-8 CSV as the system codepage, mangling every one.
 Read them back with `encoding="utf-8-sig"`.
 
-**The two discrepancies the audit exists to find.** *Sidecar with no JPEG* — a photo the
-pipeline cannot see; 105 of 34,160 today. `data/jpg/export.report.txt` attributes them: 93 the
-exporter itself reported as "The file could not be found." (a dangling sidecar whose raw is
-gone from disk), 12 it never mentioned (a technical gap worth chasing). *JPEG with no sidecar*
-— 4,857, harmless and counted only: the source was never a raw file, so it never had a sidecar.
+**The two discrepancies the audit exists to find.** *Sidecar with no JPEG* — a photo the pipeline
+cannot see, and since the labeler walks the image tree, one it never even enumerates. **0 of
+43,728 today**, after the dataset reconciliation; it was 105 before. This is the number to watch
+after any re-export. *JPEG with no sidecar* — 5,229, not a defect: the source was never a raw
+file. These are labelled to the CSV alone rather than counted and skipped.
 
-**Derived exports are not missing JPEGs.** 5,990 sidecars have no JPEG under their own name but
+**Derived exports are not missing JPEGs.** 189 sidecars have no JPEG under their own name but
 do have a decorated one in the same folder: `-2`/`-3` is a Lightroom **virtual copy** exported
 under its copy name (the only export when the master was not in the export set), and
 `-Enhanced-NR` is the **AI Denoise** render — a separate DNG carrying its metadata internally,
 so it has no sidecar of its own. Both are the right photo. `JpgIndex` resolves a whole folder
 at a time with exact hits claimed first, so where sidecars `A` and `A-2` both exist, `A-2.jpg`
 goes to `A-2` rather than reading as `A`'s virtual copy. Treating these as missing would report
-6,095 instead of 105.
+189 discrepancies that are not there. (`JpgIndex` answers sidecar → JPEG for the audit and the
+embedding step; `jpg_claim.SidecarClaims` answers the reverse for the labeler.)
 
 The report's filename never changes, so `git diff` after a run shows exactly what moved in the
 dataset — keep it that way. The worklist CSVs are gitignored: they are large and fully
@@ -159,8 +224,19 @@ of sidecars carry sub-second precision, timezone corrections move a capture acro
 days, and import clashes rename one copy, so the literal date+time+filename rule finds just
 265 of 534 redundant sidecars. Lightroom virtual copies (`-2`, `-3` stems) share an original
 but have their own `xmpMM:DocumentID` — deliberate alternate edits, reported separately and
-never offered for deletion. Report: `project/reports/sidecar_dedup_report.md`. The
-duplicates were cleared on 2026-08-02; `./run-dedup` now reports 0 cross-trip duplicates.
+never offered for deletion. Report: `project/reports/sidecar_dedup_report.md`.
+
+`./run-dedup` **reports; it never deletes.** Real deduplication has to happen in Lightroom, the
+database of record — acting on the extracted files would be undone by the next export. The
+worklist therefore records a *proposal*, not an action, which is why it is gitignored and the
+report is overwritten: whatever was actually decided shows up in `data/` on the next bump.
+
+A first pass was cleared on 2026-08-02, but the reconciliation that followed reintroduced some:
+as of 2026-08-06 the report shows **45 cross-trip duplicates** (the same capture filed in two
+trips, sharing both `OriginalDocumentID` and `DocumentID`), 0 within-trip, and 5 virtual copies.
+Deliberately left in place — at 45 of 43,728 they are not worth manual surgery in Lightroom, and
+the labeler will simply produce two rows for those captures. Deduplicate on the CSV when it
+matters; the clustering step has to dedupe identical vectors regardless.
 
 **Wraparound splitting** (`tools/analyze_wraparound.py`, **`./run-split`**) — **superseded.**
 It proposed cutting each year into date-contiguous segments whose photo filenames are unique,
@@ -225,9 +301,11 @@ exists because the project package is named `code`, which shadows the stdlib mod
 same name once pytest preloads it.
 
 **Outputs** (in `output/`):
-- `bird_identification_output.csv` — main results (path, source, filename, category, label, label_cn, confidence, note, prior_category, prior_label, run_label, response_json). `path` is the key; `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar exists) or `failed`. `source` says what `path` refers to: `xmp` (relative to `data/xmp`) or `jpg-only` (relative to `data/jpg`)
+- `bird_identification_output.csv` — main results (jpg, xmp, filename, category, label, label_cn, confidence, note, prior_category, prior_label, applied, run_label, response_json). **`jpg` is the key** — the JPEG's path relative to `data/jpg`, one row per image. `xmp` is the sidecar the label went into, relative to `data/xmp`, empty when the image has none. `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar to write — either the image never had a raw, or its capture's sidecar went to the exact-stem export) or `failed`.
+  - **`category` is this run's verdict, not the library's state.** Where `applied` is `kept-existing`, the sidecar keeps `prior_category` and the new verdict was overruled. Anything filtering on the *effective* label — e.g. picking the bird set to embed — must read `'bird' in (category, prior_category)`, lowercased, or it silently drops every photo the never-demote rule was written to protect.
+  - A schema change makes the CSV un-appendable; `check_csv_schema()` refuses to resume against a mismatched header rather than shifting every new row one field left.
 - `args.json` — CLI arguments for reproducibility
-- `processed.txt` — checkpoint, one `path` per line; delete to reprocess all images
+- `processed.txt` — checkpoint, one `jpg` key per line; delete to reprocess all images. Written per batch, *after* the CSV is flushed, so a hard kill can never mark a photo done without a row
 - `raw/` — the working copy of `data/xmp`, with keywords added. Getting labels back into the Lightroom library is a separate manual step; `data/` is never written to
 
 **Backend modules** (all in `code/bird_label.py`):
@@ -237,6 +315,8 @@ same name once pytest preloads it.
 
 **Supporting library** (`code/lib/`):
 - `label_generator.py` — formats `{pinyin_initials}-{chinese_name}-{english_name}({confidence}%)` labels
+- `jpg_claim.py` — which sidecar a JPEG's label writes into; the local claim rule and its ordering
+- `xmp_write.py` — sets keywords by editing the sidecar text, so the diff stays reviewable
 - `transformers_engine.py` — HuggingFace Transformers backend (in progress)
 
 ## Re-labelling an already-labelled library
@@ -264,14 +344,32 @@ also preserves any genuine over-call from the old run. The CSV's `category` (thi
 `prior_category` (previous) plus `applied` (`written` / `kept-existing`) makes every disagreement
 recoverable without reading the sidecars.
 
-`set_keywords_in_xmp()` preserves the user's own keywords and is idempotent on re-run. Three
+`set_keywords_in_xmp()` preserves the user's own keywords and is idempotent on re-run. Four
 things it has to get right:
 
-- **`rdf:Bag` vs `rdf:Seq`** — Lightroom writes `dc:subject` as a Bag (13,879 sidecars), earlier
-  runs of this script wrote a Seq (1,794). Read either; reuse whichever is present. Adding a
+- **The rest of the file must not move** (`code/lib/xmp_write.py`) — the sidecar is read with
+  the XML parser but edited as *text*. Parse → mutate → `tree.write()` is correct XML and still
+  rewrites every line: ElementTree keeps no formatting, so Lightroom's one-attribute-per-line
+  layout collapses, `xmlns:` declarations get hoisted to the root and sorted, and any prefix not
+  passed to `register_namespace` is renamed (`x:xmpmeta` → `ns0:xmpmeta`). A 348-line sidecar came
+  back as 120 and `diff` showed the whole file changed. Registering the source's own prefixes
+  fixes the names but not the reflow — the loss is inherent to the round-trip. Since these files
+  are rsynced back into the Lightroom library, an unreadable diff is an unreviewable change.
+  Text surgery makes a `dc:subject` insertion a 6-line diff. `verify_only_keywords_changed()`
+  re-parses every edit and asserts nothing outside the keywords moved, so the shortcut fails loudly
+  rather than corrupting a file; a failure is recorded as `applied=failed`. 1,749 sidecars in
+  `data/xmp` still carry the old `ns0:` prefixes from before this change.
+- **`rdf:Bag` vs `rdf:Seq`** — Lightroom writes `dc:subject` as a Bag (17,590 sidecars), earlier
+  runs of this script wrote a Seq (1,748). Read either; reuse whichever is present. Adding a
   second container under one `dc:subject` makes the keyword list depend on which the reader picks.
-- **`lr:hierarchicalSubject`** — Lightroom mirrors `dc:subject` there and will resurrect old
-  keywords from it on import. Write both together or not at all.
+  (One sidecar has both and needs fixing by hand.)
+- **`lr:hierarchicalSubject` holds keyword *paths*, not a flat mirror** — `People|Family|Miles` is
+  one keyword naming a position in Lightroom's keyword tree. An earlier version mirrored the
+  flattened `dc:subject` list into it, which would have turned that into three unrelated top-level
+  keywords on import; 71 sidecars carry such paths, 12 of them with no category to defer to, so a
+  full run would have stripped them. `merge_hierarchical()` replaces only entries whose *leaf* is
+  one of ours, leaving the user's paths intact. It is never created where absent — a stale mirror
+  resurrects old keywords on import, but an absent one is not a gap to fill.
 - **Which keywords are ours** (`split_keywords()` in `code/lib/xmp_labels.py`) — three
   generations exist: bare categories, `py-cn-en(NN%)` labels, and early GPT-4o free text with no
   confidence at all (`mountain landscape with glacier`). Note the `(NN%)` suffix is the *only*

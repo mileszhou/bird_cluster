@@ -25,19 +25,15 @@ def tree(tmp_path):
     return tmp_path
 
 
-def test_xmp_key_is_the_path_not_the_basename(tree):
+def test_keys_carry_the_folder_not_just_the_basename(tree):
     """The whole point: one basename, three photos, three distinct keys."""
-    keys = {bl.xmp_key(p, tree) for p in tree.rglob("*.xmp")}
+    keys = {bl.WorkItem(p.relative_to(tree).as_posix(), p.name, p, None).key
+            for p in tree.rglob("*.xmp")}
     assert keys == {
         "Photos-19/2019-01-13 crane/_D8S0025.xmp",
         "Photos-19/2019-06-08 heron/_D8S0025.xmp",
         "Photos-24/2024-10-13 santiago/_D8S0025.xmp",
     }
-
-
-def test_xmp_key_falls_back_to_the_full_path_when_outside_the_root(tmp_path):
-    stray = tmp_path / "elsewhere" / "a.xmp"
-    assert bl.xmp_key(stray, tmp_path / "root") == stray.as_posix()
 
 
 def test_select_libraries_filters_by_year(tree):
@@ -58,56 +54,56 @@ def write_csv(path, rows, fieldnames, encoding="utf-8"):
         wr.writerows(rows)
 
 
-FIELDS = ["path", "source", "filename", "category", "label", "label_cn", "confidence",
+FIELDS = ["jpg", "xmp", "filename", "category", "label", "label_cn", "confidence",
           "note", "prior_category", "prior_label", "applied", "run_label", "response_json"]
 
 
 def test_filter_csv_selects_animals_and_low_confidence(tmp_path):
     p = tmp_path / "prior.csv"
     write_csv(p, [
-        {"path": "Photos-19/t/a.xmp", "filename": "a.xmp", "category": "bird",
+        {"jpg": "Photos-19/t/a.jpg", "filename": "a.jpg", "category": "bird",
          "confidence": "0.90", "note": "bird (0.90)"},
-        {"path": "Photos-19/t/b.xmp", "filename": "b.xmp", "category": "bird",
+        {"jpg": "Photos-19/t/b.jpg", "filename": "b.jpg", "category": "bird",
          "confidence": "0.40", "note": "bird (0.40)"},
-        {"path": "Photos-24/t/c.xmp", "filename": "c.xmp", "category": "animal",
+        {"jpg": "Photos-24/t/c.jpg", "filename": "c.jpg", "category": "animal",
          "confidence": "0.95", "note": "animal (0.95)"},
     ], FIELDS)
-    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t/b.xmp", "Photos-24/t/c.xmp"}
+    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t/b.jpg", "Photos-24/t/c.jpg"}
 
 
 def test_filter_csv_falls_back_to_parsing_note(tmp_path):
     """Rows written before the category column still classify correctly."""
     p = tmp_path / "prior.csv"
     write_csv(p, [
-        {"path": "Photos-24/t/c.xmp", "filename": "c.xmp", "confidence": "0.95",
+        {"jpg": "Photos-24/t/c.jpg", "filename": "c.jpg", "confidence": "0.95",
          "note": "animal (0.95)"},
-    ], ["path", "filename", "confidence", "note"])
-    assert bl.load_filter_set(p, 0.6) == {"Photos-24/t/c.xmp"}
+    ], ["jpg", "filename", "confidence", "note"])
+    assert bl.load_filter_set(p, 0.6) == {"Photos-24/t/c.jpg"}
 
 
 def test_filter_csv_tolerates_a_spreadsheet_bom(tmp_path):
-    """Editing the worklist in Excel adds a BOM; it must not rename `path`."""
+    """Editing the worklist in Excel adds a BOM; it must not rename `jpg`."""
     p = tmp_path / "prior.csv"
     write_csv(p, [
-        {"path": "Photos-19/t/b.xmp", "filename": "b.xmp", "category": "bird",
+        {"jpg": "Photos-19/t/b.jpg", "filename": "b.jpg", "category": "bird",
          "confidence": "0.40", "note": "bird (0.40)"},
     ], FIELDS, encoding="utf-8-sig")
-    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t/b.xmp"}
+    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t/b.jpg"}
 
 
-def test_filter_csv_keys_on_path_so_repeated_basenames_stay_distinct(tmp_path):
+def test_filter_csv_keys_on_jpg_so_repeated_basenames_stay_distinct(tmp_path):
     p = tmp_path / "prior.csv"
     write_csv(p, [
-        {"path": "Photos-19/t1/a.xmp", "filename": "a.xmp", "category": "bird",
+        {"jpg": "Photos-19/t1/a.jpg", "filename": "a.jpg", "category": "bird",
          "confidence": "0.10", "note": "bird (0.10)"},
-        {"path": "Photos-24/t2/a.xmp", "filename": "a.xmp", "category": "bird",
+        {"jpg": "Photos-24/t2/a.jpg", "filename": "a.jpg", "category": "bird",
          "confidence": "0.99", "note": "bird (0.99)"},
     ], FIELDS)
-    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t1/a.xmp"}
+    assert bl.load_filter_set(p, 0.6) == {"Photos-19/t1/a.jpg"}
 
 
-def test_filter_csv_without_a_path_column_is_refused(tmp_path):
-    """A pre-mirrored-export CSV is basename-keyed and cannot identify a photo."""
+def test_filter_csv_without_a_jpg_column_is_refused(tmp_path):
+    """A sidecar-keyed CSV names rows this JPEG-driven run never enumerates."""
     p = tmp_path / "old.csv"
     write_csv(p, [{"filename": "a.xmp", "confidence": "0.10", "note": "bird (0.10)"}],
               ["filename", "confidence", "note"])
@@ -230,6 +226,38 @@ def test_writing_is_idempotent(tmp_path):
     assert subjects(p) == ("bhl-山公园", "bird", "new-新-new bird(88%)")
 
 
+def test_user_keyword_paths_are_not_flattened(tmp_path):
+    """`People|Family|Miles` is one keyword naming a place in Lightroom's tree.
+
+    The previous writer mirrored the flat dc:subject list into
+    hierarchicalSubject, so it came back as three unrelated top-level keywords.
+    71 sidecars in the library carry such paths.
+    """
+    p = tmp_path / "a.xmp"
+    p.write_text(XMP.format(items="<rdf:li>Miles</rdf:li>", box="Bag")
+                 .replace("<lr:hierarchicalSubject><rdf:Bag><rdf:li>Miles</rdf:li>",
+                          "<lr:hierarchicalSubject><rdf:Bag><rdf:li>People|Family|Miles</rdf:li>"),
+                 encoding="utf-8")
+    bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    text = p.read_text(encoding="utf-8")
+    hierarchical = text[text.index("hierarchicalSubject"):]
+    assert "People|Family|Miles" in hierarchical
+    assert "new-新-new bird(88%)" in hierarchical
+
+
+def test_the_rest_of_the_file_is_left_alone(tmp_path):
+    """These sidecars are rsynced into a Lightroom library; the diff must be readable."""
+    p = sidecar(tmp_path, ["bhl-山公园"])
+    before = p.read_text(encoding="utf-8")
+    bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
+    after = p.read_text(encoding="utf-8")
+    for line in before.splitlines():
+        if "rdf:li" in line or "subject" in line.lower():
+            continue
+        assert line in after.splitlines()
+    assert "ns0:" not in after and "<x:xmpmeta" in after
+
+
 def test_unparseable_sidecar_reports_failure(tmp_path):
     p = tmp_path / "bad.xmp"
     p.write_text("<not xml")
@@ -237,57 +265,95 @@ def test_unparseable_sidecar_reports_failure(tmp_path):
     assert action == bl.APPLIED_FAILED and removed == ()
 
 
-# --- work items: sidecars, plus JPEGs that never had one --------------------
+# --- work items: one per JPEG, sidecar as destination -----------------------
+
+TRIP = "Photos-19/2019-01-13 crane"
+
 
 @pytest.fixture
 def dataset(tmp_path):
-    """A sidecar with a jpg, a sidecar without, and two jpgs with no sidecar."""
-    from code.lib.jpg_index import JpgIndex
-    trip = "Photos-19/2019-01-13 crane"
-    (tmp_path / "xmp" / trip).mkdir(parents=True)
-    (tmp_path / "jpg" / trip).mkdir(parents=True)
-    sidecar(tmp_path / "xmp" / trip, ["bird", "old-旧-old bird(95%)"], name="paired.xmp")
-    sidecar(tmp_path / "xmp" / trip, [], name="unexported.xmp")
-    for stem in ("paired", "IMG_0001", "_D5C1940"):
-        (tmp_path / "jpg" / trip / f"{stem}.jpg").write_bytes(b"\xff\xd8\xff")
-    return tmp_path, JpgIndex(tmp_path / "xmp", tmp_path / "jpg")
+    """A paired capture, a decorated-only capture, a virtual copy, and orphans."""
+    from code.lib.jpg_claim import SidecarClaims
+    (tmp_path / "xmp" / TRIP).mkdir(parents=True)
+    (tmp_path / "jpg" / TRIP).mkdir(parents=True)
+    for stem in ("paired", "denoised", "copied", "unexported"):
+        sidecar(tmp_path / "xmp" / TRIP, ["bird"], name=f"{stem}.xmp")
+    for stem in ("paired",                  # plain export
+                 "denoised-Enhanced-NR",    # only export of its capture
+                 "copied", "copied-2",      # master plus a virtual copy
+                 "IMG_0001", "_D5C1940"):   # never had a raw
+        (tmp_path / "jpg" / TRIP / f"{stem}.jpg").write_bytes(b"\xff\xd8\xff")
+    return tmp_path, SidecarClaims(tmp_path / "xmp")
 
 
-def test_orphan_jpgs_are_excluded_by_default(dataset):
-    root, index = dataset
-    items = bl.build_items(index, root / "xmp", root / "jpg", None, False)
-    assert {i.source for i in items} == {bl.SOURCE_XMP}
-    assert sorted(i.name for i in items) == ["paired.xmp", "unexported.xmp"]
+def build(root, claims, years=None):
+    return bl.build_items(claims, root / "xmp", root / "jpg", years)
 
 
-def test_orphan_jpgs_are_included_on_request(dataset):
-    root, index = dataset
-    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
-    orphans = [i for i in items if i.source == bl.SOURCE_JPG_ONLY]
-    assert sorted(i.name for i in orphans) == ["IMG_0001.jpg", "_D5C1940.jpg"]
-    assert all(i.xmp is None and i.jpg is not None for i in orphans)
+def test_one_item_per_jpg(dataset):
+    root, claims = dataset
+    items, _ = build(root, claims)
+    assert sorted(i.name for i in items) == [
+        "IMG_0001.jpg", "_D5C1940.jpg", "copied-2.jpg", "copied.jpg",
+        "denoised-Enhanced-NR.jpg", "paired.jpg"]
+    assert all(i.jpg is not None for i in items)
 
 
-def test_orphan_key_is_the_jpg_path_and_cannot_collide_with_a_sidecar(dataset):
-    """Both trees are keyed the same way; the extension keeps them distinct."""
-    root, index = dataset
-    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
+def test_key_is_the_jpg_path(dataset):
+    root, claims = dataset
+    items, _ = build(root, claims)
     keys = [i.key for i in items]
     assert len(set(keys)) == len(keys)
-    assert "Photos-19/2019-01-13 crane/paired.xmp" in keys
-    assert "Photos-19/2019-01-13 crane/IMG_0001.jpg" in keys
+    assert f"{TRIP}/paired.jpg" in keys
 
 
-def test_sidecar_without_an_export_still_becomes_an_item(dataset):
-    """It gets a `missing JPEG` CSV row rather than being dropped silently."""
-    root, index = dataset
-    items = bl.build_items(index, root / "xmp", root / "jpg", None, True)
-    unexported = next(i for i in items if i.name == "unexported.xmp")
-    assert unexported.jpg is None and unexported.xmp is not None
+def test_a_decorated_only_export_still_reaches_its_sidecar(dataset):
+    """Without this, 189 captures whose only export is -Enhanced-NR go unlabelled."""
+    root, claims = dataset
+    items, _ = build(root, claims)
+    it = next(i for i in items if i.name == "denoised-Enhanced-NR.jpg")
+    assert it.xmp is not None and it.xmp.name == "denoised.xmp"
 
 
-def test_year_filter_applies_to_orphans_too(dataset):
-    root, index = dataset
-    assert bl.build_items(index, root / "xmp", root / "jpg", ["2019"], True)
+def test_the_exact_match_wins_the_sidecar_not_the_virtual_copy(dataset):
+    """Stem order puts `copied` before `copied-2`, so first-claimant is correct."""
+    root, claims = dataset
+    items, _ = build(root, claims)
+    master = next(i for i in items if i.name == "copied.jpg")
+    copy = next(i for i in items if i.name == "copied-2.jpg")
+    assert master.xmp is not None and master.xmp.name == "copied.xmp"
+    assert copy.xmp is None, "an alternate edit must not overwrite the capture's label"
+
+
+def test_orphans_are_ordinary_items_with_no_sidecar(dataset):
+    root, claims = dataset
+    items, _ = build(root, claims)
+    orphans = [i for i in items if i.name in ("IMG_0001.jpg", "_D5C1940.jpg")]
+    assert len(orphans) == 2 and all(i.xmp is None for i in orphans)
+
+
+def test_a_sidecar_no_jpg_reaches_is_reported_not_silently_dropped(dataset):
+    """The blind spot of walking the image tree -- it must be countable."""
+    root, claims = dataset
+    _, taken = build(root, claims)
+    assert claims.total() - len(taken) == 1        # unexported.xmp
+
+
+def test_claims_are_stable_across_a_resumed_run(dataset):
+    """Assignment happens over the whole tree, before the checkpoint filters."""
+    root, claims = dataset
+    first, _ = build(root, claims)
+    second, _ = build(root, SidecarClaimsAgain(root))
+    assert [(i.key, i.xmp) for i in first] == [(i.key, i.xmp) for i in second]
+
+
+def SidecarClaimsAgain(root):
+    from code.lib.jpg_claim import SidecarClaims
+    return SidecarClaims(root / "xmp")
+
+
+def test_year_filter(dataset):
+    root, claims = dataset
+    assert build(root, claims, ["2019"])[0]
     with pytest.raises(SystemExit):
-        bl.build_items(index, root / "xmp", root / "jpg", ["2024"], True)
+        build(root, claims, ["2024"])
