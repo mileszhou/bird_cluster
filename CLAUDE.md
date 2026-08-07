@@ -72,6 +72,61 @@ contradicts one is probably wrong.
    blind spot of walking the image tree), JPEGs claiming a sidecar another already claimed (307,
    resolved deterministically), JPEGs with no sidecar (5,229, expected).
 
+### Stages, and who writes `data/`
+
+> **The pipeline never writes `data/`. A person curates into it.**
+
+Every stage reads from `data/`, writes to `output/`, and a human decides what graduates to
+become the next stage's input. `data/` is not read-only because writing there is dangerous — it
+is read-only *to the code*. "Only curated data is copied in" was always the rule; the curating
+is the part done by hand.
+
+```
+                 reads            writes           curated by hand into
+labelling        data/jpg         output/          data/label/
+                 data/xmp
+embedding        data/jpg         output/embed/    data/embed/     (when it exists)
+                 data/label/
+clustering       data/embed/      output/          —
+```
+
+`data/xmp` and `data/jpg` arrived exactly this way — a manual Lightroom export, copied in.
+`data/label/` is the same act at the next boundary, so adding it does not weaken the rule; it
+shows the rule was about *who writes*, not about whether anything is ever added.
+
+**Curation is deliberately manual, and there is no script for it.** Choosing which run
+graduates is the entire content of the step; automating it would make it routine, which is the
+one property it must not have. `./clean` archives each run to `output_NNN_<description>/` so
+the candidates survive to be chosen between; `cp` is the interface. `data/label/` is not a
+renamed output folder — it is built by cherry-picking what is actually wanted, and a scripted
+*transformation* of the picked data may be added later if a need appears.
+
+Because `data/` is a submodule, anything curated in must be committed there and the pointer
+bumped in the parent, or it exists only on one machine. Keep it small: a run's CSV is ~5 MB at
+49k rows, but `output/raw` is 739 MB and does not belong in the dataset — the labelled sidecars
+belong in the Lightroom library, which is where they are rsynced anyway.
+
+**Why this matters more than tidiness.** `embed.py` currently takes its bird filter from
+`labels.is_bird` — it reads the *sidecar keywords*. So today a category travels from labelling
+to embedding like this:
+
+```
+label → output/raw/*.xmp → rsync → Lightroom → re-export → data/xmp → embed reads is_bird
+```
+
+A boolean makes a round trip through a foreign database to get between two stages of this
+project, which contradicts principle 2 outright. `data/label/` short-circuits it:
+`label → output_NNN → curate → data/label/ → embed`. The sidecar write still happens, for its
+own reason — smart collections and browsing in Lightroom — it just stops being load-bearing.
+
+**Resolve the effective category at curation time.** The run CSV's `category` is *this run's
+verdict*; where `applied` is `kept-existing` the library actually keeps `prior_category`. If
+`data/label/` carries the run CSV verbatim (for provenance — it is the only record of the
+previous labels) *plus* a narrow derived selection with that already resolved, then `embed.py`
+reads a two-column contract (`jpg`, `category`) and never needs to know the never-demote rule
+exists. Leaving it unresolved means every future consumer re-implements it, and the first one
+to write `category == 'bird'` silently drops the set the rule was written to protect.
+
 A corollary about labels: **embedding does not depend on labels.** The premise is that a vector
 carries more than a label does, so embeddings are used to *study* the labelling, not the reverse.
 Labelling only scopes the set — it filters out the non-birds. Selecting the embedding set by
@@ -91,9 +146,8 @@ re-embedding, while any filter can be added later without touching a vector alre
 1. Input: `data/xmp/<Photos-YY>/<trip>/*.xmp` sidecars; the JPEG export **mirrors the same
    folder structure** at `data/jpg/<Photos-YY>/<trip>/*.jpg`.
 2. `code/bird_label.py` copies the sidecar tree to `output/raw/` and works on the copy —
-   **`data/` is treated as read-only** (it is a git submodule holding the organised dataset;
-   only curated data is copied in and tracked). Labels therefore land in `output/raw/`, and
-   getting them back into the Lightroom library is a separate, manual step.
+   **the pipeline never writes `data/`** (see Stages above). Labels therefore land in
+   `output/raw/`, and getting them back into the Lightroom library is a separate, manual step.
 3. It walks **`data/jpg`** — one work item per exported JPEG — and looks up the sidecar each
    one writes into (see JPEG-driven walk below)
 4. Each backend sends a system prompt + base64-encoded JPEG to the model (vLLM/llama.cpp backends call an OpenAI-compatible HTTP server; chatgpt calls OpenAI directly)
@@ -151,18 +205,25 @@ structure from appearance rather than trusting the VLM's per-photo guess. Theory
 `research/Bird Semantic Study Plan.md`; design in
 `project/plans/2026-07-29-embed-cluster-stats.md`.
 
-**Dataset layout** — `data/` is a git submodule holding the organised dataset, treated as
-**read-only**: only curated data is copied in and tracked. The Lightroom export mirrors the
-photo library exactly, so both trees have the same shape:
+**Dataset layout** — `data/` is a git submodule holding the organised dataset. Only curated
+data is copied in and tracked, and **the copying is done by hand**, never by the pipeline (see
+Stages above). The Lightroom export mirrors the photo library exactly, so both trees have the
+same shape:
 
 ```
 data/xmp/<Photos-YY>/<trip>/*.xmp     # Photos-19/2019-01-13 山公园/_D8S0025.xmp
 data/jpg/<Photos-YY>/<trip>/*.jpg     # same folder, same stem
 data/jpg/export.report.txt            # what the exporter skipped, and why
+data/label/                           # curated from a labelling run -- input to embedding
 ```
 
-Trip folders match verbatim between the trees, so resolving a JPEG is a lookup inside one
-folder. Nothing is hardcoded per year — any dataset in this shape works. `--years` limits the
+`data/label/` is cherry-picked from an archived run (`output_NNN_<description>/`), not a
+renamed copy of one. It exists so a category reaches the embedding step directly instead of
+travelling out through Lightroom and back. Its counterpart at the next boundary would be
+`data/embed/`.
+
+Trip folders match verbatim between the two photo trees, so resolving a JPEG is a lookup inside
+one folder. Nothing is hardcoded per year — any dataset in this shape works. `--years` limits the
 range (`--years 2019`, `--years 2019,2021`, `--years all`); it selects library folders by year,
 `2019` → `Photos-19`.
 
@@ -220,6 +281,12 @@ keeping to compare against later.
 with the user, named `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder
 file they leave). `docs/` is reserved for product documentation, i.e. output meant for whoever
 uses the result rather than notes about building it.
+
+**Where run artifacts go:** `output/` is the live run and is gitignored. `./clean` archives it
+to `output_NNN_<description>/`, also gitignored — every past run stays on disk, nothing is
+deleted. `data/label/` is the small, hand-picked subset promoted from one of those archives to
+serve as the next stage's input, and it is versioned in the submodule. The distinction is
+deliberate: archives are *everything a run produced*, `data/label/` is *what was chosen*.
 
 **Sidecar deduplication** (`code/lib/sidecar_meta.py`, `tools/dedup_sidecars.py`,
 **`./run-dedup`**) — operates on `data/xmp`. The same photo was imported into
@@ -287,17 +354,26 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    expose metadata publicly. On this box `~/.cache/huggingface/hub/.locks` is root-owned, so
    `run-server-embed` falls back to a private `HF_HUB_CACHE`; fix with
    `sudo chown -R "$USER" ~/.cache/huggingface/hub/.locks`.
-2. `code/embedding/embed.py` — non-GPU client; scans sidecars, filters to `bird`, resolves
-   JPEGs, POSTs batches, appends to `output/embed/embeddings.jsonl`. `./run-embed`.
-   Resumable (checkpoint is the set of `key`s already in the JSONL) and `--dry-run` does the
-   whole scan/resolve with no network calls. Deferred SIGINT, same as `bird_label.py`.
-   Every row records the producing `model`, and the client **refuses to append when the server
-   serves a different one** — two backbones' vectors are not in the same space and nothing
-   downstream could detect the mixture. Use a fresh `--output-dir` to switch models.
+2. `code/embedding/embed.py` — non-GPU client; POSTs batches and appends to
+   `output/embed/embeddings.jsonl`. `./run-embed`. Resumable (checkpoint is the set of `key`s
+   already in the JSONL) and `--dry-run` does the whole scan/resolve with no network calls.
+   Deferred SIGINT, same as `bird_label.py`. Every row records the producing `model`, and the
+   client **refuses to append when the server serves a different one** — two backbones' vectors
+   are not in the same space and nothing downstream could detect the mixture. Use a fresh
+   `--output-dir` to switch models.
+
+   **Not yet adapted to the JPEG-centric design.** It still scans the *sidecar* tree and takes
+   its bird filter from `labels.is_bird` — the XMP keywords. That makes the label's journey from
+   labelling to embedding run out through Lightroom and back (rsync → re-export → `data/xmp`),
+   contradicting principle 2, and it makes the 5,229 sidecar-less JPEGs structurally invisible.
+   It should read a curated selection from `data/label/` instead, and key the JSONL by the JPEG
+   path relative to `data/jpg` — the only identifier spanning sidecar-backed and sidecar-less
+   images. Any JSONL written before that change is keyed by sidecar path: regenerate rather than
+   resume. Whatever selects the bird set must read the **effective** category
+   (`'bird' in (category, prior_category)`), not `category == 'bird'` — see Stages above.
+
    Where a capture was exported more than once (master plus virtual copies), only the first
-   export is embedded — the copies are alternate edits of one frame. The `key` is the sidecar's
-   path relative to `data/xmp`, so any JSONL written before the mirrored export is keyed the old
-   way *and* points at the old jpg tree: regenerate rather than resume.
+   export is embedded — the copies are alternate edits of one frame.
 3. `code/cluster/discover.py` / `stats.py` — HDBSCAN + cluster statistics. Not yet written.
 
 Environment: `./venv` takes stage arguments so a non-GPU box need not pull torch —
@@ -333,8 +409,8 @@ carries a label.
 
 **Sidecars must stay clean**: they go back into Lightroom, so no archive property, no versioned
 keywords, nothing Lightroom would show in its keyword list. The previous label is preserved in
-the CSV's `prior_category` / `prior_label` columns instead, and `data/xmp` (read-only, versioned)
-still holds every original.
+the CSV's `prior_category` / `prior_label` columns instead, and `data/xmp` (never written by the
+pipeline, versioned) still holds every original.
 
 **`bird` wins; anything else defers.** `set_keywords_in_xmp(xmp, category, label)` writes the new
 label only when this run said `bird`, or when the sidecar carries no category at all. A non-bird
