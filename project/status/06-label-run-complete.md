@@ -112,10 +112,16 @@ Independent of the pipeline work below, and in progress at the time of writing.
    collections** off the keywords. This is why the sidecar leg exists at all — principle 2, the
    sidecar as a bridge to Lightroom, not as the pipeline's transport.
 
-**Recovery point.** `project/bookeeping/restic-snapshot.md` (untracked, deliberately — Miles's
-own working note) records the restic snapshot hash of the source library as it stood *before*
-the labels were applied. That snapshot predates the dedups too, which is what Part 4 of the
-audit report untangles. It is the rollback if the apply-back goes wrong.
+**Recovery point.** `project/bookeeping/restic-snapshot.md` records the restic snapshot of the
+full Lightroom library — repo `rest:http://nas4:/media`, hash `eeb1c598`, tags `lr` and
+`_dedup`. It is the rollback if the apply-back goes wrong, and it holds sidecars the curated
+`data/xmp` no longer does, which is what Part 4 of the audit report untangles.
+
+Restic is the library's own provenance record. The library itself is far too large and too
+binary for git, but snapshots make **file movement** — renames, re-filings, deletions across
+dedup rounds — recoverable and diffable, which is exactly the class of change that has caused
+trouble in this project. `data/xmp` versions the *curated* sidecars; restic versions the
+*library*. Neither substitutes for the other.
 
 ## Next — pipeline
 
