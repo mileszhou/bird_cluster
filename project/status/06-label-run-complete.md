@@ -98,16 +98,39 @@ Two further quality notes: 418 bird labels (1.5%) are scene descriptions rather 
 remains uncalibrated — 99% of rows sit at 0.95 or 0.98, and the herring-gull/snowy-owl pair are
 both 0.98, so confidence cannot filter the noise.
 
-## Next
+## Next — Miles's side: getting the labels into Lightroom
 
-1. **Restore `data/label/raw`** in the submodule working tree (see caveat above).
-2. **Repoint `embed.py` at `data/label/`.** It still scans sidecars and reads `labels.is_bird`,
+Independent of the pipeline work below, and in progress at the time of writing.
+
+1. **Restore `data/label/raw`** in the submodule working tree — `cd data && git checkout -- label/raw` (see the caveat above).
+2. **rsync `data/label/raw/` into the library**, then in Lightroom select the photos and run
+   *Metadata → **Read Metadata from File***. This step is easy to skip and silently does
+   nothing if skipped: the writer deliberately does not bump `xmp:MetadataDate`, so Lightroom
+   has no signal that the sidecars changed and will not offer to reload them. The labels sit on
+   disk unread until told.
+3. The point of it: see the label beside the bird while browsing, and drive **smart
+   collections** off the keywords. This is why the sidecar leg exists at all — principle 2, the
+   sidecar as a bridge to Lightroom, not as the pipeline's transport.
+
+**Recovery point.** `project/bookeeping/restic-snapshot.md` (untracked, deliberately — Miles's
+own working note) records the restic snapshot hash of the source library as it stood *before*
+the labels were applied. That snapshot predates the dedups too, which is what Part 4 of the
+audit report untangles. It is the rollback if the apply-back goes wrong.
+
+## Next — pipeline
+
+1. **Repoint `embed.py` at `data/label/`.** It still scans sidecars and reads `labels.is_bird`,
    so it cannot see the 569 sidecar-less birds and it re-derives a filter that is already
    recorded. Its JSONL must key on the JPEG path relative to `data/jpg`.
-3. **Resolve the effective category at curation time**, so the embed stage reads a two-column
+2. **Resolve the effective category at curation time**, so the embed stage reads a two-column
    contract and never learns the never-demote rule exists.
-4. Exclude or flag the 418 scene-description labels before any species-level analysis.
-5. Then embed 27,742 photos and cluster.
+3. Exclude or flag the 418 scene-description labels before any species-level analysis.
+4. Then embed 27,742 photos and cluster.
+
+**Environment note:** `.venv` was absent from the working box at the end of this session —
+rebuild with `./venv base client test cluster` before running the tests
+(`cd test && ../.venv/bin/python -m pytest .`, 170 passing as of `2292d47`). The analysis in
+this document and the audit report was done with system `python3` and stdlib only.
 
 ## Open, unchanged from 04
 
