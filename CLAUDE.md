@@ -76,6 +76,23 @@ contradicts one is probably wrong.
    blind spot of walking the image tree), JPEGs claiming a sidecar another already claimed (307,
    resolved deterministically), JPEGs with no sidecar (5,229, expected).
 
+### What a key is
+
+**A key is a string that locates an item.** It has structure — slashes, a library, a trip, a
+stem — but that structure is a *convention some consumers read*, not what the key is. Identity
+is string identity: two keys are the same item when the strings are equal. Nothing derives
+meaning from a key that it could not equally get from a column.
+
+The string is a path relative to an agreed-upon root: `data/jpg` everywhere downstream of
+labelling, which is what the CSV's `jpg` column, `output/processed.txt` and the embedding
+JSONL all hold. The root is a convention between stages, not a lookup — `code/lib/path_filter.py`
+compares keys without opening anything.
+
+Two consumers do read the structure, and it is worth knowing which: `path_filter` splits on
+`/` so a folder line can stand for its subtree, and `embed.py` derives `year` / `library` /
+`trip` / `stem` into columns so the JSONL can be grouped without re-parsing. Both are
+conveniences layered on the string, and neither is the key's identity.
+
 ### Stages, and who writes `data/`
 
 > **The pipeline never writes `data/`. A person curates into it.**
@@ -157,7 +174,10 @@ re-embedding, while any filter can be added later without touching a vector alre
 4. Each backend sends a system prompt + base64-encoded JPEG to the model (vLLM/llama.cpp backends call an OpenAI-compatible HTTP server; chatgpt calls OpenAI directly)
 5. Model returns JSON: `{category, label, label_cn, confidence}`
 6. `code/lib/label_generator.py` formats a compact label with pinyin initials and confidence
-7. XMP sidecar gets keywords injected (when the JPEG has one); CSV row appended; checkpoint updated
+7. A CSV row is appended and the checkpoint updated — **the CSV is the output of labelling**.
+   A keyword is also deposited in the sidecar when the image has one, but that is a by-product
+   for Lightroom's benefit, not the result: 5,229 images have no sidecar and are labelled just
+   the same, and it is the curated CSV in `data/label/` that the embedding step reads
 
 **The JPEG is the unit of work.** The walk is over `data/jpg`, not the sidecar tree: the JPEG is
 what the model sees and what gets embedded downstream, and 5,229 exports have no sidecar at all
@@ -434,13 +454,13 @@ Tests run from within `test/` (`../.venv/bin/python -m pytest lib/`). `test/conf
 exists because the project package is named `code`, which shadows the stdlib module of the
 same name once pytest preloads it.
 
-**Outputs** (in `output/`):
-- `bird_identification_output.csv` — main results (jpg, xmp, filename, category, label, label_cn, confidence, note, prior_category, prior_label, applied, run_label, response_json). **`jpg` is the key** — the JPEG's path relative to `data/jpg`, one row per image. `xmp` is the sidecar the label went into, relative to `data/xmp`, empty when the image has none. `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar to write — either the image never had a raw, or its capture's sidecar went to the exact-stem export) or `failed`.
+**Outputs** (in `output/`). The CSV is *the* output; `raw/` is a by-product:
+- `bird_identification_output.csv` — the result (jpg, xmp, filename, category, label, label_cn, confidence, note, prior_category, prior_label, applied, run_label, response_json). **`jpg` is the key** — the JPEG's path relative to `data/jpg`, one row per image. `xmp` is the sidecar the label went into, relative to `data/xmp`, empty when the image has none. `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar to write — either the image never had a raw, or its capture's sidecar went to the exact-stem export) or `failed`.
   - **`category` is this run's verdict, not the library's state.** Where `applied` is `kept-existing`, the sidecar keeps `prior_category` and the new verdict was overruled. Anything filtering on the *effective* label — e.g. picking the bird set to embed — must read `'bird' in (category, prior_category)`, lowercased, or it silently drops every photo the never-demote rule was written to protect.
   - A schema change makes the CSV un-appendable; `check_csv_schema()` refuses to resume against a mismatched header rather than shifting every new row one field left.
 - `args.json` — CLI arguments for reproducibility
 - `processed.txt` — checkpoint, one `jpg` key per line; delete to reprocess all images. Written per batch, *after* the CSV is flushed, so a hard kill can never mark a photo done without a row
-- `raw/` — the working copy of `data/xmp`, with keywords added. Getting labels back into the Lightroom library is a separate manual step; `data/` is never written to
+- `raw/` — the working copy of `data/xmp`, with keywords deposited into it. A by-product, not the result: it exists so Lightroom can show the label beside the photo and drive smart collections. Getting it back into the library is a separate manual step, and `data/` is never written to by the pipeline. Nothing downstream reads it — the embedding step reads the CSV
 
 **Backend modules** (all in `code/bird_label.py`):
 - `predict_with_vllm()` / `predict_with_vllm_batch()` — vLLM server via OpenAI-compatible API (`--vllm-url`); batch mode fires concurrent HTTP requests via a thread pool so the server's continuous batching handles them together
