@@ -159,40 +159,39 @@ def test_bird_overwrites_a_non_bird_category(tmp_path):
     assert subjects(p) == ("bird", "new-新-new bird(88%)")
 
 
-def test_non_bird_defers_to_an_existing_category(tmp_path):
-    """The existing category is finer-grained; a fresh `scenery` loses detail."""
-    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
-    action, _ = bl.set_keywords_in_xmp(p, "scenery", "a hillside(70%)")
-    assert action == bl.APPLIED_KEPT
-    assert subjects(p) == ("mountain landscape with glacier", "scenery")
+def test_this_runs_verdict_always_replaces_whatever_was_there(tmp_path):
+    """The labeller records; it does not arbitrate.
 
-
-def test_a_non_bird_result_now_replaces_an_existing_bird(tmp_path):
-    """The guard was given up: it held 554 rows and was wrong more often than right.
-
-    66 were provably a same-stem twin's label from the basename-keyed era, and
-    where both runs disagreed on the subject the newer call was the better one on
-    inspection. The cost is penguins and the odd owl, accepted deliberately --
-    the embedding step is expected to recover penguins as their own cluster.
+    Two successive guards were tried and both inverted. `bird` was protected
+    against false negatives, but 66 of the 554 rows it held were a same-stem
+    twin's label from the basename-keyed era. `scenery` was protected because a
+    fresh run once wrote bare categories, but by the time it was measured the
+    prompt asked for the landmark by name, so the guard kept "historic building
+    with columns and flag" over "brisbane city hall facade" across 2,401 rows.
+    Whichever result is better is a question for the consumer, which has the
+    population and a purpose; this function has neither.
     """
-    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
+    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
+    action, removed = bl.set_keywords_in_xmp(p, "people", "two women on a bridge(70%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("people", "two women on a bridge(70%)")
+    assert removed == ("mountain landscape with glacier", "scenery")
+
+
+def test_an_existing_bird_is_replaced_too(tmp_path):
+    p = sidecar(tmp_path, ["bird", "old-\u65e7-old bird(95%)"])
     action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)")
     assert action == bl.APPLIED_WRITTEN
     assert subjects(p) == ("animal", "a beetle(80%)")
 
 
-def test_the_bird_guard_can_be_restored(tmp_path):
-    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
-    action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)", protect_bird=True)
-    assert action == bl.APPLIED_KEPT
-    assert subjects(p) == ("bird", "old-旧-old bird(95%)")
-
-
-def test_giving_up_the_bird_guard_leaves_other_categories_deferring(tmp_path):
-    """Only the bird half was dropped; scenery still defers to the finer early text."""
-    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
-    action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)")
-    assert action == bl.APPLIED_KEPT
+def test_the_replaced_keywords_come_back_for_the_csv(tmp_path):
+    """prior_category / prior_label are the whole record of the previous run,
+    and what makes a second model's run a paired comparison."""
+    p = sidecar(tmp_path, ["bhl-\u767e\u82b1\u5cad", "bird", "old-\u65e7-old bird(95%)"])
+    _, removed = bl.set_keywords_in_xmp(p, "scenery", "a hillside(70%)")
+    assert removed == ("bird", "old-\u65e7-old bird(95%)")   # ours, not the user's
+    assert subjects(p) == ("bhl-\u767e\u82b1\u5cad", "scenery", "a hillside(70%)")
 
 
 def test_non_bird_writes_when_nothing_is_there(tmp_path):

@@ -40,7 +40,6 @@ Key CLI flags:
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--years LIST` — label only these years, e.g. `--years 2019,2021` (default `all`). Selects library folders by year: `2019` → `Photos-19`
 - `--include-from` / `--exclude-from PATH` — a manifest of paths relative to `data/jpg` (see `manifests/`). Same mechanism and same keys as `embed.py`, so one list scopes both stages
-- `--protect-bird-category` — restore the guard that never let a non-bird result replace an existing `bird`. Off by default; see below for why it was given up
 
 **A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
 the server actually serves before doing anything else, and exits if it cannot. The probe is not
@@ -498,41 +497,40 @@ keywords, nothing Lightroom would show in its keyword list. The previous label i
 the CSV's `prior_category` / `prior_label` columns instead, and `data/xmp` (never written by the
 pipeline, versioned) still holds every original.
 
-**`bird` wins; anything else defers.** `set_keywords_in_xmp(xmp, category, label)` writes the new
-label only when this run said `bird`, or when the sidecar carries no category at all. A non-bird
-result over an existing category leaves the sidecar untouched — the categories already there are
-finer-grained than what a fresh run produces (the early GPT-4o pass wrote specific scene
-descriptions, so a new bare `scenery` would lose information rather than correct anything). Bird
-identification is the one axis this pipeline is authoritative on, so it is the one it overwrites.
-Current dataset: 24,783 sidecars have no category and always take the new label; 9,377 are
-protected (6,363 `bird`, 2,349 `scenery`, 336 `animal`, 179 `People`, 150 `Unknown`).
+**The labeller records; it does not arbitrate.** `set_keywords_in_xmp(xmp, category, label)`
+writes this run's verdict unconditionally. Whatever was there goes to the CSV's
+`prior_category` / `prior_label` and is then replaced. No result is discarded on the grounds
+that an older one looked better — that judgement belongs to whatever consumes the output, which
+has the whole population in front of it and a question to answer. Neither is true of a function
+looking at one sidecar.
 
-**The bird half of that rule was given up on 2026-08-09** (`--protect-bird-category` restores
-it). A photo already called `bird` used to be *never demoted*, so a fresh false negative could
-not silently drop it from the clustering set. Sampling all 554 rows the guard actually held
-showed it doing more harm than good:
+**Two guards were tried here and both inverted**, which is why there is now none.
 
-- **It cannot tell a correct old label from a misplaced one, and the old runs were
-  basename-keyed.** 66 of the 554 are provably a same-stem twin's label — a wombat
-  carrying `common myna` because a Sydney photo with the same stem really is one. See
-  `tools/stale_bird_labels.py`, which buckets them by evidence.
-- **Where the two runs disagreed on the subject as well as the category, the newer call was the
-  better one** on inspection: scenes with no clear subject, whose pattern an older pass had read
-  as a bird.
+- **`bird` was protected** so a fresh false negative could not drop a photo from the clustering
+  set. Of the 554 rows it held, 66 are provably a same-stem twin's label from the basename-keyed
+  era — a wombat carrying `common myna` because a Sydney photo with the same stem
+  really is one (`tools/stale_bird_labels.py` buckets them by evidence). Given up 2026-08-09.
+- **`scenery` was protected** because the early GPT-4o pass wrote specific descriptions where a
+  fresh run wrote a bare `scenery`. By the time it was measured across its 2,401 rows the
+  current prompt was asking for the landmark *by name*, so the guard was keeping generic text
+  over identifying text: "historic building with columns and flag" kept over "brisbane city hall
+  facade". It was also blocking 363 category corrections. Given up the same day.
 
-What it costs: penguins, which this model files as `animal`, and the occasional owl. Accepted
-deliberately — chasing it properly means several models, calibration and voting, i.e. a project
-about label correctness *across* models, which this is not. The embedding step is expected to
-recover penguins as an obvious cluster, and recognising it as a bird afterwards is exactly the
-kind of question this pipeline exists to ask.
+The pattern is the lesson: a guard encodes an assumption about the labeller it was written for,
+the labeller improves, and the guard silently starts preserving the worse answer. It cannot
+notice, because it compares categories rather than quality.
 
-Only the bird half went. `scenery`, `animal`, `People` and `Unknown` still defer, because that
-half is about not coarsening the early GPT-4o scene descriptions and is unaffected by any of
-this.
+**This makes the pipeline a model-comparison instrument.** Run a second model over a tree the
+first one labelled and every row carries both verdicts side by side — `category`/`label` against
+`prior_category`/`prior_label` — a paired comparison over the whole library, for free, with no
+arbitration baked in. `prior_labels()` reads from `PRISTINE_XMP_DIR`, so pointing a run's
+`--data-dir` at a tree curated from a previous run's `raw/` is what sets the first model up as
+the "existing" one.
 
-The CSV keeps both verdicts either way — `category` (this run) against `prior_category`
-(previous) plus `applied` (`written` / `kept-existing`) — so every disagreement stays recoverable
-without reading a sidecar.
+`applied` is now only `written`, `csv-only` or `failed`. **`kept-existing` is still produced by
+nothing but understood by everything** — `data/label` and every archived run carry 3,693 such
+rows, and `embed.py`'s `effective_category()` keys off `applied` precisely so it is a no-op on
+new CSVs and load-bearing on old ones.
 
 **Re-running part of a library:** a partial run's `raw/` is a *full* copy of `data/xmp` with only
 the selected years touched, so merging it back is not a directory copy — taking `raw/` wholesale
