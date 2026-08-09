@@ -22,6 +22,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import NamedTuple, Optional
+import collections
 import csv
 import urllib.request
 import re
@@ -658,6 +659,17 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         if item.key not in processed and (filter_set is None or item.key in filter_set)
     ]
 
+    if getattr(args, 'dry_run', False):
+        by_lib = collections.Counter(it.key.split("/")[0] for it in items)
+        logger.info("  by library: " + ", ".join(f"{k}={by_lib[k]}" for k in sorted(by_lib)))
+        if processed:
+            logger.info(f"  {len(processed)} already in the checkpoint; "
+                        f"{len(pending)} would be sent to the model")
+        else:
+            logger.info(f"  {len(pending)} would be sent to the model")
+        logger.info("🔍 Dry run: nothing labelled, nothing written.")
+        return
+
     batch_size = getattr(args, 'batch_size', 1)
     use_batch = args.approach == "vllm" and batch_size > 1
     if use_batch:
@@ -758,13 +770,16 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="resolve the scope and report it, then stop. No model probe, "
+                             "no sidecar copy, no writes -- use it to check what a "
+                             "--years or --include-from selection actually covers")
     parser.add_argument("--include-from", type=str, default="",
-                        help="file of paths (not patterns) relative to data/jpg; only "
-                             "these are labelled. A folder line takes its whole subtree, "
-                             "at any depth. Lists live in manifests/")
+                        help="a manifest name -- a file in manifests/, given without the "
+                             "directory. Paths, not patterns, relative to data/jpg; a "
+                             "folder line takes its whole subtree at any depth")
     parser.add_argument("--exclude-from", type=str, default="",
-                        help="file of paths relative to data/jpg to skip; exclude wins "
-                             "over include")
+                        help="a manifest name to skip; exclude wins over include")
     # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
@@ -782,10 +797,14 @@ if __name__ == "__main__":
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     setup_logging(OUTPUT_DIR / "bird_label.log")
 
-    # Update args with actual model name if using llama.cpp to ensure args.json is accurate
     # Both server backends resolve the serving model before anything else runs, and
     # both treat a failed probe as fatal -- see get_actual_vllm_model_name().
-    if args.approach == "llama.cpp" and args.llama_url:
+    # A dry run skips it: scope is a question about the dataset, not the model,
+    # and needing a live server to find out what a manifest selects would defeat
+    # the point of being able to check quickly.
+    if args.dry_run:
+        logger.info("🔍 Dry run: resolving scope only. No model, no writes.")
+    elif args.approach == "llama.cpp" and args.llama_url:
         args.model = get_actual_vllm_model_name(args.llama_url, args.model)
     elif args.approach == "vllm" and args.vllm_url:
         args.model = get_actual_vllm_model_name(args.vllm_url, args.model)
@@ -813,7 +832,11 @@ if __name__ == "__main__":
     # it goes, which makes a re-run idempotent whether or not the copy already
     # holds labels, and prior_labels() reads the originals from data/ regardless.
     RUN_DIR.mkdir(parents=True, exist_ok=True)
-    if not RAW_OUT.exists():
+    if args.dry_run:
+        # Nothing is written, so the 739 MB copy would be pure cost. The claim
+        # index reads the same sidecar names either way.
+        RAW_OUT = RAW_DIR
+    elif not RAW_OUT.exists():
         logger.info(f"📄 Copying sidecar tree {RAW_DIR} → {RAW_OUT} …")
         shutil.copytree(RAW_DIR, RAW_OUT)
     else:
@@ -824,8 +847,9 @@ if __name__ == "__main__":
         git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     except Exception:
         git_hash = "unknown"
-    with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
-        json.dump({**vars(args), "git_commit": git_hash}, f, indent=2)
+    if not args.dry_run:
+        with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
+            json.dump({**vars(args), "git_commit": git_hash}, f, indent=2)
 
     start_time = time.perf_counter()
 
