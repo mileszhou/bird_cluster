@@ -279,8 +279,16 @@ keeping to compare against later.
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
 `status/` handoffs, `reports/` (analysis output and worklists), `messages/` (correspondence
 with the user, named `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder
-file they leave). `docs/` is reserved for product documentation, i.e. output meant for whoever
-uses the result rather than notes about building it.
+file they leave), `bookeeping/` (pointers to state held outside this repo). `docs/` is reserved
+for product documentation, i.e. output meant for whoever uses the result rather than notes
+about building it.
+
+**The library's own provenance is restic**, recorded in `project/bookeeping/`. The Lightroom
+library is far too large and too binary for git, but snapshots make *file movement* — renames,
+re-filings, deletions across dedup rounds — recoverable and diffable, which is the class of
+change that has repeatedly caused trouble here. `data/xmp` versions the **curated** sidecars;
+restic versions the **library**. Neither substitutes for the other, and a snapshot taken before
+a dedup will legitimately hold sidecars `data/xmp` no longer has.
 
 **Where run artifacts go:** `output/` is the live run and is gitignored. `./clean` archives it
 to `output_NNN_<description>/`, also gitignored — every past run stays on disk, nothing is
