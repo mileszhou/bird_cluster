@@ -95,7 +95,7 @@ def test_collect_keeps_the_effective_birds(dataset):
     cands, stats, per_year = collect(d, csv_path, ["2019"], 0.0)
     assert stats["rows"] == 5
     assert stats["in_scope"] == 4            # the 2021 row is out of scope
-    assert stats["bird"] == 3                # scenery excluded
+    assert stats["selected"] == 3           # scenery excluded
     assert sorted(c.stem for c in cands) == ["IMG_0001", "bird_ok"]
     assert per_year == {"2019": 2}
 

@@ -139,8 +139,16 @@ def effective_species(row) -> tuple[str | None, float | None]:
         return species, 0.0
 
 
-def collect(data_dir: Path, label_csv: Path, years, min_confidence: float):
-    """Every bird image named by the labelling CSV. Returns (candidates, counters)."""
+def collect(data_dir: Path, label_csv: Path, years, min_confidence: float,
+            categories=frozenset({"bird"})):
+    """Images the labelling CSV names in `categories`. Returns (candidates, counters).
+
+    `categories=None` takes everything. Embedding the whole library rather than
+    the birds is the shape of a real experiment, not a convenience: selecting the
+    set *by* the label means label errors in the excluded classes can never be
+    found, since they are excluded by construction. See
+    `project/ideas/01-rediscover-mislabels-by-clustering.md`.
+    """
     stats = Counter()
     per_year = Counter()
     candidates = []
@@ -166,9 +174,11 @@ def collect(data_dir: Path, label_csv: Path, years, min_confidence: float):
                 continue
             stats["in_scope"] += 1
 
-            if effective_category(row) != "bird":
+            cat = effective_category(row)
+            if categories is not None and cat not in categories:
                 continue
-            stats["bird"] += 1
+            stats["selected"] += 1
+            stats[f"cat_{cat or 'none'}"] += 1
 
             species, conf = effective_species(row)
             if conf is not None and conf < min_confidence:
@@ -267,7 +277,9 @@ def report(stats: Counter, per_year: Counter, candidates, title):
     logger.info(f"--- {title} ---")
     logger.info(f"  CSV rows              : {stats['rows']}")
     logger.info(f"  in the selected years : {stats['in_scope']}")
-    logger.info(f"  bird (effective)      : {stats['bird']}")
+    logger.info(f"  selected (effective)  : {stats['selected']}")
+    for key in sorted(k for k in stats if k.startswith("cat_")):
+        logger.info(f"      {key[4:]:<18}: {stats[key]}")
     if stats["below_min_confidence"]:
         logger.info(f"  dropped, low conf     : {stats['below_min_confidence']}")
     logger.info(f"  to embed              : {stats['resolved']}")
@@ -297,6 +309,11 @@ def main():
                     help="default: config.toml [servers.embed]")
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (0 = no limit)")
+    ap.add_argument("--categories", default="bird",
+                    help="comma-separated effective categories to embed, or 'all' "
+                         "(default: bird). `all` is what makes label errors in the "
+                         "non-bird classes discoverable -- filtering by label means "
+                         "its mistakes there are excluded by construction")
     ap.add_argument("--min-confidence", type=float, default=0.0,
                     help="skip birds whose label confidence is below this. Note the "
                          "model's confidence is not calibrated -- 99%% of rows sit at "
@@ -320,8 +337,11 @@ def main():
 
     logger.info(f"reading {label_csv} for years="
                 f"{'all' if years is None else ','.join(years)}")
+    categories = None if args.categories.strip().lower() == "all" else frozenset(
+        c.strip().lower() for c in args.categories.split(",") if c.strip())
+    logger.info(f"categories: {'all' if categories is None else ','.join(sorted(categories))}")
     candidates, stats, per_year = collect(args.data_dir, label_csv, years,
-                                          args.min_confidence)
+                                          args.min_confidence, categories)
     report(stats, per_year, candidates, "scan")
 
     if args.dry_run:
@@ -363,6 +383,7 @@ def main():
     (args.output_dir / "run.json").write_text(json.dumps({
         "years": years,
         "batch_size": args.batch_size, "min_confidence": args.min_confidence,
+        "categories": args.categories,
         "embed_url": embed_url, "server": info, "model": model,
         "data_dir": str(args.data_dir), "label_csv": str(label_csv),
         "candidates": len(candidates),
