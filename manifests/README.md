@@ -6,10 +6,22 @@ skip. Consumed by `--include-from` / `--exclude-from`
 
 ## How they are named
 
-Pass the **file name**, not a path — `--exclude-from exclude-captive.txt`. The directory is
-resolved by `code/lib/path_filter.py`, so it cannot be pointed elsewhere: a list read from
-outside the repo makes a run's recorded scope a dangling reference. A redundant `manifests/`
-prefix is accepted and stripped; anything else is refused.
+One rule: the argument is a path, and once resolved it has to be inside this directory.
+
+    --exclude-from manifests/exclude-captive.txt    # tab-completes; matches disk
+    --exclude-from exclude-captive.txt              # bare name, manifest-relative
+    --exclude-from captive/zoos.txt                 # subdirectories, either way
+    --exclude-from /tmp/scratch.txt                 # refused
+    --exclude-from manifests/../data/x              # refused
+
+The prefixed form is the one worth typing: it completes from the shell and matches
+what appears in `args.json`. Containment is checked on the *resolved* path rather
+than the leading segment, so `manifests/../` cannot walk out while looking
+compliant.
+
+A directory literally named `manifests` inside this one is the single path this
+cannot express, since the leading segment is read as the repo-relative prefix.
+That is nearly always a mistake, so it costs nothing.
 
 ## What they are
 
