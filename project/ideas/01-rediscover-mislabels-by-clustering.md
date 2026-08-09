@@ -45,10 +45,16 @@ There is already a validation set, produced by an unrelated method.
 So the question is not "does clustering find something interesting" but "what
 fraction of a known set does it recover", which is a much stronger claim.
 
-Keep the pre-rerun `data/label` for this. After the 2024/2025 re-run those rows
-carry the new verdict, so the errors live in `prior_category` / `prior_label` —
-still usable, and arguably cleaner, since what is being tested is then separate
-from what is being trusted.
+The validation set is in **`data/label`** itself, and needs no superseded run
+kept beside it. `prior_labels()` reads from `data/xmp`, which the pipeline never
+writes, so `prior_category` / `prior_label` carry the *original* labels rather
+than any previous pass's. Both sets recompute from the current CSV alone —
+**559** rows whose prior was `bird` against a current non-bird verdict, of which
+**65** are provable same-stem collisions.
+
+That is arguably the cleaner arrangement: what is being tested (the old label)
+sits in a different column from what is being trusted (the current one), rather
+than in a different directory.
 
 ## What would have to be true
 

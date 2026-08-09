@@ -7,6 +7,15 @@ committed to the dataset.
 Full analysis: **`project/reports/label_run_audit.md`**. This document is the state and the
 decisions that follow from it.
 
+## Superseded by the 2024/2025 re-run
+
+This describes the **first** full pass. On 2026-08-09 Photos-24 and Photos-25
+were re-labelled after the deferral guards were given up, and the merged result
+became `data/label` — so every `data/label` reference below describes a state
+that no longer exists on disk. The first pass was not archived: only two
+libraries changed, so it is reproducible from the code, the dataset and
+`manifests/inclusion-24&25.txt`. `data/label/PROVENANCE.md` has the detail.
+
 ## The run
 
 | | |
