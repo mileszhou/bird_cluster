@@ -36,6 +36,13 @@ line takes nested children with it. Comparison is on whole path segments, so
 
 from pathlib import Path
 
+# Scope lists live here and nowhere else. They are inputs a run records by
+# *path*, so the file has to be in the repo for the scope to be reconstructible
+# later -- a manifest under /tmp makes a run.json a dangling reference, and the
+# population a result was computed over becomes unrecoverable. Naming the
+# directory in the code rather than in every command line is what enforces it.
+MANIFEST_DIR = Path(__file__).resolve().parents[2] / "manifests"
+
 
 class PathFilter:
     """Decides whether an image key is in scope. Empty include list = everything."""
@@ -123,10 +130,32 @@ def read_paths(path) -> list[str]:
     return out
 
 
+def resolve(name) -> Path:
+    """A manifest name -> its path under `manifests/`.
+
+    Callers pass a bare filename; the directory is not theirs to choose. A
+    redundant `manifests/` prefix is accepted and stripped, since typing it is
+    the obvious mistake and refusing would be pedantry. Any other directory is
+    refused outright -- that is the case worth catching, because a list read
+    from elsewhere is one that cannot be recovered from history.
+    """
+    p = Path(str(name))
+    parts = p.parts
+    if len(parts) > 1:
+        if parts[0] == MANIFEST_DIR.name:
+            p = Path(*parts[1:])
+        else:
+            raise ValueError(
+                f"manifest must live in {MANIFEST_DIR.name}/, got {name!r}\n"
+                f"       Pass just the file name. Scope lists are versioned so a "
+                f"run's recorded scope can be recovered later.")
+    return MANIFEST_DIR / p
+
+
 def build(include_from=None, exclude_from=None) -> PathFilter:
     return PathFilter(
-        include=read_paths(include_from) if include_from else (),
-        exclude=read_paths(exclude_from) if exclude_from else (),
-        include_src=str(include_from) if include_from else None,
-        exclude_src=str(exclude_from) if exclude_from else None,
+        include=read_paths(resolve(include_from)) if include_from else (),
+        exclude=read_paths(resolve(exclude_from)) if exclude_from else (),
+        include_src=str(resolve(include_from)) if include_from else None,
+        exclude_src=str(resolve(exclude_from)) if exclude_from else None,
     )

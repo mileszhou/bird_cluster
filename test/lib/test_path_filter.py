@@ -82,11 +82,19 @@ def test_read_paths_normalises_windows_separators(tmp_path):
     assert read_paths(p) == ["Photos-24/trip b"]
 
 
-def test_build_from_files(tmp_path):
-    inc, exc = tmp_path / "i.txt", tmp_path / "e.txt"
+@pytest.fixture
+def manifest_dir(tmp_path, monkeypatch):
+    """Point the manifest directory at a temp one; callers pass bare names."""
+    import code.lib.path_filter as pf
+    monkeypatch.setattr(pf, "MANIFEST_DIR", tmp_path)
+    return tmp_path
+
+
+def test_build_from_files(manifest_dir):
+    inc, exc = manifest_dir / "i.txt", manifest_dir / "e.txt"
     inc.write_text("Photos-16\n", encoding="utf-8")
     exc.write_text(f"{ZOO}\n", encoding="utf-8")
-    f = build(inc, exc)
+    f = build("i.txt", "e.txt")
     assert f.allows("Photos-16/other/a.jpg")
     assert not f.allows(KEY)
     d = f.describe()
@@ -99,13 +107,13 @@ def test_build_with_nothing_is_falsy():
     assert not build(None, None)
 
 
-def test_a_missing_list_is_fatal(tmp_path):
+def test_a_missing_list_is_fatal(tmp_path, manifest_dir):
     """Never "no filter": an include list exists to narrow, so ignoring a typo'd
     one runs the whole library instead of the subset asked for."""
     with pytest.raises(FileNotFoundError):
         read_paths(tmp_path / "typo.t")
     with pytest.raises(FileNotFoundError):
-        build(tmp_path / "typo.t", None)
+        build("typo.t", None)
 
 
 def test_an_all_comments_list_is_fatal(tmp_path):
@@ -114,3 +122,25 @@ def test_an_all_comments_list_is_fatal(tmp_path):
     p.write_text("# everything commented out\n\n", encoding="utf-8")
     with pytest.raises(ValueError):
         read_paths(p)
+
+
+# --- manifests live in manifests/, and callers do not say so ----------------
+
+def test_a_bare_name_resolves_into_the_manifest_dir():
+    from code.lib.path_filter import MANIFEST_DIR, resolve
+    assert resolve("no-zoos.txt") == MANIFEST_DIR / "no-zoos.txt"
+
+
+def test_a_redundant_manifests_prefix_is_accepted():
+    """Typing it is the obvious mistake; refusing would be pedantry."""
+    from code.lib.path_filter import MANIFEST_DIR, resolve
+    assert resolve("manifests/no-zoos.txt") == MANIFEST_DIR / "no-zoos.txt"
+
+
+def test_any_other_directory_is_refused():
+    """A list read from elsewhere cannot be recovered from history, so a run's
+    recorded scope would be a dangling reference."""
+    from code.lib.path_filter import resolve
+    for bad in ("/tmp/scratch.txt", "../secret.txt", "project/reports/x.txt"):
+        with pytest.raises(ValueError):
+            resolve(bad)

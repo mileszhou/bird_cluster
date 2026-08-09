@@ -4,6 +4,13 @@ Path lists that define the **scope** of a run — what a stage should look at, o
 skip. Consumed by `--include-from` / `--exclude-from`
 (`code/lib/path_filter.py`).
 
+## How they are named
+
+Pass the **file name**, not a path — `--exclude-from exclude-captive.txt`. The directory is
+resolved by `code/lib/path_filter.py`, so it cannot be pointed elsewhere: a list read from
+outside the repo makes a run's recorded scope a dangling reference. A redundant `manifests/`
+prefix is accepted and stripped; anything else is refused.
+
 ## What they are
 
 One key per line, relative to the agreed-upon root (`data/jpg` downstream of
