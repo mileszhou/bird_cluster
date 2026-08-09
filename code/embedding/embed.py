@@ -1,30 +1,38 @@
 """Step 1 of the semantic-clustering pipeline: embed the bird photos.
 
-Walks the sidecar tree, keeps the ones bird_label categorised as `bird`,
-resolves each to its exported JPEG, and POSTs batches to the embed server
-(`code/embedding/embed_server.py`), appending one JSON object per image to
-`embeddings.jsonl`.
+Reads a curated labelling run, keeps the birds, and POSTs batches to the embed
+server (`code/embedding/embed_server.py`), appending one JSON object per image
+to `embeddings.jsonl`.
 
     ./run-embed                                     # whatever --years defaults to
     python3 -m code.embedding.embed --years 2019    # one year
     python3 -m code.embedding.embed --years 2019 --dry-run
 
+**The image is the unit, and the CSV is the guide.** The label set comes from
+`<label-dir>/bird_identification_output.csv` -- one row per exported image, the
+`jpg` column naming it relative to `<data-dir>/jpg`. Nothing here reads a
+sidecar. That is not a shortcut, it is the design:
+
+- **5,229 exported images have no sidecar at all**, and 569 of them are birds.
+  A sidecar walk cannot enumerate them, so they were invisible to every earlier
+  version of this step -- 2% of the clustering set, concentrated in birding
+  trips.
+- The labelling run already resolved which file backs each capture, including
+  the 189 whose only export is decorated (`-Enhanced-NR`, `-2`). Re-deriving it
+  here with a second resolver is drift waiting to happen.
+- The key has to be the image path for the same reason: a sidecar path cannot
+  name an image that has no sidecar.
+
+The `jpg` column is a path, so a non-JPEG export would ride through unchanged;
+only the column's name assumes the format.
+
 Dataset layout -- the export mirrors the photo library, so nothing is hardcoded
 per year:
 
-    <data-dir>/xmp/<library>/<trip>/*.xmp     # Photos-19/2019-01-13 山公园/_D8S0025.xmp
-    <data-dir>/jpg/<library>/<trip>/*.jpg     # same folder, same stem
+    <data-dir>/jpg/<library>/<trip>/*.jpg          # Photos-19/2019-01-13 山公园/_D8S0025.jpg
+    <label-dir>/bird_identification_output.csv     # one row per image
 
 `--years 2019` selects by the library's year (`Photos-19`).
-
-Categories come from each sidecar's own keywords, not from
-`bird_identification_output.csv` -- see `code/lib/xmp_labels.py` for why the CSV
-is not safe to key by basename.
-
-Where a capture was exported more than once -- a master plus its Lightroom
-virtual copies -- only the first export is embedded. The copies are alternate
-edits of one frame, so embedding each would pile near-duplicate vectors into a
-density-based clustering step for no extra information.
 
 Output is JSONL rather than one array so the run is append-friendly and
 resumable: the checkpoint is just the set of keys already in the file, matching
@@ -33,6 +41,7 @@ the append-mode-CSV resumption `bird_label.py` uses. Re-running skips them.
 
 import argparse
 import base64
+import csv
 import json
 import logging
 import signal
@@ -45,8 +54,8 @@ from pathlib import Path
 import requests
 
 from code.lib.config import server_url
-from code.lib.jpg_index import JpgIndex, Verdict, library_year
-from code.lib.xmp_labels import read_labels
+from code.lib.jpg_index import library_year
+from code.lib.xmp_labels import parse_label   # parses a CSV string; reads no file
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("embed")
@@ -64,87 +73,129 @@ def _on_sigint(signum, frame):
 
 
 class Candidate:
-    """One bird sidecar that resolved to a JPEG."""
+    """One bird image to embed. `key` is its path relative to `<data-dir>/jpg`."""
 
-    __slots__ = ("key", "year", "library", "trip", "xmp", "jpg", "species",
-                 "confidence", "verdict", "copies")
+    __slots__ = ("key", "year", "library", "trip", "stem", "xmp", "jpg",
+                 "species", "confidence", "applied")
 
-    def __init__(self, key, year, library, trip, xmp, jpg, species, confidence,
-                 verdict, copies=1):
+    def __init__(self, key, year, library, trip, stem, xmp, jpg, species,
+                 confidence, applied):
         self.key, self.year, self.library, self.trip = key, year, library, trip
+        self.stem = stem
+        # `xmp` is the capture's sidecar as a string, "" when the image never
+        # had one. Carried through so alternate edits of one frame stay
+        # groupable downstream; nothing here reads the file.
         self.xmp, self.jpg = xmp, jpg
-        self.species, self.confidence, self.verdict = species, confidence, verdict
-        self.copies = copies  # exported files for this capture; only jpg is embedded
-
-    @property
-    def stem(self):
-        """Camera filename stem, shared by the sidecar and its JPEG."""
-        return self.xmp.stem
+        self.species, self.confidence = species, confidence
+        self.applied = applied
 
 
-def library_dirs(data_dir: Path, years: list[str] | None):
-    """(year, library folder) pairs under `xmp/`, filtered by `--years`."""
-    out = []
-    for d in sorted((data_dir / "xmp").iterdir()):
-        if not d.is_dir():
-            continue
-        year = library_year(d.name)
-        if year is None or (years and year not in years):
-            continue
-        out.append((year, d))
-    return out
+def _overruled(row) -> bool:
+    """True when the sidecar kept its prior label and this run's was discarded."""
+    return row.get("applied") == "kept-existing" and bool(row.get("prior_category"))
 
 
-def collect(data_dir: Path, years, min_confidence: float):
-    """Find every bird sidecar with a resolvable JPEG. Returns (candidates, counters)."""
-    index = JpgIndex(data_dir / "xmp", data_dir / "jpg")
+def effective_category(row) -> str:
+    """The category the library actually holds, lowercased.
+
+    The CSV's `category` is *this run's verdict*. Where `applied` is
+    `kept-existing` the run's answer was overruled and the sidecar kept
+    `prior_category` -- `bird` is never demoted by a later non-bird result,
+    which is what guards the clustering set against a false negative.
+
+    Resolving it here, once, is deliberate: 554 photos differ between the two
+    readings, and a consumer that filters on `category == 'bird'` drops exactly
+    the set the never-demote rule exists to protect.
+    """
+    if _overruled(row):
+        return row["prior_category"].strip().lower()
+    return (row.get("category") or "").strip().lower()
+
+
+def effective_species(row) -> tuple[str | None, float | None]:
+    """(species, confidence) matching the category `effective_category` returns.
+
+    The same overruling applies to the label, and forgetting it is worse than
+    forgetting it for the category, because the result still *looks* like a
+    species. On a never-demoted row `label` holds this run's non-bird answer --
+    "cherry blossoms in full bloom at w..." -- while the bird is in
+    `prior_label` as `bqsy-白秋沙鸭-smew(95%)`. Taking `label` there adds 294
+    scene descriptions to the species vocabulary and mislabels 554 vectors.
+
+    `prior_label` is `;`-joined and in the `py-cn-en(NN%)` shape, so the
+    confidence comes back with it; the CSV's own `confidence` column belongs to
+    the discarded non-bird call.
+    """
+    if _overruled(row):
+        for part in (row.get("prior_label") or "").split(";"):
+            label = parse_label(part.strip())
+            if label:
+                return label.english, label.confidence
+        return None, None
+    species = (row.get("label") or "").strip().lower() or None
+    try:
+        return species, float(row.get("confidence") or 0.0)
+    except ValueError:
+        return species, 0.0
+
+
+def collect(data_dir: Path, label_csv: Path, years, min_confidence: float):
+    """Every bird image named by the labelling CSV. Returns (candidates, counters)."""
     stats = Counter()
     per_year = Counter()
     candidates = []
-    wanted = {d.name for _, d in library_dirs(data_dir, years)}
+    jpg_root = data_dir / "jpg"
 
-    for xmp in index.sidecars():
-        rel = xmp.relative_to(data_dir / "xmp")
-        library = rel.parts[0]
-        if library not in wanted:
-            continue
-        stats["xmp"] += 1
-        labels = read_labels(xmp)
-        if labels is None:
-            stats["unparseable_xmp"] += 1
-            continue
-        if not labels.is_bird:
-            continue
-        stats["bird"] += 1
+    with open(label_csv, newline="", encoding="utf-8-sig") as fh:
+        reader = csv.DictReader(fh)
+        if "jpg" not in (reader.fieldnames or []):
+            sys.exit(f"error: {label_csv} has no 'jpg' column -- it predates the "
+                     f"image-keyed schema and names sidecars rather than images. "
+                     f"Point --label-dir at a current labelling run.")
+        for row in reader:
+            stats["rows"] += 1
+            rel = (row.get("jpg") or "").strip()
+            if not rel:
+                stats["no_image_path"] += 1
+                continue
 
-        if labels.label is None:
-            stats["bird_without_label"] += 1
-        elif labels.label.confidence < min_confidence:
-            stats["below_min_confidence"] += 1
-            continue
+            parts = Path(rel).parts
+            library = parts[0]
+            year = library_year(library)
+            if year is None or (years and year not in years):
+                continue
+            stats["in_scope"] += 1
 
-        match = index.resolve(xmp)
-        stats[f"verdict_{match.verdict.value}"] += 1
-        if not match.ok:
-            stats["unresolved"] += 1
-            continue
-        if len(match.paths) > 1:
-            stats["multiple_copies"] += 1
+            if effective_category(row) != "bird":
+                continue
+            stats["bird"] += 1
 
-        year = library_year(library)
-        candidates.append(Candidate(
-            key=rel.as_posix(),
-            year=year,
-            library=library,
-            trip=str(Path(*rel.parts[1:-1])) if len(rel.parts) > 2 else "",
-            xmp=xmp, jpg=match.path,
-            species=labels.species,
-            confidence=labels.label.confidence if labels.label else None,
-            verdict=match.verdict.value,
-            copies=len(match.paths),
-        ))
-        per_year[year] += 1
-        stats["resolved"] += 1
+            species, conf = effective_species(row)
+            if conf is not None and conf < min_confidence:
+                stats["below_min_confidence"] += 1
+                continue
+
+            jpg = jpg_root / rel
+            if not jpg.is_file():
+                # The CSV names an image the tree no longer has -- a re-export
+                # dropped it, or the CSV predates the current data/.
+                stats["missing_image"] += 1
+                continue
+
+            candidates.append(Candidate(
+                key=rel,
+                year=year,
+                library=library,
+                trip=str(Path(*parts[1:-1])) if len(parts) > 2 else "",
+                stem=Path(rel).stem,
+                xmp=(row.get("xmp") or "").strip(),
+                jpg=jpg,
+                species=species,
+                confidence=conf,
+                applied=(row.get("applied") or "").strip(),
+            ))
+            per_year[year] += 1
+            stats["resolved"] += 1
 
     return candidates, stats, per_year
 
@@ -214,21 +265,17 @@ def embed_batch(embed_url: str, batch, workers: int, retries: int = 3):
 
 def report(stats: Counter, per_year: Counter, candidates, title):
     logger.info(f"--- {title} ---")
-    logger.info(f"  sidecars scanned      : {stats['xmp']}")
-    logger.info(f"  bird sidecars         : {stats['bird']}")
+    logger.info(f"  CSV rows              : {stats['rows']}")
+    logger.info(f"  in the selected years : {stats['in_scope']}")
+    logger.info(f"  bird (effective)      : {stats['bird']}")
     if stats["below_min_confidence"]:
         logger.info(f"  dropped, low conf     : {stats['below_min_confidence']}")
-    if stats["bird_without_label"]:
-        logger.info(f"  bird, no parsed label : {stats['bird_without_label']}")
-    logger.info(f"  resolved to a JPEG    : {stats['resolved']}")
-    if stats["multiple_copies"]:
-        logger.info(f"      exported >1 time  : {stats['multiple_copies']} "
-                    f"(virtual copies; first export embedded)")
-    logger.info(f"  unresolved            : {stats['unresolved']}")
-    for verdict in Verdict:
-        n = stats.get(f"verdict_{verdict.value}", 0)
-        if n:
-            logger.info(f"      {verdict.value:<24}: {n}")
+    logger.info(f"  to embed              : {stats['resolved']}")
+    if stats["missing_image"]:
+        logger.warning(f"  NAMED BUT NOT ON DISK : {stats['missing_image']} -- the CSV "
+                       f"and data/jpg disagree; re-run ./run-audit")
+    if stats["no_image_path"]:
+        logger.warning(f"  rows with no jpg path : {stats['no_image_path']}")
     if per_year:
         logger.info("  by year: " + ", ".join(f"{y}={per_year[y]}" for y in sorted(per_year)))
     species = {c.species for c in candidates if c.species}
@@ -239,6 +286,9 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--data-dir", type=Path, default=Path("./data"))
+    ap.add_argument("--label-dir", type=Path, default=Path("./data/label"),
+                    help="a curated labelling run; its bird_identification_output.csv "
+                         "is the guide (default: ./data/label)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/embed"))
     ap.add_argument("--years", default="2019",
                     help="comma-separated years to include, or 'all' (default: 2019). "
@@ -248,7 +298,9 @@ def main():
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (0 = no limit)")
     ap.add_argument("--min-confidence", type=float, default=0.0,
-                    help="skip bird sidecars whose label confidence is below this")
+                    help="skip birds whose label confidence is below this. Note the "
+                         "model's confidence is not calibrated -- 99%% of rows sit at "
+                         "0.95 or 0.98 -- so this filters far less than it appears to")
     ap.add_argument("--encode-workers", type=int, default=8,
                     help="threads used to read and base64 the JPEGs of a batch")
     ap.add_argument("--dry-run", action="store_true",
@@ -259,12 +311,17 @@ def main():
         y.strip() for y in args.years.split(",") if y.strip()
     ]
 
-    if not (args.data_dir / "xmp").is_dir() or not (args.data_dir / "jpg").is_dir():
-        sys.exit(f"error: expected {args.data_dir}/xmp and {args.data_dir}/jpg to exist")
+    if not (args.data_dir / "jpg").is_dir():
+        sys.exit(f"error: expected {args.data_dir}/jpg to exist")
+    label_csv = args.label_dir / "bird_identification_output.csv"
+    if not label_csv.is_file():
+        sys.exit(f"error: {label_csv} not found. --label-dir must point at a curated "
+                 f"labelling run; see 'a person curates into data/' in CLAUDE.md.")
 
-    logger.info(f"scanning {args.data_dir} for years="
+    logger.info(f"reading {label_csv} for years="
                 f"{'all' if years is None else ','.join(years)}")
-    candidates, stats, per_year = collect(args.data_dir, years, args.min_confidence)
+    candidates, stats, per_year = collect(args.data_dir, label_csv, years,
+                                          args.min_confidence)
     report(stats, per_year, candidates, "scan")
 
     if args.dry_run:
@@ -272,7 +329,7 @@ def main():
         return
 
     if not candidates:
-        sys.exit("error: nothing to embed -- check --years and --data-dir")
+        sys.exit("error: nothing to embed -- check --years, --label-dir and --data-dir")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.output_dir / "embeddings.jsonl"
@@ -307,7 +364,8 @@ def main():
         "years": years,
         "batch_size": args.batch_size, "min_confidence": args.min_confidence,
         "embed_url": embed_url, "server": info, "model": model,
-        "data_dir": str(args.data_dir), "candidates": len(candidates),
+        "data_dir": str(args.data_dir), "label_csv": str(label_csv),
+        "candidates": len(candidates),
     }, indent=2))
 
     signal.signal(signal.SIGINT, _on_sigint)
@@ -329,9 +387,9 @@ def main():
                 fh.write(json.dumps({
                     "key": cand.key, "year": cand.year, "library": cand.library,
                     "trip": cand.trip, "stem": cand.stem,
-                    "jpg_path": str(cand.jpg), "xmp_path": str(cand.xmp),
+                    "jpg_path": str(cand.jpg), "xmp": cand.xmp,
                     "species": cand.species, "confidence": cand.confidence,
-                    "match": cand.verdict, "model": model, "embedding": vector,
+                    "applied": cand.applied, "model": model, "embedding": vector,
                 }, ensure_ascii=False) + "\n")
             fh.flush()
             written += len(batch)

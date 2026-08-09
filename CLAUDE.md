@@ -370,18 +370,36 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    are not in the same space and nothing downstream could detect the mixture. Use a fresh
    `--output-dir` to switch models.
 
-   **Not yet adapted to the JPEG-centric design.** It still scans the *sidecar* tree and takes
-   its bird filter from `labels.is_bird` — the XMP keywords. That makes the label's journey from
-   labelling to embedding run out through Lightroom and back (rsync → re-export → `data/xmp`),
-   contradicting principle 2, and it makes the 5,229 sidecar-less JPEGs structurally invisible.
-   It should read a curated selection from `data/label/` instead, and key the JSONL by the JPEG
-   path relative to `data/jpg` — the only identifier spanning sidecar-backed and sidecar-less
-   images. Any JSONL written before that change is keyed by sidecar path: regenerate rather than
-   resume. Whatever selects the bird set must read the **effective** category
-   (`'bird' in (category, prior_category)`), not `category == 'bird'` — see Stages above.
+   **The CSV is the guide; nothing here reads a sidecar.** The label set comes from
+   `--label-dir`'s `bird_identification_output.csv` (default `data/label/`), one row per
+   exported image, and the `jpg` column names the file relative to `data/jpg`. That is what lets
+   the **569 birds with no sidecar** be embedded at all — a sidecar walk cannot enumerate them.
+   It also stops a second resolver re-deriving which file backs each capture, which the
+   labelling run already recorded.
 
-   Where a capture was exported more than once (master plus virtual copies), only the first
-   export is embedded — the copies are alternate edits of one frame.
+   **The JSONL `key` is the image path relative to `data/jpg`** — the only identifier spanning
+   sidecar-backed and sidecar-less images. Any JSONL written before this change is keyed by
+   sidecar path: regenerate rather than resume. `xmp` rides along as a column so alternate edits
+   of one capture stay groupable.
+
+   **`effective_category()` and `effective_species()` resolve the never-demote rule here, once.**
+   The CSV's `category` is *this run's* verdict; where `applied` is `kept-existing` the library
+   kept `prior_category`, and the species is then in `prior_label`, not `label`. Getting the
+   category right but not the label is the worse bug of the two — it silently contributes 294
+   scene descriptions to the species vocabulary. Effective bird set: **27,742**.
+
+   A caveat that falls out of the rule: 554 never-demoted rows enter the set, and 398 of them are
+   ones this run called `animal`. Some are this run's own miscategorisations (`great horned owl`,
+   `lesser rhea` — birds called `animal`), but others are the *old* pipeline's over-calls kept
+   alive: `common myna` over a wombat, `silver gull` over a husky, `western grebe` over a black
+   bear. ~1.4% of the embedding set. Left in deliberately — clustering isolating them is a test
+   of the premise, not a failure — but do not read those species labels as ground truth.
+
+   Output is a single flat `output/embed/embeddings.jsonl` plus `run.json`; the folder structure
+   survives only as the `year` / `library` / `trip` / `stem` columns. ~255 MB for the bird set at
+   768 dims, against ~85 MB as float32 — the price of being appendable and inspectable, which is
+   what makes resumption and the single-model check cheap. If load time hurts, cache a derived
+   `.npy` beside it rather than changing the write format.
 3. `code/cluster/discover.py` / `stats.py` — HDBSCAN + cluster statistics. Not yet written.
 
 Environment: `./venv` takes stage arguments so a non-GPU box need not pull torch —
