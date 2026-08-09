@@ -250,6 +250,27 @@ data/jpg/export.report.txt            # what the exporter skipped, and why
 data/label/                           # curated from a labelling run -- input to embedding
 ```
 
+**The `data/` submodule is ~6.5 GB, and `jpg/` is nearly all of it.** That is deliberate, and
+the obvious-looking economy — drop the JPEGs, they are only a Lightroom export — is wrong.
+
+The export **is** the ground truth. It is the thing embedded, the thing clustered, and the
+population every result is computed over; the library it came from is not in git at all. Nor is
+it reliably re-derivable: re-exporting yields *an* export, not *the* export a set of vectors was
+computed against. This project has already watched it move — a dedup round changed which files
+exist, decorated names (`-Enhanced-NR`, `-2`) come and go, and a different Lightroom version or
+export setting changes the pixels. A result whose population cannot be reconstructed is not
+interpretable, which is the same argument that makes `manifests/` versioned, one level down: a
+manifest *names* a population, the JPEG tree *is* one.
+
+So the two provenance systems divide by what they are good at. **Restic snapshots the library**
+(`project/bookeeping/`) — large, binary, and interesting mainly for *file movement*. **Git
+versions the export** — the fixed substrate that results are anchored to. Neither substitutes
+for the other. JPEGs are already compressed, so the pack is essentially the file bytes and no
+amount of gc will shrink it; that is the cost of pinning the substrate, and it is worth paying.
+
+(If a clone is ever unbearable, `git clone --filter=blob:none` or a shallow submodule fetch gets
+the sidecars and history without the images. Removing them from history does not.)
+
 `data/label/` is cherry-picked from an archived run (`output_NNN_<description>/`), not a
 renamed copy of one. It exists so a category reaches the embedding step directly instead of
 travelling out through Lightroom and back. Its counterpart at the next boundary would be
