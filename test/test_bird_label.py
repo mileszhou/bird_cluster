@@ -167,12 +167,32 @@ def test_non_bird_defers_to_an_existing_category(tmp_path):
     assert subjects(p) == ("mountain landscape with glacier", "scenery")
 
 
-def test_non_bird_never_demotes_an_existing_bird(tmp_path):
-    """Follows from the rule, and guards the clustering set against a false negative."""
+def test_a_non_bird_result_now_replaces_an_existing_bird(tmp_path):
+    """The guard was given up: it held 554 rows and was wrong more often than right.
+
+    66 were provably a same-stem twin's label from the basename-keyed era, and
+    where both runs disagreed on the subject the newer call was the better one on
+    inspection. The cost is penguins and the odd owl, accepted deliberately --
+    the embedding step is expected to recover penguins as their own cluster.
+    """
     p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
     action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)")
+    assert action == bl.APPLIED_WRITTEN
+    assert subjects(p) == ("animal", "a beetle(80%)")
+
+
+def test_the_bird_guard_can_be_restored(tmp_path):
+    p = sidecar(tmp_path, ["bird", "old-旧-old bird(95%)"])
+    action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)", protect_bird=True)
     assert action == bl.APPLIED_KEPT
     assert subjects(p) == ("bird", "old-旧-old bird(95%)")
+
+
+def test_giving_up_the_bird_guard_leaves_other_categories_deferring(tmp_path):
+    """Only the bird half was dropped; scenery still defers to the finer early text."""
+    p = sidecar(tmp_path, ["mountain landscape with glacier", "scenery"])
+    action, _ = bl.set_keywords_in_xmp(p, "animal", "a beetle(80%)")
+    assert action == bl.APPLIED_KEPT
 
 
 def test_non_bird_writes_when_nothing_is_there(tmp_path):

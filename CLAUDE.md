@@ -447,11 +447,38 @@ identification is the one axis this pipeline is authoritative on, so it is the o
 Current dataset: 24,783 sidecars have no category and always take the new label; 9,377 are
 protected (6,363 `bird`, 2,349 `scenery`, 336 `animal`, 179 `People`, 150 `Unknown`).
 
-A consequence worth knowing: a photo already called `bird` is **never demoted** by a non-bird
-result. That follows from the rule and guards the clustering set against a false negative, but it
-also preserves any genuine over-call from the old run. The CSV's `category` (this run) against
-`prior_category` (previous) plus `applied` (`written` / `kept-existing`) makes every disagreement
-recoverable without reading the sidecars.
+**The bird half of that rule was given up on 2026-08-09** (`--protect-bird-category` restores
+it). A photo already called `bird` used to be *never demoted*, so a fresh false negative could
+not silently drop it from the clustering set. Sampling all 554 rows the guard actually held
+showed it doing more harm than good:
+
+- **It cannot tell a correct old label from a misplaced one, and the old runs were
+  basename-keyed.** 66 of the 554 are provably a same-stem twin's label — a wombat
+  carrying `common myna` because a Sydney photo with the same stem really is one. See
+  `tools/stale_bird_labels.py`, which buckets them by evidence.
+- **Where the two runs disagreed on the subject as well as the category, the newer call was the
+  better one** on inspection: scenes with no clear subject, whose pattern an older pass had read
+  as a bird.
+
+What it costs: penguins, which this model files as `animal`, and the occasional owl. Accepted
+deliberately — chasing it properly means several models, calibration and voting, i.e. a project
+about label correctness *across* models, which this is not. The embedding step is expected to
+recover penguins as an obvious cluster, and recognising it as a bird afterwards is exactly the
+kind of question this pipeline exists to ask.
+
+Only the bird half went. `scenery`, `animal`, `People` and `Unknown` still defer, because that
+half is about not coarsening the early GPT-4o scene descriptions and is unaffected by any of
+this.
+
+The CSV keeps both verdicts either way — `category` (this run) against `prior_category`
+(previous) plus `applied` (`written` / `kept-existing`) — so every disagreement stays recoverable
+without reading a sidecar.
+
+**Re-running part of a library:** a partial run's `raw/` is a *full* copy of `data/xmp` with only
+the selected years touched, so merging it back is not a directory copy — taking `raw/` wholesale
+would replace every other year's labelled sidecar with an unlabelled one.
+`tools/merge_label_run.py` takes a sidecar from the overlay only where the overlay's CSV has a
+row for it, and writes a new label directory rather than editing either input.
 
 `set_keywords_in_xmp()` preserves the user's own keywords and is idempotent on re-run. Four
 things it has to get right:
