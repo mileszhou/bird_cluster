@@ -427,7 +427,9 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    bear. ~1.4% of the embedding set. Left in deliberately — clustering isolating them is a test
    of the premise, not a failure — but do not read those species labels as ground truth.
 
-   **Scope is a list, not an arrangement** (`code/lib/path_filter.py`).
+   **Scope is a list, not an arrangement** (`code/lib/path_filter.py`; lists live in
+   `manifests/`, versioned because a `run.json` records the *path* to one and a dangling
+   reference makes the scope irreproducible).
    `--include-from` / `--exclude-from` take a file of **paths, not patterns** — no globs, no
    regex — relative to `data/jpg`, one per line, `#` comments allowed. A line is either a key or
    a folder standing for every key beneath it, at any depth (`a/b/c` is an ordinary folder line,
@@ -437,9 +439,12 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    for every consumer, leaves no record of what was excluded, cannot express two scopes at
    once, and is a submodule commit each time. Both paths are copied into `run.json`, so a
    result carries the scope that produced it. This is the *mini* manifest, deliberately: no
-   predicates, no set algebra. `--exclude-from` on `2016-07-12 City Zoo` drops 433 images
-   (405 birds) — captive collections are a confound for appearance-based clustering, since the
-   species mix is an artefact of the collection and the enclosure is the background.
+   predicates, no set algebra. `manifests/exclude-captive.txt` drops 12 zoo and aviary trips
+   (1,090 birds) — a collection's species mix is an artefact of the collection rather than a
+   place or season, and the enclosure is a background the model can learn instead of the bird.
+   It deliberately keeps the Safari "Safari" trips, which are a waterhole in the park National
+   Park and therefore wild; a keyword match on `safari` would have dropped 143 wild wild
+   records, which is the argument for writing these by hand and commenting them.
 
    Output is a single flat `output/embed/embeddings.jsonl` plus `run.json`; the folder structure
    survives only as the `year` / `library` / `trip` / `stem` columns. ~255 MB for the bird set at
