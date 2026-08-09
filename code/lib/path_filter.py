@@ -94,12 +94,32 @@ def read_paths(path) -> list[str]:
     utf-8-sig because these lists get edited in a spreadsheet as often as an
     editor, and trip folders are named in Chinese -- the same reason the audit
     worklists carry a BOM.
+
+    A missing file is fatal, with the name it looked for. A typo'd manifest must
+    never read as "no filter": an include list exists to narrow, so ignoring one
+    runs the *whole* library instead of the subset asked for -- the loudest
+    possible way to be wrong about scope, and silent.
+
+    An empty file is fatal for the same reason, one step subtler: a list whose
+    every line was commented out is indistinguishable from no list at all once
+    it has been parsed.
     """
+    p = Path(path)
+    if not p.is_file():
+        raise FileNotFoundError(
+            f"path list not found: {p}\n"
+            f"       Scope lists live in manifests/. Ignoring a missing include "
+            f"list would silently run everything.")
     out = []
-    for line in Path(path).read_text(encoding="utf-8-sig").splitlines():
+    for line in p.read_text(encoding="utf-8-sig").splitlines():
         line = line.split("#", 1)[0].strip()
         if line:
             out.append(line.replace("\\", "/").strip("/"))
+    if not out:
+        raise ValueError(
+            f"path list is empty: {p}\n"
+            f"       Every line is blank or commented out, which would read as "
+            f"no filter at all.")
     return out
 
 

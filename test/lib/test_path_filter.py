@@ -97,3 +97,20 @@ def test_build_from_files(tmp_path):
 
 def test_build_with_nothing_is_falsy():
     assert not build(None, None)
+
+
+def test_a_missing_list_is_fatal(tmp_path):
+    """Never "no filter": an include list exists to narrow, so ignoring a typo'd
+    one runs the whole library instead of the subset asked for."""
+    with pytest.raises(FileNotFoundError):
+        read_paths(tmp_path / "typo.t")
+    with pytest.raises(FileNotFoundError):
+        build(tmp_path / "typo.t", None)
+
+
+def test_an_all_comments_list_is_fatal(tmp_path):
+    """Parsed, it is indistinguishable from no list at all."""
+    p = tmp_path / "list.txt"
+    p.write_text("# everything commented out\n\n", encoding="utf-8")
+    with pytest.raises(ValueError):
+        read_paths(p)
