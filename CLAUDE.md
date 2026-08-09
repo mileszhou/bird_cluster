@@ -279,9 +279,17 @@ keeping to compare against later.
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
 `status/` handoffs, `reports/` (analysis output and worklists), `messages/` (correspondence
 with the user, named `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder
-file they leave), `bookeeping/` (pointers to state held outside this repo). `docs/` is reserved
-for product documentation, i.e. output meant for whoever uses the result rather than notes
-about building it.
+file they leave), `bookeeping/` (pointers to state held outside this repo), `ideas/`. `docs/` is
+reserved for product documentation, i.e. output meant for whoever uses the result rather than
+notes about building it.
+
+**`project/ideas/` is not `plans/`.** A plan is a commitment to an approach; an idea is a
+thought that surfaced while doing something else and would be lost by the time the project is
+deep enough to act on it — most arrive mid-task, with no room to chase them. Write one down
+rather than carrying it: what it is, why it looked promising *at the time*, what would have to
+be true, and what it would cost — but do not invent a design it does not have. Promote to
+`plans/` if it becomes a commitment; keep the ones that turn out wrong, annotated, since a road
+looked at and rejected is worth as much as the ones taken.
 
 **The library's own provenance is restic**, recorded in `project/bookeeping/`. The Lightroom
 library is far too large and too binary for git, but snapshots make *file movement* — renames,
