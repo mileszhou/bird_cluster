@@ -316,8 +316,9 @@ def main():
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (0 = no limit)")
     ap.add_argument("--include-from", type=Path, default=None,
-                    help="file of paths relative to data/jpg; only these are embedded. "
-                         "A folder line takes its whole subtree. See code/lib/path_filter.py")
+                    help="file of paths (not patterns) relative to data/jpg; only these "
+                         "are embedded. A folder line takes its whole subtree, at any "
+                         "depth. See code/lib/path_filter.py")
     ap.add_argument("--exclude-from", type=Path, default=None,
                     help="file of paths relative to data/jpg to skip; exclude wins over "
                          "include")

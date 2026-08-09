@@ -1,4 +1,4 @@
-"""Include/exclude lists over image keys, in the spirit of rsync's --include-from.
+"""Include/exclude lists over keys, in the spirit of rsync's --include-from.
 
 The scope of a run is worth recording rather than arranging. The alternative --
 moving folders out of `data/` so a run cannot see them -- mutates the dataset for
@@ -12,21 +12,26 @@ predicates, no set algebra, no query language. Those want designing against real
 clustering requirements, which do not exist yet. What exists is the need to say
 "not the zoo trips" or "just these three folders", and that is a list of paths.
 
-**Keys are relative to `data/jpg`**, matching the labelling CSV's `jpg` column,
-the checkpoint and the JSONL key. Not `data/xmp`: 5,229 images have no sidecar,
-so a sidecar-keyed list cannot name them. Because the two trees mirror each
-other a *folder* line is identical either way -- the distinction only bites on
-lines naming individual files.
+**A key is a path relative to an agreed-upon root** -- `data/jpg` for everything
+downstream of labelling, which is what the CSV's `jpg` column, the checkpoint
+and the JSONL key all hold. The root is a convention, not a lookup: the key
+identifies the work item, and nothing here opens a file.
 
-File format:
+Not `data/xmp`. A sidecar is no longer an identity, it is an *acceptor* -- a
+place a run's label is deposited as a by-product, alongside the real output in
+the curated `data/label/`. 5,229 images have no acceptor at all, so keying on one
+cannot name them.
+
+**Lines are paths, not patterns.** No globs, no regex, no character matching. A
+line is either a key, or a folder that stands for every key beneath it:
 
     # comments and blank lines are ignored
     Photos-16/2016-07-12 City Zoo        # a folder: the whole subtree
     Photos-24/2024-09-05 Birds/_D5D0372.jpg   # one image
 
-A line matches a key exactly, or matches it as a directory prefix -- so a trip
-folder takes everything under it, but `Photos-2` does not match `Photos-24`,
-because matching is on path segments rather than characters.
+Any depth is allowed -- `a/b/c` is a folder line like any other, and a parent
+line takes nested children with it. Comparison is on whole path segments, so
+`Photos-2` does not take `Photos-24`, which a string prefix would.
 """
 
 from pathlib import Path
@@ -43,8 +48,13 @@ class PathFilter:
         return bool(self.include or self.exclude)
 
     @staticmethod
-    def _matches(key: str, patterns) -> bool:
-        for p in patterns:
+    def _matches(key: str, paths) -> bool:
+        """True if any line is the key itself or a folder containing it.
+
+        The trailing separator is what keeps this on segment boundaries: a bare
+        `startswith` would let `Photos-2` take `Photos-24`.
+        """
+        for p in paths:
             if key == p or key.startswith(p.rstrip("/") + "/"):
                 return True
         return False
@@ -68,10 +78,10 @@ class PathFilter:
             bits.append(f"{len(self.include)} include")
         if self.exclude:
             bits.append(f"{len(self.exclude)} exclude")
-        return ", ".join(bits) + " pattern(s)"
+        return ", ".join(bits) + " path(s)"
 
 
-def read_patterns(path) -> list[str]:
+def read_paths(path) -> list[str]:
     """One path per line; `#` comments and blank lines dropped.
 
     utf-8-sig because these lists get edited in a spreadsheet as often as an
@@ -88,6 +98,6 @@ def read_patterns(path) -> list[str]:
 
 def build(include_from=None, exclude_from=None) -> PathFilter:
     return PathFilter(
-        include=read_patterns(include_from) if include_from else (),
-        exclude=read_patterns(exclude_from) if exclude_from else (),
+        include=read_paths(include_from) if include_from else (),
+        exclude=read_paths(exclude_from) if exclude_from else (),
     )

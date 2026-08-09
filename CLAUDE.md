@@ -61,9 +61,13 @@ contradicts one is probably wrong.
    downstream — the vectors, the clustering, the species structure — is computed from pixels.
    So the JPEG is the unit of work and the key: the labeler walks `data/jpg`, one row per
    image, and the checkpoint and the embedding are keyed the same way.
-2. **The sidecar is a medium, a bridge to what happens to be Lightroom.** It is a *destination*
-   for a label, not the subject of the pipeline. 5,229 JPEGs have no sidecar and are ordinary
-   members of the population; a photo is not less real for having no XMP to carry its keyword.
+2. **The sidecar is an acceptor, not an identity.** It is a place a run's label is *deposited*
+   as a by-product — the real output is the curated `data/label/` — and it happens to be how
+   Lightroom is reached. 5,229 JPEGs have no acceptor at all and are ordinary members of the
+   population; a photo is not less real for having no XMP to carry its keyword. Nothing keys on
+   a sidecar: a **key is a path relative to an agreed-upon root**, `data/jpg` downstream of
+   labelling, which is what the CSV's `jpg` column, `processed.txt` and the embedding JSONL all
+   hold.
 3. **Filter the CSV; do not manipulate the Lightroom database by hand.** Deduplicating,
    re-scoping, or re-selecting is a query over a text file. Doing the equivalent in Lightroom
    means manual surgery and a re-extract, and it cannot be replayed or reviewed.
@@ -404,9 +408,11 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    of the premise, not a failure — but do not read those species labels as ground truth.
 
    **Scope is a list, not an arrangement** (`code/lib/path_filter.py`).
-   `--include-from` / `--exclude-from` take a file of paths relative to `data/jpg`, one per
-   line, `#` comments allowed; a folder line takes its whole subtree and matching is on path
-   segments, so `Photos-2` does not swallow `Photos-24`. Exclude wins over include. The
+   `--include-from` / `--exclude-from` take a file of **paths, not patterns** — no globs, no
+   regex — relative to `data/jpg`, one per line, `#` comments allowed. A line is either a key or
+   a folder standing for every key beneath it, at any depth (`a/b/c` is an ordinary folder line,
+   and a parent takes nested children with it). Comparison is on whole path segments, so
+   `Photos-2` does not swallow `Photos-24`. Exclude wins over include. The
    alternative — moving folders out of `data/` so a run cannot see them — mutates the dataset
    for every consumer, leaves no record of what was excluded, cannot express two scopes at
    once, and is a submodule commit each time. Both paths are copied into `run.json`, so a
