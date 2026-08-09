@@ -40,9 +40,14 @@ from pathlib import Path
 class PathFilter:
     """Decides whether an image key is in scope. Empty include list = everything."""
 
-    def __init__(self, include=(), exclude=()):
+    def __init__(self, include=(), exclude=(), include_src=None, exclude_src=None):
         self.include = tuple(include)
         self.exclude = tuple(exclude)
+        # Where the lines came from, so a run can say which manifest it used
+        # rather than only how many lines it held. A count alone looks identical
+        # whether you passed the right file or the wrong one.
+        self.include_src = include_src
+        self.exclude_src = exclude_src
 
     def __bool__(self):
         return bool(self.include or self.exclude)
@@ -75,10 +80,12 @@ class PathFilter:
             return "no path filter"
         bits = []
         if self.include:
-            bits.append(f"{len(self.include)} include")
+            bits.append(f"include {len(self.include)} path(s)"
+                        + (f" from {self.include_src}" if self.include_src else ""))
         if self.exclude:
-            bits.append(f"{len(self.exclude)} exclude")
-        return ", ".join(bits) + " path(s)"
+            bits.append(f"exclude {len(self.exclude)} path(s)"
+                        + (f" from {self.exclude_src}" if self.exclude_src else ""))
+        return "; ".join(bits)
 
 
 def read_paths(path) -> list[str]:
@@ -100,4 +107,6 @@ def build(include_from=None, exclude_from=None) -> PathFilter:
     return PathFilter(
         include=read_paths(include_from) if include_from else (),
         exclude=read_paths(exclude_from) if exclude_from else (),
+        include_src=str(include_from) if include_from else None,
+        exclude_src=str(exclude_from) if exclude_from else None,
     )

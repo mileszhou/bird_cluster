@@ -89,7 +89,10 @@ def test_build_from_files(tmp_path):
     f = build(inc, exc)
     assert f.allows("Photos-16/other/a.jpg")
     assert not f.allows(KEY)
-    assert "1 include" in f.describe() and "1 exclude" in f.describe()
+    d = f.describe()
+    assert "include 1 path(s)" in d and "exclude 1 path(s)" in d
+    # naming the file matters: a count alone looks the same for the wrong manifest
+    assert str(inc) in d and str(exc) in d
 
 
 def test_build_with_nothing_is_falsy():
