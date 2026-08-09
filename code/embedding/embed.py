@@ -54,6 +54,7 @@ from pathlib import Path
 import requests
 
 from code.lib.config import server_url
+from code.lib import path_filter
 from code.lib.jpg_index import library_year
 from code.lib.xmp_labels import parse_label   # parses a CSV string; reads no file
 
@@ -140,7 +141,7 @@ def effective_species(row) -> tuple[str | None, float | None]:
 
 
 def collect(data_dir: Path, label_csv: Path, years, min_confidence: float,
-            categories=frozenset({"bird"})):
+            categories=frozenset({"bird"}), paths=None):
     """Images the labelling CSV names in `categories`. Returns (candidates, counters).
 
     `categories=None` takes everything. Embedding the whole library rather than
@@ -171,6 +172,9 @@ def collect(data_dir: Path, label_csv: Path, years, min_confidence: float,
             library = parts[0]
             year = library_year(library)
             if year is None or (years and year not in years):
+                continue
+            if paths is not None and not paths.allows(rel):
+                stats["filtered_out"] += 1
                 continue
             stats["in_scope"] += 1
 
@@ -286,6 +290,8 @@ def report(stats: Counter, per_year: Counter, candidates, title):
     if stats["missing_image"]:
         logger.warning(f"  NAMED BUT NOT ON DISK : {stats['missing_image']} -- the CSV "
                        f"and data/jpg disagree; re-run ./run-audit")
+    if stats["filtered_out"]:
+        logger.info(f"  excluded by path list : {stats['filtered_out']}")
     if stats["no_image_path"]:
         logger.warning(f"  rows with no jpg path : {stats['no_image_path']}")
     if per_year:
@@ -309,6 +315,12 @@ def main():
                     help="default: config.toml [servers.embed]")
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--limit", type=int, default=0, help="stop after N images (0 = no limit)")
+    ap.add_argument("--include-from", type=Path, default=None,
+                    help="file of paths relative to data/jpg; only these are embedded. "
+                         "A folder line takes its whole subtree. See code/lib/path_filter.py")
+    ap.add_argument("--exclude-from", type=Path, default=None,
+                    help="file of paths relative to data/jpg to skip; exclude wins over "
+                         "include")
     ap.add_argument("--categories", default="bird",
                     help="comma-separated effective categories to embed, or 'all' "
                          "(default: bird). `all` is what makes label errors in the "
@@ -340,8 +352,11 @@ def main():
     categories = None if args.categories.strip().lower() == "all" else frozenset(
         c.strip().lower() for c in args.categories.split(",") if c.strip())
     logger.info(f"categories: {'all' if categories is None else ','.join(sorted(categories))}")
+    paths = path_filter.build(args.include_from, args.exclude_from)
+    if paths:
+        logger.info(f"path filter: {paths.describe()}")
     candidates, stats, per_year = collect(args.data_dir, label_csv, years,
-                                          args.min_confidence, categories)
+                                          args.min_confidence, categories, paths)
     report(stats, per_year, candidates, "scan")
 
     if args.dry_run:
@@ -384,6 +399,8 @@ def main():
         "years": years,
         "batch_size": args.batch_size, "min_confidence": args.min_confidence,
         "categories": args.categories,
+        "include_from": str(args.include_from) if args.include_from else None,
+        "exclude_from": str(args.exclude_from) if args.exclude_from else None,
         "embed_url": embed_url, "server": info, "model": model,
         "data_dir": str(args.data_dir), "label_csv": str(label_csv),
         "candidates": len(candidates),

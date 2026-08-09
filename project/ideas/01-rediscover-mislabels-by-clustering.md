@@ -93,4 +93,9 @@ Cheap enough not to need justifying. `--categories all` is implemented:
   than trusting.
 - The **manifest** idea in CLAUDE.md (an inclusion list with predicate syntax for
   selecting embedding subsets) is the general form of `--categories`; deferred
-  until the requirements are clearer.
+  until the requirements are clearer. Its mini version now exists as
+  `--include-from` / `--exclude-from` (`code/lib/path_filter.py`) — plain path
+  lists, no predicates — which is enough to scope an experiment without
+  designing the language first. Worth using to drop captive collections: the
+  City Zoo trip alone is 405 birds whose species mix reflects the
+  collection rather than the region.

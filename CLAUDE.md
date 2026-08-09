@@ -403,6 +403,18 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    bear. ~1.4% of the embedding set. Left in deliberately — clustering isolating them is a test
    of the premise, not a failure — but do not read those species labels as ground truth.
 
+   **Scope is a list, not an arrangement** (`code/lib/path_filter.py`).
+   `--include-from` / `--exclude-from` take a file of paths relative to `data/jpg`, one per
+   line, `#` comments allowed; a folder line takes its whole subtree and matching is on path
+   segments, so `Photos-2` does not swallow `Photos-24`. Exclude wins over include. The
+   alternative — moving folders out of `data/` so a run cannot see them — mutates the dataset
+   for every consumer, leaves no record of what was excluded, cannot express two scopes at
+   once, and is a submodule commit each time. Both paths are copied into `run.json`, so a
+   result carries the scope that produced it. This is the *mini* manifest, deliberately: no
+   predicates, no set algebra. `--exclude-from` on `2016-07-12 City Zoo` drops 433 images
+   (405 birds) — captive collections are a confound for appearance-based clustering, since the
+   species mix is an artefact of the collection and the enclosure is the background.
+
    Output is a single flat `output/embed/embeddings.jsonl` plus `run.json`; the folder structure
    survives only as the `year` / `library` / `trip` / `stem` columns. ~255 MB for the bird set at
    768 dims, against ~85 MB as float32 — the price of being appendable and inspectable, which is
