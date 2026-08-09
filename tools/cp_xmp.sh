@@ -5,8 +5,18 @@ rsync -avu \
     --include='*/' \
     --include='*.xmp' \
     --exclude='*' \
-    kepler:/mnt/d/Lightroom/MediaFiles/Photos/Photos-{16..25} \
+    /syno/Lightroom/MediaFiles/Photos/Photos-{16..25} \
     "$HOME/projects/bird_cluster/data/xmp/" --dry-run
+
+# Apply xmp to Lightroom
+rsync -avc \
+    --include='*/' \
+    --include='*.xmp' \
+    --exclude='*' \
+    --existing \
+    $HOME/projects/bird_cluster/data/label/raw/Photos-{16..25} \
+    /syno/Lightroom/Media\ Files/Photos/ --dry-run
+
 
 rsync -av --prune-empty-dirs \
     --delete \
