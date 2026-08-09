@@ -16,4 +16,5 @@ python -m vllm.entrypoints.openai.api_server \
   --gpu-memory-utilization 0.95 \
   --enforce-eager \
   --enable-auto-tool-choice \
-  --tool-call-parser hermes
+  --tool-call-parser hermes \
+   "$@"

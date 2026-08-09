@@ -279,6 +279,18 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
          for p in jpg_root.rglob("*.jpg")),
         key=lambda t: sort_key(t[0], t[1]),
     )
+    # Sidecars the run is *responsible* for: in a selected library, and not
+    # filtered out. The unreached count below is only meaningful against this --
+    # comparing against the whole tree makes every scoped run scream about the
+    # years it was told to skip.
+    expected = set()
+    for folder, stems in claims.by_folder.items():
+        if folder.split("/")[0] not in wanted:
+            continue
+        for base in stems:
+            if paths is None or paths.allows(f"{folder}/{base}.jpg"):
+                expected.add((folder, base))
+
     items, taken = [], set()
     for folder, stem, path in jpgs:
         if folder.split("/")[0] not in wanted:
@@ -292,7 +304,7 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
         if owns:
             taken.add((folder, base))
         items.append(WorkItem(key, path.name, path, xmp, owns))
-    return items, taken
+    return items, taken, expected
 
 
 CSV_COLUMNS = ['jpg', 'xmp', 'filename',
@@ -619,12 +631,15 @@ def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     claims = SidecarClaims(xmp_root)
-    paths = path_filter.build(getattr(args, 'include_from', None),
-                              getattr(args, 'exclude_from', None))
+    try:
+        paths = path_filter.build(getattr(args, 'include_from', None),
+                                  getattr(args, 'exclude_from', None))
+    except (FileNotFoundError, ValueError) as exc:
+        sys.exit(f"error: {exc}")
     if paths:
         logger.info(f"⚙️  Path filter: {paths.describe()}")
-    items, taken = build_items(claims, xmp_root, JPG_DIR,
-                               getattr(args, 'years', None), paths)
+    items, taken, expected = build_items(claims, xmp_root, JPG_DIR,
+                                         getattr(args, 'years', None), paths)
 
     csv_only = sum(1 for it in items if not it.owns_xmp)
     orphans = sum(1 for it in items if it.xmp is None)
@@ -636,10 +651,10 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     # skipped with a warning, it is never enumerated at all. Zero today, and the
     # audit is what keeps it that way -- but a partial re-export would otherwise
     # drop those photos in silence.
-    unreached = claims.total() - len(taken)
+    unreached = len(expected - taken)
     if unreached:
-        logger.info(f"⚠️  {unreached} sidecars have no JPEG and will not be labelled. "
-                    f"Run ./run-audit to list them.")
+        logger.info(f"⚠️  {unreached} of {len(expected)} in-scope sidecars have no JPEG "
+                    f"and will not be labelled. Run ./run-audit to list them.")
 
     filter_set = load_filter_set(getattr(args, 'filter_csv', None), args.conf_threshold)
     if filter_set is not None:

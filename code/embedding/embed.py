@@ -354,7 +354,10 @@ def main():
     categories = None if args.categories.strip().lower() == "all" else frozenset(
         c.strip().lower() for c in args.categories.split(",") if c.strip())
     logger.info(f"categories: {'all' if categories is None else ','.join(sorted(categories))}")
-    paths = path_filter.build(args.include_from, args.exclude_from)
+    try:
+        paths = path_filter.build(args.include_from, args.exclude_from)
+    except (FileNotFoundError, ValueError) as exc:
+        sys.exit(f"error: {exc}")
     if paths:
         logger.info(f"path filter: {paths.describe()}")
     candidates, stats, per_year = collect(args.data_dir, label_csv, years,

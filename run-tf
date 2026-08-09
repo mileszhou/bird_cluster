@@ -5,4 +5,5 @@ python3 -m code.bird_label \
    --conf-threshold 0.6 --no-bird 0.2 \
    --data-dir ./data \
    --output-dir ./output \
-   --approach transformer
+   --approach transformer \
+   "$@"

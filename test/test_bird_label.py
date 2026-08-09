@@ -307,7 +307,9 @@ def dataset(tmp_path):
 
 
 def build(root, claims, years=None):
-    return bl.build_items(claims, root / "xmp", root / "jpg", years)
+    """(items, taken) -- the in-scope sidecar set is checked separately."""
+    items, taken, _ = bl.build_items(claims, root / "xmp", root / "jpg", years)
+    return items, taken
 
 
 def test_one_item_per_jpg(dataset):
@@ -378,6 +380,22 @@ def test_a_sidecar_no_jpg_reaches_is_reported_not_silently_dropped(dataset):
     assert claims.total() - len(taken) == 1        # unexported.xmp
 
 
+def test_out_of_scope_sidecars_are_not_counted_as_unreached(dataset):
+    """Otherwise every scoped run screams about the years it was told to skip.
+
+    `./run-vllm --include-from` over two libraries warned about 31,612 sidecars
+    that were simply not in scope, which trains the reader to ignore the warning
+    that matters.
+    """
+    from code.lib.path_filter import PathFilter
+    root, claims = dataset
+    only_paired = PathFilter(include=[f"{TRIP}/paired.jpg"])
+    _, taken, expected = bl.build_items(claims, root / "xmp", root / "jpg",
+                                        None, only_paired)
+    assert expected == {(TRIP, "paired")}       # not all four sidecars
+    assert expected - taken == set()            # and it was reached
+
+
 def test_claims_are_stable_across_a_resumed_run(dataset):
     """Assignment happens over the whole tree, before the checkpoint filters."""
     root, claims = dataset
@@ -395,10 +413,10 @@ def test_exclude_from_narrows_the_walk(dataset):
     """Same manifests work for labelling and embedding -- both key on data/jpg."""
     from code.lib.path_filter import PathFilter
     root, claims = dataset
-    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
                               PathFilter(exclude=[TRIP]))
     assert items == []
-    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
                               PathFilter(exclude=[f"{TRIP}/paired.jpg"]))
     assert all(i.name != "paired.jpg" for i in items)
     assert any(i.name == "copied.jpg" for i in items)
@@ -407,7 +425,7 @@ def test_exclude_from_narrows_the_walk(dataset):
 def test_include_from_restricts_the_walk(dataset):
     from code.lib.path_filter import PathFilter
     root, claims = dataset
-    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
                               PathFilter(include=[f"{TRIP}/paired.jpg"]))
     assert [i.name for i in items] == ["paired.jpg"]
 
