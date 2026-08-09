@@ -32,6 +32,7 @@ from code.lib.label_generator import pinyin_initials
 from code.lib.config import server_url
 from code.lib.jpg_index import library_year
 from code.lib.jpg_claim import SidecarClaims, sort_key
+from code.lib import path_filter
 from code.lib.xmp_labels import CATEGORIES, EARLY_CATEGORIES, read_labels, split_keywords
 from code.lib import xmp_write
 import code.lib.run_hf_bird_model_llamacpp
@@ -253,7 +254,8 @@ class WorkItem(NamedTuple):
         return "" if self.xmp is None else self.xmp.relative_to(xmp_root).as_posix()
 
 
-def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years):
+def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
+                paths=None):
     """One work item per exported JPEG -- the unit the model actually sees.
 
     The JPEG is the source: it is what gets embedded downstream, and 5,229 of
@@ -281,13 +283,15 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years):
     for folder, stem, path in jpgs:
         if folder.split("/")[0] not in wanted:
             continue
+        key = path.relative_to(jpg_root).as_posix()
+        if paths is not None and not paths.allows(key):
+            continue
         base = claims.claim(folder, stem)
         xmp = None if base is None else claims.path_for(folder, base)
         owns = base is not None and (folder, base) not in taken
         if owns:
             taken.add((folder, base))
-        items.append(WorkItem(path.relative_to(jpg_root).as_posix(), path.name,
-                              path, xmp, owns))
+        items.append(WorkItem(key, path.name, path, xmp, owns))
     return items, taken
 
 
@@ -348,19 +352,43 @@ VLLM_SYSTEM_PROMPT = (
 
 
 def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
-    """Probes the vLLM OpenAI-compatible server to find the actual loaded model name."""
+    """The model the server actually serves. **Fatal if it cannot be determined.**
+
+    The probe is not a convenience for fixing up `--model`; it is how the run
+    learns what it is talking to, and that answer becomes the recorded
+    provenance of every row it writes. Carrying on with the *requested* name
+    after a failed probe asserts something nobody checked -- which is how a whole
+    run came to be attributed to a 132B model that was never loaded.
+
+    Two ways it used to pass silently, both closed here: an unreachable server
+    was a warning, and an empty `data` list did not even warn, because the
+    mismatch branch was guarded on the list being non-empty.
+
+    A wrong name is not merely mislabelled metadata. vLLM rejects a request for a
+    model it does not hold, so the run would fail on every batch anyway -- just
+    after copying 43k sidecars and writing an args.json that is now a lie.
+    """
     base_url = vllm_url.rstrip('/').replace('/v1', '')
     try:
         probe_request = urllib.request.Request(f'{base_url}/v1/models')
         with urllib.request.urlopen(probe_request, timeout=10) as probe_resp:
             models_data = json.loads(probe_resp.read().decode('utf-8'))
-            available_models = [m['id'] for m in models_data.get('data', [])]
-            if available_models and requested_model not in available_models:
-                actual = available_models[0]
-                logger.info(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', but using '{actual}'")
-                return actual
     except Exception as e:
-        logger.info(f"\u26a0\ufe0f  Could not probe models at {base_url}/v1: {e}")
+        sys.exit(f"error: could not probe models at {base_url}/v1 ({e}).\n"
+                 f"       The run would proceed without knowing which model serves it, and "
+                 f"record '{requested_model}' as the provenance of every row.\n"
+                 f"       Start the server (see run-server-vllm) and re-run.")
+
+    available_models = [m['id'] for m in models_data.get('data', [])]
+    if not available_models:
+        sys.exit(f"error: {base_url}/v1/models returned no models, so the serving model "
+                 f"cannot be identified.\n       Refusing to record '{requested_model}' "
+                 f"unverified.")
+    if requested_model not in available_models:
+        actual = available_models[0]
+        logger.info(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', "
+                    f"but using '{actual}'")
+        return actual
     return requested_model
 
 
@@ -591,7 +619,12 @@ def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
 
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     claims = SidecarClaims(xmp_root)
-    items, taken = build_items(claims, xmp_root, JPG_DIR, getattr(args, 'years', None))
+    paths = path_filter.build(getattr(args, 'include_from', None),
+                              getattr(args, 'exclude_from', None))
+    if paths:
+        logger.info(f"⚙️  Path filter: {paths.describe()}")
+    items, taken = build_items(claims, xmp_root, JPG_DIR,
+                               getattr(args, 'years', None), paths)
 
     csv_only = sum(1 for it in items if not it.owns_xmp)
     orphans = sum(1 for it in items if it.xmp is None)
@@ -728,6 +761,13 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
+    parser.add_argument("--include-from", type=str, default="",
+                        help="file of paths (not patterns) relative to data/jpg; only "
+                             "these are labelled. A folder line takes its whole subtree, "
+                             "at any depth. Lists live in manifests/")
+    parser.add_argument("--exclude-from", type=str, default="",
+                        help="file of paths relative to data/jpg to skip; exclude wins "
+                             "over include")
     parser.add_argument("--protect-bird-category", action="store_true",
                         help="restore the old guard: never replace an existing `bird` "
                              "category with a non-bird result. Off by default -- see "
@@ -751,17 +791,10 @@ if __name__ == "__main__":
     setup_logging(OUTPUT_DIR / "bird_label.log")
 
     # Update args with actual model name if using llama.cpp to ensure args.json is accurate
+    # Both server backends resolve the serving model before anything else runs, and
+    # both treat a failed probe as fatal -- see get_actual_vllm_model_name().
     if args.approach == "llama.cpp" and args.llama_url:
-        try:
-            probe_request = urllib.request.Request(f'{args.llama_url.rstrip("/")}/models')
-            with urllib.request.urlopen(probe_request, timeout=5) as probe_resp:
-                models_data = json.loads(probe_resp.read().decode('utf-8'))
-                available_models = [m['id'] for m in models_data.get('data', [])]
-                if available_models and args.model not in available_models:
-                    logger.info(f"ℹ️  [args.json fix] Server mismatch: requested '{args.model}', but using '{available_models[0]}'")
-                    args.model = available_models[0]
-        except Exception as e:
-            logger.info(f"⚠️  [args.json fix] Could not probe models for args.json: {e}")
+        args.model = get_actual_vllm_model_name(args.llama_url, args.model)
     elif args.approach == "vllm" and args.vllm_url:
         args.model = get_actual_vllm_model_name(args.vllm_url, args.model)
 
