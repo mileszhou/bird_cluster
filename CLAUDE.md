@@ -39,7 +39,7 @@ Key CLI flags:
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--years LIST` — label only these years, e.g. `--years 2019,2021` (default `all`). Selects library folders by year: `2019` → `Photos-19`
-- `--include-from` / `--exclude-from NAME` — a manifest **name**, i.e. a file in `manifests/` given without the directory. Same mechanism and same keys as `embed.py`, so one list scopes both stages
+- `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
 - `--dry-run` — resolve the scope and report it, then stop. No model probe, no sidecar copy, no writes
 
 **A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
@@ -439,11 +439,13 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    **Scope is a list, not an arrangement** (`code/lib/path_filter.py`; lists live in
    `manifests/`, versioned because a `run.json` records the *path* to one and a dangling
    reference makes the scope irreproducible).
-   `--include-from` / `--exclude-from` take a manifest **name** — a file in `manifests/`, given
-   without the directory, since where scope lists live is not the caller's choice: a list read
-   from `/tmp` makes a `run.json` a dangling reference and the population behind a result
-   unrecoverable. A redundant `manifests/` prefix is accepted and stripped; any other directory
-   is refused. The file holds **paths, not patterns** — no globs, no regex — relative to
+   `--include-from` / `--exclude-from` take a path that must land inside `manifests/` once
+   resolved — checked on the resolved location, not the leading segment, so `manifests/../x`
+   is refused rather than merely looking compliant. `manifests/exclude-captive.txt` is the form
+   worth typing (it tab-completes, and matches disk and `args.json`); a bare name is read as
+   manifest-relative, and subdirectories work either way. Where scope lists live is not the
+   caller's choice: a list read from `/tmp` makes a `run.json` a dangling reference and the
+   population behind a result unrecoverable. The file holds **paths, not patterns** — no globs, no regex — relative to
    `data/jpg`, one per line, `#` comments allowed. A line is either a key or
    a folder standing for every key beneath it, at any depth (`a/b/c` is an ordinary folder line,
    and a parent takes nested children with it). Comparison is on whole path segments, so

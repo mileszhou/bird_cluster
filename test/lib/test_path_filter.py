@@ -124,23 +124,43 @@ def test_an_all_comments_list_is_fatal(tmp_path):
         read_paths(p)
 
 
-# --- manifests live in manifests/, and callers do not say so ----------------
+# --- manifests live in manifests/, wherever the caller starts from ----------
 
-def test_a_bare_name_resolves_into_the_manifest_dir():
+def test_a_bare_name_is_manifest_relative():
     from code.lib.path_filter import MANIFEST_DIR, resolve
-    assert resolve("no-zoos.txt") == MANIFEST_DIR / "no-zoos.txt"
+    assert resolve("no-zoos.txt") == (MANIFEST_DIR / "no-zoos.txt").resolve()
 
 
-def test_a_redundant_manifests_prefix_is_accepted():
-    """Typing it is the obvious mistake; refusing would be pedantry."""
+def test_a_prefixed_path_is_repo_relative():
+    """The form tab-completion produces, so what you type is what is on disk."""
     from code.lib.path_filter import MANIFEST_DIR, resolve
-    assert resolve("manifests/no-zoos.txt") == MANIFEST_DIR / "no-zoos.txt"
+    assert resolve("manifests/no-zoos.txt") == (MANIFEST_DIR / "no-zoos.txt").resolve()
 
 
-def test_any_other_directory_is_refused():
-    """A list read from elsewhere cannot be recovered from history, so a run's
-    recorded scope would be a dangling reference."""
+def test_subdirectories_work_either_way():
+    from code.lib.path_filter import MANIFEST_DIR, resolve
+    want = (MANIFEST_DIR / "captive" / "zoos.txt").resolve()
+    assert resolve("captive/zoos.txt") == want
+    assert resolve("manifests/captive/zoos.txt") == want
+
+
+def test_an_absolute_path_inside_the_dir_is_accepted():
+    from code.lib.path_filter import MANIFEST_DIR, resolve
+    p = MANIFEST_DIR / "ok.txt"
+    assert resolve(str(p)) == p.resolve()
+
+
+@pytest.mark.parametrize("bad", [
+    "manifests/../data/label/args.json",   # the leading segment says manifests...
+    "../secret.txt",
+    "/tmp/scratch.txt",
+])
+def test_anything_landing_outside_is_refused(bad):
+    """Checked on the *resolved* location, not the first path segment.
+
+    An earlier version compared the leading segment, so `manifests/../` walked
+    straight out while looking compliant.
+    """
     from code.lib.path_filter import resolve
-    for bad in ("/tmp/scratch.txt", "../secret.txt", "project/reports/x.txt"):
-        with pytest.raises(ValueError):
-            resolve(bad)
+    with pytest.raises(ValueError):
+        resolve(bad)

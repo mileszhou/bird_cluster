@@ -131,25 +131,47 @@ def read_paths(path) -> list[str]:
 
 
 def resolve(name) -> Path:
-    """A manifest name -> its path under `manifests/`.
+    """A manifest argument -> its path, which must land inside `manifests/`.
 
-    Callers pass a bare filename; the directory is not theirs to choose. A
-    redundant `manifests/` prefix is accepted and stripped, since typing it is
-    the obvious mistake and refusing would be pedantry. Any other directory is
-    refused outright -- that is the case worth catching, because a list read
-    from elsewhere is one that cannot be recovered from history.
+    One rule: it is a path, and after resolving it, it has to be in the manifest
+    directory. Everything else follows from that.
+
+    - `exclude-captive.txt` and `captive/zoos.txt` are read as manifest-relative.
+    - `manifests/exclude-captive.txt` is read as repo-relative, so what you type
+      is what is on disk -- which is the form tab-completion produces, and the
+      reason it is the one worth typing.
+    - `manifests/../data/x` and `/tmp/x` are refused. Checking the *resolved*
+      location rather than the first path segment is what makes that true; an
+      earlier version compared the leading segment and let `manifests/../` walk
+      straight out.
+
+    The one path this cannot express is a directory literally named
+    `manifests` *inside* `manifests/`, since the leading segment is read as the
+    repo-relative prefix. Writing that is nearly always a mistake, so it loses
+    nothing worth having.
+
+    Where scope lists live is not the caller's choice. A list read from outside
+    the repo cannot be recovered from history, so a run's recorded scope becomes
+    a dangling reference and the population behind a result is unrecoverable --
+    which is the whole reason these are versioned.
     """
     p = Path(str(name))
-    parts = p.parts
-    if len(parts) > 1:
-        if parts[0] == MANIFEST_DIR.name:
-            p = Path(*parts[1:])
-        else:
-            raise ValueError(
-                f"manifest must live in {MANIFEST_DIR.name}/, got {name!r}\n"
-                f"       Pass just the file name. Scope lists are versioned so a "
-                f"run's recorded scope can be recovered later.")
-    return MANIFEST_DIR / p
+    if p.is_absolute():
+        candidate = p
+    elif p.parts and p.parts[0] == MANIFEST_DIR.name:
+        candidate = MANIFEST_DIR.parent / p
+    else:
+        candidate = MANIFEST_DIR / p
+
+    resolved = candidate.resolve()
+    root = MANIFEST_DIR.resolve()
+    if root not in resolved.parents:
+        raise ValueError(
+            f"manifest must live in {MANIFEST_DIR.name}/, but {name!r} resolves to "
+            f"{resolved}\n"
+            f"       Scope lists are versioned so a run's recorded scope can be "
+            f"recovered later.")
+    return resolved
 
 
 def build(include_from=None, exclude_from=None) -> PathFilter:
