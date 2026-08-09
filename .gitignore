@@ -1,6 +1,7 @@
 .*/
 !projects/**/.vscode/
 
+tmp.*
 tmp/
 #data/	# ./data is a submodule
 logs/
