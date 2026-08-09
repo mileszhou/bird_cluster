@@ -16,6 +16,24 @@
 #   cluster   embed/cluster/stats numeric stack (no GPU needed)
 #   server    torch + transformers for embed_server.py -- GPU host only, large
 #   notebook  Jupyter kernel
+#
+# SYSTEM PREREQUISITE, `cluster` stage only:
+#
+#     sudo apt install python3-dev        # plus build-essential, usually present
+#
+# `hdbscan` publishes no aarch64 wheel, so on this box pip compiles its Cython
+# extensions from source and the build needs the Python headers. Without them it
+# fails deep in the wheel build with a wall of setuptools deprecation warnings
+# ending in the line that actually matters:
+#
+#     hdbscan/_hdbscan_tree.c:38:10: fatal error: Python.h: No such file or directory
+#
+# Nothing else here compiles anything, so this bites only on a fresh machine and
+# only on this one stage. Re-run `./venv cluster` after installing.
+#
+# Do not swap in `sklearn.cluster.HDBSCAN` to dodge the build: it has no
+# `condensed_tree_`, which step 3 consumes (see the cluster stage below), so the
+# substitution would silently remove stats.py's input.
 
 set -u
 
@@ -57,6 +75,18 @@ fi
 
 if has_stage cluster; then
     echo "== cluster =="
+    # Fail fast on the missing headers rather than 90 lines into hdbscan's wheel
+    # build. See the SYSTEM PREREQUISITE note at the top.
+    py_inc=$(python3 -c 'import sysconfig; print(sysconfig.get_paths()["include"])')
+    if [ ! -f "$py_inc/Python.h" ]; then
+        echo "error: $py_inc/Python.h is missing, so hdbscan cannot build its"
+        echo "       Cython extensions (it ships no aarch64 wheel). Install the"
+        echo "       Python headers and re-run this stage:"
+        echo
+        echo "           sudo apt install python3-dev"
+        echo "           ./venv cluster"
+        exit 1
+    fi
     pip install numpy
     pip install hdbscan         # step 2 clustering; its condensed tree feeds step 3
     pip install pandas          # condensed_tree_.to_pandas() dump
