@@ -39,6 +39,15 @@ Key CLI flags:
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--years LIST` — label only these years, e.g. `--years 2019,2021` (default `all`). Selects library folders by year: `2019` → `Photos-19`
+- `--include-from` / `--exclude-from PATH` — a manifest of paths relative to `data/jpg` (see `manifests/`). Same mechanism and same keys as `embed.py`, so one list scopes both stages
+- `--protect-bird-category` — restore the guard that never let a non-bird result replace an existing `bird`. Off by default; see below for why it was given up
+
+**A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
+the server actually serves before doing anything else, and exits if it cannot. The probe is not
+a convenience for fixing up `--model` — it is how the run learns what it is talking to, and that
+answer becomes the recorded provenance of every row. It used to warn and carry on with the
+requested name, which is how a whole run came to be attributed to a 132B model that was never
+loaded; an empty `data` list did not even warn.
 
 Start a fresh run: **`./clean`** — it *archives* `output/` to `output_NNN/` (one beyond the
 highest present) and creates an empty one. Nothing is deleted. `./clean first-full-run` appends

@@ -391,6 +391,27 @@ def SidecarClaimsAgain(root):
     return SidecarClaims(root / "xmp")
 
 
+def test_exclude_from_narrows_the_walk(dataset):
+    """Same manifests work for labelling and embedding -- both key on data/jpg."""
+    from code.lib.path_filter import PathFilter
+    root, claims = dataset
+    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+                              PathFilter(exclude=[TRIP]))
+    assert items == []
+    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+                              PathFilter(exclude=[f"{TRIP}/paired.jpg"]))
+    assert all(i.name != "paired.jpg" for i in items)
+    assert any(i.name == "copied.jpg" for i in items)
+
+
+def test_include_from_restricts_the_walk(dataset):
+    from code.lib.path_filter import PathFilter
+    root, claims = dataset
+    items, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
+                              PathFilter(include=[f"{TRIP}/paired.jpg"]))
+    assert [i.name for i in items] == ["paired.jpg"]
+
+
 def test_year_filter(dataset):
     root, claims = dataset
     assert build(root, claims, ["2019"])[0]
