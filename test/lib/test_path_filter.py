@@ -1,7 +1,7 @@
 """Tests for code/lib/path_filter.py -- run from within test/: `pytest lib/`."""
 import pytest
 
-from code.lib.path_filter import PathFilter, build, read_patterns
+from code.lib.path_filter import PathFilter, build, read_paths
 
 ZOO = "Photos-16/2016-07-12 City Zoo"
 KEY = f"{ZOO}/_D5S1234.jpg"
@@ -34,6 +34,16 @@ def test_matching_is_on_path_segments_not_characters():
     assert f.allows("Photos-21/trip/a.jpg")
 
 
+def test_a_line_may_be_any_depth():
+    """`a/b/c` is a folder line like any other -- data/jpg is two deep today, but
+    the source library has nested trip folders, so depth is not assumable."""
+    nested = "Photos-24/2024-05-01 Gold Coast/2024-04-19 Melboune Birds"
+    key = f"{nested}/_D5D0372.jpg"
+    assert not PathFilter(exclude=[nested]).allows(key)
+    # ...and a parent line takes the nested child with it
+    assert not PathFilter(exclude=["Photos-24/2024-05-01 Gold Coast"]).allows(key)
+
+
 def test_include_restricts_to_the_listed_subtrees():
     f = PathFilter(include=["Photos-24", "Photos-25/trip b"])
     assert f.allows("Photos-24/anything/a.jpg")
@@ -51,25 +61,25 @@ def test_exclude_wins_over_include():
 
 # --- the file format --------------------------------------------------------
 
-def test_read_patterns_drops_comments_and_blanks(tmp_path):
+def test_read_paths_drops_comments_and_blanks(tmp_path):
     p = tmp_path / "list.txt"
     p.write_text("# a comment\n\n"
                  f"{ZOO}   # trailing comment\n"
                  "Photos-24/trip/\n", encoding="utf-8")
-    assert read_patterns(p) == [ZOO, "Photos-24/trip"]
+    assert read_paths(p) == [ZOO, "Photos-24/trip"]
 
 
-def test_read_patterns_tolerates_a_spreadsheet_bom(tmp_path):
+def test_read_paths_tolerates_a_spreadsheet_bom(tmp_path):
     """These get edited in Excel, and trip folders are Chinese."""
     p = tmp_path / "list.txt"
     p.write_text("Photos-19/2019-01-13 山公园\n", encoding="utf-8-sig")
-    assert read_patterns(p) == ["Photos-19/2019-01-13 山公园"]
+    assert read_paths(p) == ["Photos-19/2019-01-13 山公园"]
 
 
-def test_read_patterns_normalises_windows_separators(tmp_path):
+def test_read_paths_normalises_windows_separators(tmp_path):
     p = tmp_path / "list.txt"
     p.write_text("Photos-24\\trip b\n", encoding="utf-8")
-    assert read_patterns(p) == ["Photos-24/trip b"]
+    assert read_paths(p) == ["Photos-24/trip b"]
 
 
 def test_build_from_files(tmp_path):
