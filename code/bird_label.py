@@ -109,7 +109,8 @@ def existing_category(keywords) -> str:
                  if k in CATEGORIES or k in EARLY_CATEGORIES), "")
 
 
-def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
+def set_keywords_in_xmp(xmp_path: Path, category: str, label: str,
+                        protect_bird: bool = False):
     """Write this run's label into a sidecar, preserving the user's keywords.
 
     **`bird` wins; anything else defers.** The new label replaces the previous
@@ -121,10 +122,26 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
     correction. Bird identification is the one axis this pipeline is
     authoritative on, so it is the one it overwrites.
 
-    Note this also means a photo previously called `bird` is never demoted by a
-    non-bird result. That follows from the rule as stated and is deliberate --
-    a false negative would silently drop the photo from the clustering set --
-    but the CSV records both verdicts, so the disagreements stay recoverable.
+    **An existing `bird` is no longer protected** (`protect_bird=True` restores
+    it; `--protect-bird-category`). The guard was there so a fresh false negative
+    could not silently drop a photo from the clustering set. Sampling the 554
+    rows it actually held showed it doing the opposite more often than not:
+
+    - it cannot tell a correct old label from one attached to the wrong photo,
+      and the old runs were basename-keyed. 66 of the 554 are provably a
+      same-stem twin's label -- a wombat carrying `common myna`.
+    - where the two runs disagree on the *subject* as well as the category, the
+      newer call was the better one on inspection: scenes with no clear subject,
+      whose pattern an older pass had read as a bird.
+
+    What it costs: penguins, which this run tends to file as `animal`, and the
+    occasional owl. That is accepted deliberately. Chasing it properly would
+    mean multiple models, calibration and voting -- a project about label
+    correctness across models, which this is not. The embedding step is expected
+    to recover penguins as a distinct, obvious cluster, and identifying it as a
+    bird afterwards is exactly the kind of question this pipeline exists to ask.
+
+    The CSV keeps both verdicts either way, so nothing is unrecoverable.
 
     Returns (action, previous keywords). The previous labels are *not* written
     back into the sidecar anywhere: these files go back into Lightroom, and an
@@ -148,7 +165,11 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
         existing = xmp_write.items_of(root, xmp_write.SUBJECT_TAG)
         ours, theirs = split_keywords(existing)
 
-        if category != "bird" and existing_category(ours):
+        prior = existing_category(ours)
+        # A prior `bird` only blocks the write when the guard is asked for; the
+        # other categories still defer, since that half of the rule is about not
+        # coarsening the early GPT-4o scene descriptions and is unaffected.
+        if category != "bird" and prior and (protect_bird or prior.lower() != "bird"):
             return APPLIED_KEPT, ours
 
         # The user's own keywords first, in their original order, then ours.
@@ -502,7 +523,8 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
         applied = APPLIED_CSV_ONLY
     else:
         # `bird` overwrites; anything else defers to an existing category.
-        applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
+        applied, _ = set_keywords_in_xmp(item.xmp, category, spec,
+                                         getattr(args, 'protect_bird_category', False))
 
     prior_category = write_row(csv_writer, item, category, label, label_cn, conf,
                                note, applied, raw_json, args)
@@ -643,7 +665,9 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 if not item.owns_xmp:
                                     applied = APPLIED_CSV_ONLY
                                 else:
-                                    applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
+                                    applied, _ = set_keywords_in_xmp(
+                                        item.xmp, category, spec,
+                                        args.protect_bird_category)
                                 prior_cat = write_row(writer, item, category, label, label_cn,
                                                       conf, note, applied, raw_json, args)
                                 if applied == APPLIED_KEPT:
@@ -704,6 +728,11 @@ if __name__ == "__main__":
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
     parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
+    parser.add_argument("--protect-bird-category", action="store_true",
+                        help="restore the old guard: never replace an existing `bird` "
+                             "category with a non-bird result. Off by default -- see "
+                             "set_keywords_in_xmp() for why it was given up (it held 554 "
+                             "rows, 66 of them provably a same-stem twin's label)")
     # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
