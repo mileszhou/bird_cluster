@@ -45,6 +45,7 @@ import csv
 import json
 import logging
 import signal
+import subprocess
 import sys
 import time
 from collections import Counter
@@ -396,16 +397,22 @@ def main():
         logger.info("nothing left to do")
         return
 
+    # Every argument, not a hand-picked list: a run.json that omits one is worse
+    # than none, because it looks complete. `--limit` was the sharp case -- it
+    # silently truncates the set, and a later reader would see a short JSONL with
+    # nothing explaining it. `default=str` because several args are Paths.
+    try:
+        git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        git_hash = "unknown"
     (args.output_dir / "run.json").write_text(json.dumps({
-        "years": years,
-        "batch_size": args.batch_size, "min_confidence": args.min_confidence,
-        "categories": args.categories,
-        "include_from": str(args.include_from) if args.include_from else None,
-        "exclude_from": str(args.exclude_from) if args.exclude_from else None,
+        **vars(args),
+        "years_resolved": years,          # `all` expanded to the list actually used
+        "label_csv": str(label_csv),
         "embed_url": embed_url, "server": info, "model": model,
-        "data_dir": str(args.data_dir), "label_csv": str(label_csv),
         "candidates": len(candidates),
-    }, indent=2))
+        "git_commit": git_hash,
+    }, indent=2, default=str))
 
     signal.signal(signal.SIGINT, _on_sigint)
     written = failed = 0
