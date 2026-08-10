@@ -60,6 +60,32 @@ library, keeping the CSV, log, `args.json` and checkpoint.
 
 ## Architecture
 
+### What the project is
+
+**Building clusters, and learning from them.**
+
+The plural is deliberate and has consequences. A clustering is not one artifact with an `id`
+column; it is *many clusters*, each of which is a thing to look at, compare, name and argue
+about. That makes a cluster an addressable object, and objects need identities that survive
+a re-run — HDBSCAN's integer labels do not, since cluster 47 at `min_cluster_size=5` is
+unrelated to cluster 47 at 15. A cluster's stable name is its **medoid's image key**: already
+computed, meaningful to a human, and the same string that joins back to the label CSV.
+
+The second consequence is that **a clustering run is an experiment, not a build step**. The
+parameters are not settings to get right once — how the structure changes between
+`min_cluster_size` 5, 15 and 40 is itself something to learn from, and a group that survives
+all three is a different kind of object than one that dissolves at 10. So runs are kept side
+by side rather than overwritten, each carrying the parameters and the input commit that
+produced it.
+
+And the learning is the deliverable. `stats.py` is not a report tacked onto the end; if the
+point is what the clusters teach, the cluster statistics and the condensed tree *are* the
+result, and `discover.py` exists to feed them.
+
+This is also why the labels are not ground truth here (see `project/ideas/01`): the premise is
+that a vector carries more than a label does, so clusters are used to *study* the labelling
+rather than be scored against it.
+
 ### The JPEG is the centre
 
 Four principles. Most of the design decisions below follow from them, and a change that
