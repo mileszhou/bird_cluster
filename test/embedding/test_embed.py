@@ -91,19 +91,20 @@ def test_effective_species_survives_an_unparseable_prior():
 # --- the scan ---------------------------------------------------------------
 
 def test_collect_keeps_the_effective_birds(dataset):
+    """Scope is a manifest now; without one, everything the CSV lists is in."""
     d, csv_path = dataset
-    cands, stats, per_year = collect(d, csv_path, ["2019"], 0.0)
+    cands, stats, per_year = collect(d, csv_path, 0.0)
     assert stats["rows"] == 5
-    assert stats["in_scope"] == 4            # the 2021 row is out of scope
-    assert stats["selected"] == 3           # scenery excluded
-    assert sorted(c.stem for c in cands) == ["IMG_0001", "bird_ok"]
-    assert per_year == {"2019": 2}
+    assert stats["in_scope"] == 5
+    assert stats["selected"] == 4           # scenery excluded, the rest are birds
+    assert sorted(c.stem for c in cands) == ["IMG_0001", "bird_2021", "bird_ok"]
+    assert per_year == {"2019": 2, "2021": 1}
 
 
 def test_a_sidecarless_image_is_collected(dataset):
     """The whole point of the CSV guide: no sidecar walk could reach this row."""
     d, csv_path = dataset
-    cands, _, _ = collect(d, csv_path, ["2019"], 0.0)
+    cands, _, _ = collect(d, csv_path, 0.0)
     orphan = next(c for c in cands if c.stem == "IMG_0001")
     assert orphan.xmp == ""
     assert orphan.species == "house sparrow"
@@ -111,7 +112,7 @@ def test_a_sidecarless_image_is_collected(dataset):
 
 def test_key_is_the_image_path_not_the_sidecar(dataset):
     d, csv_path = dataset
-    cands, _, _ = collect(d, csv_path, ["2019"], 0.0)
+    cands, _, _ = collect(d, csv_path, 0.0)
     c = next(c for c in cands if c.stem == "bird_ok")
     assert c.key == "Photos-19/trip a/bird_ok.jpg"
     assert (c.year, c.library, c.trip) == ("2019", "Photos-19", "trip a")
@@ -122,21 +123,23 @@ def test_key_is_the_image_path_not_the_sidecar(dataset):
 
 def test_a_row_naming_a_missing_image_is_counted_not_embedded(dataset):
     d, csv_path = dataset
-    cands, stats, _ = collect(d, csv_path, ["2019"], 0.0)
+    cands, stats, _ = collect(d, csv_path, 0.0)
     assert stats["missing_image"] == 1
     assert all(c.stem != "gone" for c in cands)
 
 
-def test_year_filter_spans_years(dataset):
+def test_year_is_denormalised_for_grouping_not_scoping(dataset):
+    """`year` rides along on each row so the JSONL can be grouped without
+    re-parsing the key. It stopped being a scoping mechanism when --years went."""
     d, csv_path = dataset
-    cands, _, per_year = collect(d, csv_path, None, 0.0)
+    cands, _, per_year = collect(d, csv_path, 0.0)
     assert per_year == {"2019": 2, "2021": 1}
     assert len({c.key for c in cands}) == 3
 
 
 def test_min_confidence_drops_low_labels(dataset):
     d, csv_path = dataset
-    cands, stats, _ = collect(d, csv_path, None, 0.95)
+    cands, stats, _ = collect(d, csv_path, 0.95)
     assert stats["below_min_confidence"] == 1        # the 2021 row at 0.90
     assert all(c.stem != "bird_2021" for c in cands)
 
@@ -149,7 +152,7 @@ def test_a_sidecar_keyed_csv_is_refused(tmp_path):
         w.writeheader()
         w.writerow({"path": "Photos-19/t/a.xmp", "category": "bird", "label": "x"})
     with pytest.raises(SystemExit):
-        collect(tmp_path, p, None, 0.0)
+        collect(tmp_path, p, 0.0)
 
 
 def test_already_done_empty(tmp_path):

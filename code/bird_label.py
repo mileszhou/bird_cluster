@@ -246,8 +246,7 @@ class WorkItem(NamedTuple):
         return "" if self.xmp is None else self.xmp.relative_to(xmp_root).as_posix()
 
 
-def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
-                paths=None):
+def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, paths=None):
     """One work item per exported JPEG -- the unit the model actually sees.
 
     The JPEG is the source: it is what gets embedded downstream, and 5,229 of
@@ -265,7 +264,6 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
     function is a pure function of the two trees. Tracking claims only across a
     single process would hand the sidecar to a virtual copy after a Ctrl-C.
     """
-    wanted = {d.name for d in select_libraries(xmp_root, years)}
     jpgs = sorted(
         ((p.parent.relative_to(jpg_root).as_posix(), p.stem, p)
          for p in jpg_root.rglob("*.jpg")),
@@ -277,16 +275,12 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, years,
     # years it was told to skip.
     expected = set()
     for folder, stems in claims.by_folder.items():
-        if folder.split("/")[0] not in wanted:
-            continue
         for base in stems:
             if paths is None or paths.allows(f"{folder}/{base}.jpg"):
                 expected.add((folder, base))
 
     items, taken = [], set()
     for folder, stem, path in jpgs:
-        if folder.split("/")[0] not in wanted:
-            continue
         key = path.relative_to(jpg_root).as_posix()
         if paths is not None and not paths.allows(key):
             continue
@@ -605,18 +599,6 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
     return keys
 
 
-def select_libraries(xmp_root: Path, years: list[str] | None) -> list[Path]:
-    """Library folders under the sidecar root, filtered by --years."""
-    libraries = sorted(d for d in xmp_root.iterdir() if d.is_dir())
-    if years is None:
-        return libraries
-    kept = [d for d in libraries if library_year(d.name) in years]
-    if not kept:
-        sys.exit(f"error: --years {','.join(years)} matched no library under {xmp_root} "
-                 f"(found: {', '.join(d.name for d in libraries) or 'nothing'})")
-    return kept
-
-
 def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
     claims = SidecarClaims(xmp_root)
     try:
@@ -626,8 +608,15 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         sys.exit(f"error: {exc}")
     if paths:
         logger.info(f"⚙️  Path filter: {paths.describe()}")
-    items, taken, expected = build_items(claims, xmp_root, JPG_DIR,
-                                         getattr(args, 'years', None), paths)
+    items, taken, expected = build_items(claims, xmp_root, JPG_DIR, paths)
+
+    if not items:
+        # An empty scope used to be impossible: --years refused a year matching
+        # no library. A manifest cannot, so the check lives here instead -- a
+        # run that labels nothing and reports success is the same failure the
+        # stale --years default produced, one step further along.
+        sys.exit("error: nothing to label. An empty selection is treated as a mistake "
+                 "rather than a finished run -- check --include-from and --data-dir")
 
     csv_only = sum(1 for it in items if not it.owns_xmp)
     orphans = sum(1 for it in items if it.xmp is None)
@@ -769,11 +758,10 @@ if __name__ == "__main__":
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
-    parser.add_argument("--years", default="all", help="Comma-separated years to label, or 'all' (default). Selects library folders by year: 2019 -> Photos-19")
     parser.add_argument("--dry-run", action="store_true",
                         help="resolve the scope and report it, then stop. No model probe, "
                              "no sidecar copy, no writes -- use it to check what a "
-                             "--years or --include-from selection actually covers")
+                             "--include-from selection actually covers")
     parser.add_argument("--include-from", type=str, default="",
                         help="a manifest name -- a file in manifests/, given without the "
                              "directory. Paths, not patterns, relative to data/jpg; a "
@@ -784,9 +772,6 @@ if __name__ == "__main__":
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
 
-    args.years = None if args.years.strip().lower() == "all" else [
-        y.strip() for y in args.years.split(",") if y.strip()
-    ]
 
     if args.approach == "vllm" and not args.vllm_url:
         args.vllm_url = server_url("vllm", path="/v1")

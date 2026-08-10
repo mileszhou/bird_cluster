@@ -4,9 +4,9 @@ Reads a curated labelling run, keeps the birds, and POSTs batches to the embed
 server (`code/embedding/embed_server.py`), appending one JSON object per image
 to `embeddings.jsonl`.
 
-    ./run-embed                                     # whatever --years defaults to
-    python3 -m code.embedding.embed --years 2019    # one year
-    python3 -m code.embedding.embed --years 2019 --dry-run
+    ./run-embed                                            # the whole bird set
+    ./run-embed --include-from inclusion-24&25.txt         # a manifest
+    ./run-embed --dry-run                                  # scope only, no network
 
 **The image is the unit, and the CSV is the guide.** The label set comes from
 `<label-dir>/bird_identification_output.csv` -- one row per exported image, the
@@ -32,7 +32,8 @@ per year:
     <data-dir>/jpg/<library>/<trip>/*.jpg          # Photos-19/2019-01-13 山公园/_D8S0025.jpg
     <label-dir>/bird_identification_output.csv     # one row per image
 
-`--years 2019` selects by the library's year (`Photos-19`).
+Scope is a manifest (`--include-from` / `--exclude-from`, see `manifests/`) and
+nothing else. Default is everything the CSV lists in the wanted categories.
 
 Output is JSONL rather than one array so the run is append-friendly and
 resumable: the checkpoint is just the set of keys already in the file, matching
@@ -141,7 +142,7 @@ def effective_species(row) -> tuple[str | None, float | None]:
         return species, 0.0
 
 
-def collect(data_dir: Path, label_csv: Path, years, min_confidence: float,
+def collect(data_dir: Path, label_csv: Path, min_confidence: float,
             categories=frozenset({"bird"}), paths=None):
     """Images the labelling CSV names in `categories`. Returns (candidates, counters).
 
@@ -171,9 +172,8 @@ def collect(data_dir: Path, label_csv: Path, years, min_confidence: float,
 
             parts = Path(rel).parts
             library = parts[0]
+            # `year` is denormalised onto the row for grouping, not for scoping.
             year = library_year(library)
-            if year is None or (years and year not in years):
-                continue
             if paths is not None and not paths.allows(rel):
                 stats["filtered_out"] += 1
                 continue
@@ -281,7 +281,7 @@ def embed_batch(embed_url: str, batch, workers: int, retries: int = 3):
 def report(stats: Counter, per_year: Counter, candidates, title):
     logger.info(f"--- {title} ---")
     logger.info(f"  CSV rows              : {stats['rows']}")
-    logger.info(f"  in the selected years : {stats['in_scope']}")
+    logger.info(f"  in scope              : {stats['in_scope']}")
     logger.info(f"  selected (effective)  : {stats['selected']}")
     for key in sorted(k for k in stats if k.startswith("cat_")):
         logger.info(f"      {key[4:]:<18}: {stats[key]}")
@@ -309,11 +309,6 @@ def main():
                     help="a curated labelling run; its bird_identification_output.csv "
                          "is the guide (default: ./data/label)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/embed"))
-    ap.add_argument("--years", default="all",
-                    help="comma-separated years to include, or 'all' (default). Selects "
-                         "library folders by year: 2019 -> Photos-19. Matches "
-                         "bird_label's default -- a stage that quietly does a tenth of "
-                         "the work looks like a stage that finished")
     ap.add_argument("--embed-url", default=None,
                     help="default: config.toml [servers.embed]")
     ap.add_argument("--batch-size", type=int, default=32)
@@ -339,10 +334,6 @@ def main():
                     help="scan and resolve only; no network calls, no output written")
     args = ap.parse_args()
 
-    years = None if args.years.strip().lower() == "all" else [
-        y.strip() for y in args.years.split(",") if y.strip()
-    ]
-
     if not (args.data_dir / "jpg").is_dir():
         sys.exit(f"error: expected {args.data_dir}/jpg to exist")
     label_csv = args.label_dir / "bird_identification_output.csv"
@@ -350,8 +341,7 @@ def main():
         sys.exit(f"error: {label_csv} not found. --label-dir must point at a curated "
                  f"labelling run; see 'a person curates into data/' in CLAUDE.md.")
 
-    logger.info(f"reading {label_csv} for years="
-                f"{'all' if years is None else ','.join(years)}")
+    logger.info(f"reading {label_csv}")
     categories = None if args.categories.strip().lower() == "all" else frozenset(
         c.strip().lower() for c in args.categories.split(",") if c.strip())
     logger.info(f"categories: {'all' if categories is None else ','.join(sorted(categories))}")
@@ -361,7 +351,7 @@ def main():
         sys.exit(f"error: {exc}")
     if paths:
         logger.info(f"path filter: {paths.describe()}")
-    candidates, stats, per_year = collect(args.data_dir, label_csv, years,
+    candidates, stats, per_year = collect(args.data_dir, label_csv,
                                           args.min_confidence, categories, paths)
     report(stats, per_year, candidates, "scan")
 
@@ -370,7 +360,9 @@ def main():
         return
 
     if not candidates:
-        sys.exit("error: nothing to embed -- check --years, --label-dir and --data-dir")
+        sys.exit("error: nothing to embed. An empty selection is treated as a mistake "
+                 "rather than a finished run -- check --include-from, --categories, "
+                 "--label-dir and --data-dir")
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.output_dir / "embeddings.jsonl"
@@ -411,7 +403,6 @@ def main():
         git_hash = "unknown"
     (args.output_dir / "run.json").write_text(json.dumps({
         **vars(args),
-        "years_resolved": years,          # `all` expanded to the list actually used
         "label_csv": str(label_csv),
         "embed_url": embed_url, "server": info, "model": model,
         "candidates": len(candidates),

@@ -36,17 +36,6 @@ def test_keys_carry_the_folder_not_just_the_basename(tree):
     }
 
 
-def test_select_libraries_filters_by_year(tree):
-    assert [d.name for d in bl.select_libraries(tree, None)] == ["Photos-19", "Photos-24"]
-    assert [d.name for d in bl.select_libraries(tree, ["2024"])] == ["Photos-24"]
-
-
-def test_select_libraries_refuses_a_year_that_matches_nothing(tree):
-    """Silently labelling zero photos would look like a finished run."""
-    with pytest.raises(SystemExit):
-        bl.select_libraries(tree, ["1999"])
-
-
 def write_csv(path, rows, fieldnames, encoding="utf-8"):
     with open(path, "w", newline="", encoding=encoding) as fh:
         wr = csv.DictWriter(fh, fieldnames=fieldnames)
@@ -305,9 +294,9 @@ def dataset(tmp_path):
     return tmp_path, SidecarClaims(tmp_path / "xmp")
 
 
-def build(root, claims, years=None):
+def build(root, claims, paths=None):
     """(items, taken) -- the in-scope sidecar set is checked separately."""
-    items, taken, _ = bl.build_items(claims, root / "xmp", root / "jpg", years)
+    items, taken, _ = bl.build_items(claims, root / "xmp", root / "jpg", paths)
     return items, taken
 
 
@@ -389,8 +378,7 @@ def test_out_of_scope_sidecars_are_not_counted_as_unreached(dataset):
     from code.lib.path_filter import PathFilter
     root, claims = dataset
     only_paired = PathFilter(include=[f"{TRIP}/paired.jpg"])
-    _, taken, expected = bl.build_items(claims, root / "xmp", root / "jpg",
-                                        None, only_paired)
+    _, taken, expected = bl.build_items(claims, root / "xmp", root / "jpg", only_paired)
     assert expected == {(TRIP, "paired")}       # not all four sidecars
     assert expected - taken == set()            # and it was reached
 
@@ -412,11 +400,9 @@ def test_exclude_from_narrows_the_walk(dataset):
     """Same manifests work for labelling and embedding -- both key on data/jpg."""
     from code.lib.path_filter import PathFilter
     root, claims = dataset
-    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
-                              PathFilter(exclude=[TRIP]))
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", PathFilter(exclude=[TRIP]))
     assert items == []
-    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
-                              PathFilter(exclude=[f"{TRIP}/paired.jpg"]))
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", PathFilter(exclude=[f"{TRIP}/paired.jpg"]))
     assert all(i.name != "paired.jpg" for i in items)
     assert any(i.name == "copied.jpg" for i in items)
 
@@ -424,13 +410,19 @@ def test_exclude_from_narrows_the_walk(dataset):
 def test_include_from_restricts_the_walk(dataset):
     from code.lib.path_filter import PathFilter
     root, claims = dataset
-    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", None,
-                              PathFilter(include=[f"{TRIP}/paired.jpg"]))
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg", PathFilter(include=[f"{TRIP}/paired.jpg"]))
     assert [i.name for i in items] == ["paired.jpg"]
 
 
-def test_year_filter(dataset):
+
+
+def test_a_manifest_matching_nothing_yields_no_items(dataset):
+    """--years used to refuse a year matching no library; a manifest cannot, so
+    process_folder exits on an empty item list instead. A run that labels
+    nothing and reports success is the same failure the stale --years default
+    produced -- work silently not done, reported as done."""
+    from code.lib.path_filter import PathFilter
     root, claims = dataset
-    assert build(root, claims, ["2019"])[0]
-    with pytest.raises(SystemExit):
-        build(root, claims, ["2024"])
+    items, _, _ = bl.build_items(claims, root / "xmp", root / "jpg",
+                                 PathFilter(include=["nothing/matches/this"]))
+    assert items == []
