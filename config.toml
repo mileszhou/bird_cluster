@@ -8,6 +8,13 @@
 # archive to re-analyse it, and every tool follows without a flag.
 current_working_output = "./output"
 
+# The dataset. Left unset on purpose: resolution is by existence, so a working
+# checkout finds ./data (the private submodule) and a fresh clone finds the
+# shipped ./sample_data without either editing this file. Set it only for a
+# library that lives elsewhere -- or use $BIRD_DATA_DIR, which does not dirty
+# the tree.
+# data_dir = "/mnt/photos/library"
+
 [servers.vllm]
 host = "darwin"
 port = 8000
