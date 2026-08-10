@@ -2,6 +2,12 @@
 # (gitignored) — this file is for anything safe to commit, starting with which
 # host each backend server runs on. Add new parameters here as they come up.
 
+# Which run directory the analysis tools work on by default. Runs get renamed —
+# ./clean archives output/ to output_NNN_<description>/ — so the post-processors
+# must be told where to look rather than assuming ./output. Point this at an
+# archive to re-analyse it, and every tool follows without a flag.
+current_working_output = "./output"
+
 [servers.vllm]
 host = "darwin"
 port = 8000
