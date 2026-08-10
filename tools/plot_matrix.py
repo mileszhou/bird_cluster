@@ -82,28 +82,71 @@ def load_vectors(path: Path, keys):
     return np.asarray([found[k] for k in keys], dtype=np.float32)
 
 
-def tile_matrix(X, size: int):
+def tile_starts(n: int, size: int, warp: float):
+    """First row of each tile: `start(k) = n * (k/T)**warp`.
+
+    `warp=1` is uniform tiling -- every tile the same number of images. Below 1
+    the tiles start coarse and finish fine, which spends screen area on the
+    small clusters at the tail instead of on the few big ones at the head. 0.5
+    is the square-root warp (screen position proportional to i**2).
+
+    Boundaries are deduplicated, so a warp steep enough to ask for sub-image
+    tiles yields fewer tiles rather than repeated ones.
+    """
+    if warp >= 1.0:
+        return np.arange(0, n, max(1, -(-n // size)))
+    k = np.arange(size + 1) / size
+    s = np.unique(np.round(n * k ** warp).astype(int).clip(0, n))
+    return s[s < n]
+
+
+def tile_starts_by_cluster(bounds, size: int, warp: float):
+    """Tile boundaries that give cluster *i* screen width proportional to its
+    size**warp, and never let a tile straddle two clusters.
+
+    The index warp moves resolution along a smooth curve that knows nothing
+    about where the clusters are, so at a steep exponent a head tile averages
+    across several of them and the diagonal dims -- an artefact of the tiling
+    rather than of the data. Allocating per cluster instead keeps every boundary
+    on a tile edge, so each block is drawn at its own resolution and the head
+    keeps its structure while the tail gains some.
+
+    warp=1 is proportional (uniform tiles again); warp=0 gives every cluster the
+    same width, which compares internal texture at the cost of showing size.
+    """
+    sizes = np.array([e - s for s, e in bounds], dtype=float)
+    share = sizes ** warp
+    per = np.round(share / share.sum() * size).astype(int)
+    per = np.clip(per, 1, sizes.astype(int))          # >=1 tile, <=1 image/tile
+    starts = []
+    for (s, e), k in zip(bounds, per):
+        starts.extend(s + (np.arange(k) * (e - s) // k))
+    return np.unique(np.asarray(starts, dtype=int))
+
+
+def tile_matrix(X, starts):
     """Mean cosine similarity per tile, computed in strips.
 
-    Returns (T x T array, tile starts). Vectors are L2-normalised upstream, so
-    the dot product *is* the cosine.
+    Vectors are L2-normalised upstream, so the dot product *is* the cosine.
+    Tiles may have unequal widths (see `tile_starts`), which is why the strip
+    loop walks tile indices rather than stepping by a constant.
     """
-    n = len(X)
-    step = max(1, -(-n // size))                 # rows per tile, ceil
-    starts = np.arange(0, n, step)
+    n, T = len(X), len(starts)
     widths = np.diff(np.append(starts, n)).astype(np.float32)
-    T = len(starts)
-
     out = np.empty((T, T), dtype=np.float32)
-    block = max(1, 4096 // step) * step          # whole tiles per strip
-    for a in range(0, n, block):
-        b = min(a + block, n)
+
+    i = 0
+    while i < T:
+        j = i + 1
+        while j < T and starts[j] - starts[i] < 4096:   # whole tiles per strip
+            j += 1
+        a, b = int(starts[i]), int(starts[j]) if j < T else n
         s = X[a:b] @ X.T                                        # (b-a, n)
         s = np.add.reduceat(s, starts, axis=1) / widths         # (b-a, T)
-        local = np.arange(0, b - a, step)
-        s = np.add.reduceat(s, local, axis=0) / widths[a // step:a // step + len(local), None]
-        out[a // step:a // step + len(local)] = s
-    return out, starts
+        s = np.add.reduceat(s, starts[i:j] - a, axis=0) / widths[i:j, None]
+        out[i:j] = s
+        i = j
+    return out
 
 
 def draw(M, out_path: Path, title: str, style: str, boundaries):
@@ -162,26 +205,44 @@ def run(run_dir: Path, args) -> str:
     if not rows:
         return "no clustered rows"
 
-    X = load_vectors(args.embeddings, [r["key"] for r in rows])
-    M, starts = tile_matrix(X, args.size)
-
-    # Boundaries of clusters wide enough to read. Keyed on the cluster's own
-    # span, not on distance from the previous line: with 146 clusters the tail
-    # is hundreds of small ones, and a line at each turns the corner of the
-    # image into a mesh that hides the thing it is annotating.
-    step = max(1, -(-len(rows) // args.size))
-    edges, start, seen = [], 0, rows[0]["cluster_id"]
+    # Cluster spans, in file order. Contiguous by construction -- that is what
+    # order_assignments guarantees and what the C_ check above verified.
+    bounds, start, seen = [], 0, rows[0]["cluster_id"]
     for i, r in enumerate(rows + [{"cluster_id": None}]):
         if r["cluster_id"] != seen:
-            if (i - start) / step >= args.min_edge:
-                edges += [start / step, i / step]
+            bounds.append((start, i))
             start, seen = i, r["cluster_id"]
 
+    X = load_vectors(args.embeddings, [r["key"] for r in rows])
+    starts = (tile_starts_by_cluster(bounds, args.size, args.warp) if args.by_cluster
+              else tile_starts(len(rows), args.size, args.warp))
+    M = tile_matrix(X, starts)
+
+    # Row index -> tile coordinate. Under a warp the tiles are unequal, so this
+    # is an interpolation against the boundaries rather than a division.
+    grid = np.append(starts, len(rows))
+    at = lambda i: float(np.interp(i, grid, np.arange(len(grid))))
+
+    # Boundaries of clusters wide enough to read *on screen*, measured after the
+    # warp -- which is the point of the warp: a cluster too small to outline at
+    # p=1 can become outlinable at p=0.5. Keyed on the cluster's own span, not
+    # on distance from the previous line: the tail is hundreds of small clusters
+    # and a line at each turns that corner into a mesh.
+    edges = [x for lo, hi in ((at(a), at(b)) for a, b in bounds)
+             for x in (lo, hi) if hi - lo >= args.min_edge]
+
+    widths = np.diff(grid)
     n_clusters = len({r["cluster_id"] for r in rows if r["cluster_id"] != NOISE})
+    scale = (f"{widths.min()}..{widths.max()} images/tile, "
+             f"warp {args.warp:g}{' per cluster' if args.by_cluster else ''}"
+             if args.warp < 1 or args.by_cluster else f"{widths[0]} images each")
     title = (f"{run_dir.name}: {len(rows):,} images, {n_clusters} clusters"
              f"{' + noise' if args.include_noise else ''} "
-             f"({M.shape[0]}x{M.shape[0]} tiles, {step} images each)")
-    out = run_dir / f"matrix-{args.style}{'-noise' if args.include_noise else ''}.png"
+             f"({len(starts)}x{len(starts)} tiles, {scale})")
+    suffix = ("" if args.warp >= 1 and not args.by_cluster else
+              f"-{'c' if args.by_cluster else 'p'}{args.warp:g}")
+    out = (run_dir /
+           f"matrix-{args.style}{suffix}{'-noise' if args.include_noise else ''}.png")
     draw(M, out, title, args.style, edges)
     return f"{len(rows):,} rows -> {out.name}"
 
@@ -197,6 +258,13 @@ def main():
                     help="target tiles per side; one tile averages ceil(n/size)^2 pairs. "
                          "Default 1200 for heat/contour, 160 for surface, which cannot "
                          "carry that detail (see DEFAULT_SIZE)")
+    ap.add_argument("--warp", type=float, default=1.0,
+                    help="tile boundary exponent: start(k) = n*(k/T)**warp. 1 = uniform; "
+                         "below 1 spends screen area on the small clusters at the tail "
+                         "(0.5 is the square-root warp)")
+    ap.add_argument("--by-cluster", action="store_true",
+                    help="allocate screen width per cluster as size**warp, snapped to "
+                         "cluster boundaries, instead of warping the index smoothly")
     ap.add_argument("--min-edge", type=float, default=8,
                     help="only outline clusters at least this many tiles wide (0 = none)")
     ap.add_argument("--include-noise", action="store_true",
