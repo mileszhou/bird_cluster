@@ -38,7 +38,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("embed_server")
 
 app = FastAPI(title="bird_cluster embed server")
-STATE: dict = {"model": None, "processor": None, "model_id": None, "device": None, "dim": None}
+STATE: dict = {"model": None, "processor": None, "model_id": None, "device": None,
+               "dim": None, "revision": None, "dtype": None, "gpu": None,
+               "versions": None}
 
 
 class EmbedRequest(BaseModel):
@@ -46,21 +48,49 @@ class EmbedRequest(BaseModel):
 
 
 def load_model(model_id: str):
+    import platform
+    import transformers
+
     device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"loading {model_id} on {device}")
     processor = AutoImageProcessor.from_pretrained(model_id)
     model = AutoModel.from_pretrained(model_id).to(device).eval()
     dim = getattr(model.config, "hidden_size", None)
-    STATE.update(model=model, processor=processor, model_id=model_id, device=device, dim=dim)
-    logger.info(f"loaded {model_id} (dim={dim})")
+
+    # The exact weights, not just the repo name: a model id is a moving target
+    # on the Hub, and `main` today is not necessarily `main` next year.
+    revision = getattr(getattr(model, "config", None), "_commit_hash", None)
+    STATE.update(
+        model=model, processor=processor, model_id=model_id, device=device, dim=dim,
+        revision=revision,
+        dtype=str(next(model.parameters()).dtype),
+        gpu=(torch.cuda.get_device_name(0) if device == "cuda" else platform.processor()),
+        versions={"torch": torch.__version__,
+                  "transformers": transformers.__version__,
+                  "cuda": (torch.version.cuda if device == "cuda" else None),
+                  "python": platform.python_version()},
+    )
+    logger.info(f"loaded {model_id} (dim={dim}, dtype={STATE['dtype']}, "
+                f"revision={revision}) on {STATE['gpu']}")
 
 
 @app.get("/health")
 def health():
+    """What is serving, and on what.
+
+    The client copies this whole object into its `run.json`, so anything here
+    becomes part of a vector set's provenance for free. The versions and the GPU
+    are recorded because two runs of the "same model" are only comparable if the
+    stack underneath was the same -- kernel selection and library versions move
+    results at the last few decimal places, and a study of run-to-run variation
+    cannot start from vectors that cannot say what produced them.
+    """
     if STATE["model"] is None:
         raise HTTPException(status_code=503, detail="model not loaded")
     return {"status": "ok", "model": STATE["model_id"],
-            "device": STATE["device"], "dim": STATE["dim"]}
+            "device": STATE["device"], "dim": STATE["dim"],
+            "revision": STATE["revision"], "dtype": STATE["dtype"],
+            "gpu": STATE["gpu"], "versions": STATE["versions"]}
 
 
 @app.post("/embed")
