@@ -5,13 +5,13 @@
 # tree: one row per exported image, keyed by the path under data/jpg. That is
 # what lets the 569 birds with no sidecar be embedded at all.
 #
-# Starts on one year; widen with --years 2019,2021 or --years all.
+# Whole library by default. Narrow with --years 2019,2021 or a manifest
+# (--include-from), and check the scope first with --dry-run.
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
 python3 -m code.embedding.embed \
    --data-dir ./data \
    --label-dir ./data/label \
    --output-dir ./output/embed \
-   --years 2016 \
    --batch-size 32 \
    "$@"

@@ -309,9 +309,11 @@ def main():
                     help="a curated labelling run; its bird_identification_output.csv "
                          "is the guide (default: ./data/label)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/embed"))
-    ap.add_argument("--years", default="2019",
-                    help="comma-separated years to include, or 'all' (default: 2019). "
-                         "Start with one year; widen once the run looks right.")
+    ap.add_argument("--years", default="all",
+                    help="comma-separated years to include, or 'all' (default). Selects "
+                         "library folders by year: 2019 -> Photos-19. Matches "
+                         "bird_label's default -- a stage that quietly does a tenth of "
+                         "the work looks like a stage that finished")
     ap.add_argument("--embed-url", default=None,
                     help="default: config.toml [servers.embed]")
     ap.add_argument("--batch-size", type=int, default=32)
