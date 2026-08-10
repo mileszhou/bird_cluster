@@ -46,6 +46,7 @@ own: this produces a PNG beside the CSV and does not touch the CSV.
 """
 
 import argparse
+import collections
 from pathlib import Path
 
 import numpy as np
@@ -190,7 +191,8 @@ def tile_matrix(X, starts):
     return out
 
 
-def draw(M, out_path: Path, title: str, style: str, boundaries, xlabel: str):
+def draw(M, out_path: Path, title: str, style: str, boundaries, xlabel: str,
+         dpi: int = 140):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -225,7 +227,7 @@ def draw(M, out_path: Path, title: str, style: str, boundaries, xlabel: str):
 
     ax.set_title(title, fontsize=10)
     fig.tight_layout()
-    fig.savefig(out_path, dpi=140)
+    fig.savefig(out_path, dpi=dpi)
     plt.close(fig)
 
 
@@ -243,16 +245,48 @@ def run(run_dir: Path, args) -> str:
 
     if not args.include_noise:
         rows = [r for r in rows if r["cluster_id"] != NOISE]
+    if args.focus:
+        # One cluster, by id or by a substring of its medoid name. Zooming in is
+        # the only way to ask whether a label means anything: at library scale a
+        # species is a few pixels, and the question is whether it is a block.
+        # Exact id first, and only fall back to the name. A bare number is a
+        # cluster_id, but it is also a substring of half the medoid paths in the
+        # library -- "12" silently pulled in 134 rows from other clusters.
+        want = [r for r in rows if r["cluster_id"] == args.focus]
+        if not want:
+            want = [r for r in rows if args.focus in r["cluster_name"]]
+            ids = {r["cluster_id"] for r in want}
+            if len(ids) > 1:
+                raise SystemExit(f"error: {args.focus!r} matches {len(ids)} clusters "
+                                 f"in {run_dir}; use a cluster_id or a longer name")
+        if not want:
+            raise SystemExit(f"error: no cluster matches {args.focus!r} in {run_dir}")
+        rows = want
     if not rows:
         return "no clustered rows"
 
+    key = (lambda r: r["species"]) if args.group == "label" else \
+          (lambda r: r["cluster_id"])
+    if args.group == "label":
+        # The file is grouped by cluster, not by label, so re-group before the
+        # spans below mean anything. Largest label first, matching the cluster
+        # convention; --order similarity then seriates them.
+        rank = collections.Counter(key(r) for r in rows)
+        # A label carried by one image cannot form a block, and 196 of this
+        # cluster's 460 labels are singletons -- kept, they are 196 one-tile
+        # groups whose boundaries alone fill the picture.
+        rows = [r for r in rows if rank[key(r)] >= args.min_group]
+        if not rows:
+            raise SystemExit(f"error: no label reaches --min-group {args.min_group}")
+        rows.sort(key=lambda r: (-rank[key(r)], key(r)))
+
     # Cluster spans, in file order. Contiguous by construction -- that is what
     # order_assignments guarantees and what the C_ check above verified.
-    bounds, start, seen = [], 0, rows[0]["cluster_id"]
-    for i, r in enumerate(rows + [{"cluster_id": None}]):
-        if r["cluster_id"] != seen:
+    bounds, start, seen = [], 0, key(rows[0])
+    for i, r in enumerate(rows + [None]):
+        if (key(r) if r else None) != seen:
             bounds.append((start, i))
-            start, seen = i, r["cluster_id"]
+            start, seen = i, (key(r) if r else None)
 
     X = load_vectors(args.embeddings, [r["key"] for r in rows])
 
@@ -260,7 +294,7 @@ def run(run_dir: Path, args) -> str:
         # Seriate the real clusters; noise, if kept, is not a cluster and stays
         # pinned at the end where order_assignments put it.
         real = [b for b, r in zip(bounds, (rows[a] for a, _ in bounds))
-                if r["cluster_id"] != NOISE]
+                if r["cluster_id"] != NOISE or args.group == "label"]
         tail = bounds[len(real):]
         C = np.stack([X[a:b].mean(0) for a, b in real])
         C /= np.linalg.norm(C, axis=1, keepdims=True)
@@ -292,11 +326,13 @@ def run(run_dir: Path, args) -> str:
              for x in (lo, hi) if hi - lo >= args.min_edge]
 
     widths = np.diff(grid)
-    n_clusters = len({r["cluster_id"] for r in rows if r["cluster_id"] != NOISE})
+    n_clusters = len({key(r) for r in rows})
     scale = (f"{widths.min()}..{widths.max()} images/tile, "
              f"warp {args.warp:g}{' per cluster' if args.by_cluster else ''}"
              if args.warp < 1 or args.by_cluster else f"{widths[0]} images each")
-    title = (f"{run_dir.name}: {len(rows):,} images, {n_clusters} clusters"
+    what = "species labels" if args.group == "label" else "clusters"
+    head = f"{run_dir.name}" + (f" cluster {args.focus}" if args.focus else "")
+    title = (f"{head}: {len(rows):,} images, {n_clusters} {what}"
              f"{' + noise' if args.include_noise else ''} "
              f"({len(starts)}x{len(starts)} tiles, {scale}"
              f"{', seriated' if args.order == 'similarity' else ''})")
@@ -304,11 +340,16 @@ def run(run_dir: Path, args) -> str:
               f"-{'c' if args.by_cluster else 'p'}{args.warp:g}")
     suffix += "-ser" if args.order == "similarity" else ""
     suffix += "-ctr" if args.within == "centre" else ""
+    if args.focus:
+        suffix = f"-focus{args.focus.replace('/', '_')[:24]}" + suffix
+    if args.group == "label":
+        suffix += "-bylabel"
     out = (run_dir /
            f"matrix-{args.style}{suffix}{'-noise' if args.include_noise else ''}.png")
     draw(M, out, title, args.style, edges,
-         "image, clusters ordered by centroid similarity" if args.order == "similarity"
-         else "image, in file order (clusters largest first)")
+         f"image, {what} ordered by "
+         + ("centroid similarity" if args.order == "similarity" else "size"),
+         args.dpi)
     return f"{len(rows):,} rows -> {out.name}"
 
 
@@ -331,6 +372,18 @@ def main():
                     help="cluster layout order. 'size' is the file order (largest "
                          "first, a reading order); 'similarity' seriates the centroids "
                          "so related clusters sit adjacent")
+    ap.add_argument("--focus", default=None,
+                    help="restrict to one cluster, by cluster_id or a substring of its "
+                         "cluster_name. Raises the default resolution, since one "
+                         "cluster can afford far more tiles than the whole run")
+    ap.add_argument("--group", choices=("cluster", "label"), default="cluster",
+                    help="what a diagonal block is. 'label' groups by species instead, "
+                         "so a block appearing means the label names something the "
+                         "embedding also sees")
+    ap.add_argument("--min-group", type=int, default=1,
+                    help="drop groups smaller than this (only meaningful with "
+                         "--group label, where most labels are near-singletons)")
+    ap.add_argument("--dpi", type=int, default=None)
     ap.add_argument("--within", choices=("seq", "centre"), default="seq",
                     help="order inside each cluster. 'seq' is load order; 'centre' "
                          "sorts by distance to the cluster centroid, turning each "
@@ -345,7 +398,10 @@ def main():
     args = ap.parse_args()
 
     if args.size is None:
-        args.size = DEFAULT_SIZE[args.style]
+        args.size = DEFAULT_SIZE[args.style] * (3 if args.focus and
+                                                args.style != "surface" else 1)
+    if args.dpi is None:
+        args.dpi = 300 if args.focus else 140
     if not args.embeddings.is_file():
         raise SystemExit(f"error: {args.embeddings} not found")
     for r in resolve_runs(args):
