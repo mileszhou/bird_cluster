@@ -247,6 +247,7 @@ data/xmp/<Photos-YY>/<trip>/*.xmp     # Photos-19/2019-01-13 山公园/_D8S0025.
 data/jpg/<Photos-YY>/<trip>/*.jpg     # same folder, same stem
 data/jpg/export.report.txt            # what the exporter skipped, and why
 data/label/                           # curated from a labelling run -- input to embedding
+data/embed/                           # curated from an embedding run -- input to clustering
 ```
 
 **The `data/` submodule is ~6.5 GB, and `jpg/` is nearly all of it.** That is deliberate, and
@@ -272,8 +273,13 @@ the sidecars and history without the images. Removing them from history does not
 
 `data/label/` is cherry-picked from an archived run (`output_NNN_<description>/`), not a
 renamed copy of one. It exists so a category reaches the embedding step directly instead of
-travelling out through Lightroom and back. Its counterpart at the next boundary would be
-`data/embed/`.
+travelling out through Lightroom and back. `data/embed/` is the same act at the next boundary.
+
+Both carry a `PROVENANCE.md`: what produced them, what was selected, and why they are versioned
+at all. For `data/embed/` that last question has a different answer than for `data/jpg` — the
+vectors *are* re-derivable, but re-derivable is not identical (kernel selection, batching and
+library versions move the last decimal places), and run-to-run variation in the embedder is
+itself a question that can only be asked against a stored run.
 
 Trip folders match verbatim between the two photo trees, so resolving a JPEG is a lookup inside
 one folder. Nothing is hardcoded per year — any dataset in this shape works.
