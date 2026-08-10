@@ -14,6 +14,12 @@ cp _env .env
 # Add OPENAI_API_KEY to .env if using chatgpt approach
 ```
 
+`config.toml` also carries **`current_working_output`** — the run directory the analysis tools
+work on by default. Runs get archived under new names (`./clean` moves `output/` to
+`output_NNN_<description>/`), so a post-processor that hardcoded `./output` would analyse
+whatever happened to be sitting there. Point the setting at an archive to re-analyse an old
+run and every tool follows without a flag; `--output-dir` still wins per invocation.
+
 Non-secret configuration (which host each backend server runs on, etc.) lives in `config.toml`
 at the repo root, checked into git — see `[servers.*]` entries, read via
 `code/lib/config.py:server_url()`. Keep it separate from `.env`: `.env` is for secrets only and
