@@ -21,16 +21,15 @@ Needs `cluster_size`; run `add_cluster_size.py` first if it is absent.
 
 import argparse
 
-from code.lib.csv_post import add_arguments, resolve_runs, rewrite
+from code.lib.csv_marks import REGISTRY
+from code.lib.csv_post import add_arguments, apply_tool, resolve_runs
 
+TOOL = REGISTRY["order_assignments"]
 ORDER = ["seq", "cluster_id", "cluster_size", "cluster_name", "key", "xmp",
          "probability", "is_noise", "species"]
 
 
 def transform(rows):
-    for col in ("cluster_id", "cluster_size"):
-        if col not in rows[0]:
-            raise SystemExit(f"error: no {col} column -- run add_cluster_size.py first")
     # Number first: seq is the input position, identical across runs. These files
     # are written in input order, so enumerate() recovers it; an existing seq is
     # kept so re-running cannot renumber against a sorted file.
@@ -48,7 +47,8 @@ def main():
     add_arguments(ap)
     args = ap.parse_args()
     for run in resolve_runs(args):
-        print(f"  {run.name}: {rewrite(run / 'assignments.csv', transform, ORDER)}")
+        print(f"  {run.name}: "
+              f"{apply_tool(run / 'assignments.csv', TOOL, transform, args, ORDER)}")
 
 
 if __name__ == "__main__":

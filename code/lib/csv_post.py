@@ -14,9 +14,12 @@ archive, to re-analyse an old run. An explicit `--output-dir` still wins.
 so an in-place edit goes through a temporary file and an atomic replace. An
 interrupted tool leaves the original intact rather than a truncated one.
 
-**Staying idempotent.** A post-processor is run repeatedly, in orders nobody
-planned. Each should be safe to re-apply, and should not care whether an earlier
-one has already run.
+**Knowing what already ran.** Each tool declares a bit in
+`code/lib/csv_marks.py`, and the CSV carries the accumulated state in an empty
+column named for it (`C_3`). A tool whose prerequisites are unmet refuses and
+names the tool that provides them, or runs it first with `--resolve`. That
+handles the case column-sniffing cannot: a tool that only reorders rows leaves
+no column to detect it by.
 
     from code.lib.csv_post import add_arguments, resolve_runs, rewrite
 
@@ -24,15 +27,17 @@ one has already run.
     add_arguments(ap)
     args = ap.parse_args()
     for run in resolve_runs(args):
-        rewrite(run / "assignments.csv", transform)
+        apply_tool(run / "assignments.csv", TOOL, transform, args, order=ORDER)
 """
 
 import csv
+import importlib
 import os
 import tempfile
 from pathlib import Path
 
 from code.lib.config import working_output
+from code.lib import csv_marks
 
 
 def add_arguments(ap, subdir: str = "cluster"):
@@ -42,6 +47,10 @@ def add_arguments(ap, subdir: str = "cluster"):
                          f"current_working_output + /{subdir}")
     ap.add_argument("--run", type=Path, default=None,
                     help="a single run directory, instead of every one under the root")
+    ap.add_argument("--resolve", action="store_true",
+                    help="run any missing prerequisite tools first instead of refusing")
+    ap.add_argument("--force", action="store_true",
+                    help="apply again even if this tool's bit is already set")
     ap.set_defaults(_subdir=subdir)
 
 
@@ -83,3 +92,49 @@ def rewrite(path: Path, transform, order=()):
         w.writerows(rows)
     os.replace(tmp, path)
     return f"{len(rows)} rows"
+
+
+def apply_tool(path: Path, tool, transform, args, order=()):
+    """Run one post-processor, honouring the recorded state in the file.
+
+    Returns a short status string for printing. Does nothing if the tool has
+    already been applied, unless --force: these are meant to be run repeatedly
+    and in whatever order, so re-applying must be safe *and* cheap.
+    """
+    rows = read_rows(path)
+    if not rows:
+        return "empty"
+    state, column = csv_marks.read_state(rows[0].keys())
+
+    if state & tool.bit and not getattr(args, "force", False):
+        return f"already applied (state {csv_marks.describe(state)})"
+
+    gaps = csv_marks.missing(state, tool)
+    if gaps:
+        if not getattr(args, "resolve", False):
+            names = ", ".join(g.name for g in gaps)
+            raise SystemExit(
+                f"error: {path} needs {names} first (state: "
+                f"{csv_marks.describe(state)}).\n"
+                f"       Run it, or pass --resolve to run it automatically.")
+        for g in gaps:
+            mod = importlib.import_module(g.module)
+            apply_tool(path, g, mod.transform, args, order=order)
+        rows = read_rows(path)
+        state, column = csv_marks.read_state(rows[0].keys())
+
+    rows = transform(rows)
+    rows, column = csv_marks.apply_mark(rows, state, column, tool)
+    fields = [c for c in order if c in rows[0]] + \
+             [c for c in rows[0] if c not in order and c != column] + [column]
+    write_rows(path, rows, fields)
+    return f"{len(rows)} rows -> {column} ({csv_marks.describe(state | tool.bit)})"
+
+
+def write_rows(path: Path, rows, fields):
+    fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
+    with os.fdopen(fd, "w", newline="", encoding="utf-8") as fh:
+        w = csv.DictWriter(fh, fieldnames=fields)
+        w.writeheader()
+        w.writerows(rows)
+    os.replace(tmp, path)

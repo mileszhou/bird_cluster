@@ -18,8 +18,10 @@ Idempotent, and safe to run before or after any other post-processor.
 import argparse
 import collections
 
-from code.lib.csv_post import add_arguments, resolve_runs, rewrite
+from code.lib.csv_marks import REGISTRY
+from code.lib.csv_post import add_arguments, apply_tool, resolve_runs
 
+TOOL = REGISTRY["add_cluster_size"]
 NOISE = "-1"
 
 
@@ -38,7 +40,7 @@ def main():
     add_arguments(ap)
     args = ap.parse_args()
     for run in resolve_runs(args):
-        print(f"  {run.name}: {rewrite(run / 'assignments.csv', transform)}")
+        print(f"  {run.name}: {apply_tool(run / 'assignments.csv', TOOL, transform, args)}")
 
 
 if __name__ == "__main__":
