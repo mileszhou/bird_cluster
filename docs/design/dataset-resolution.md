@@ -1,9 +1,11 @@
 # Which dataset a run uses — TENTATIVE
 
-> **Status: not settled.** The resolution order is agreed and implemented. The
-> signature check is implemented but under review — see *Reservations*, which
-> are substantial enough that it may not survive. Nothing downstream should
-> depend on the signature mechanism until this note says otherwise.
+> **Status: tentative, with a leading candidate.**
+>
+> **No signature.** Accept `./data` when it holds a `jpg/` tree, like any other
+> candidate. The signature check is implemented but set aside — its reservations
+> stand, and the argument that finally settled it is below under *What the
+> gitlink already does*. Nothing should depend on the signature mechanism.
 
 ## The problem
 
@@ -67,7 +69,44 @@ This is also the argument for making a valid master **absolute** — outranking
 even `--data-dir` — so that an `args.json` claiming `./data` can never be wrong.
 Currently it does not; flags 1 and 2 still win. Unresolved.
 
-## The signature check
+## What the gitlink already does
+
+Most of what the signature was reaching for is already true, for free, because
+`data` is a submodule path rather than an ordinary directory. Measured on a
+fresh clone with a user's photos dropped into `data/`:
+
+    $ git status --short                        (nothing — clean)
+    $ git add -A --dry-run                      (nothing — not swept in)
+    $ git add "data/jpg/.../IMG_1.jpg"
+    fatal: Pathspec 'data/jpg/.../IMG_1.jpg' is in submodule 'data'
+    $ git add -f "data/jpg/.../IMG_1.jpg"
+    fatal: Pathspec ... is in submodule 'data'   ← -f does not override
+    $ git check-ignore -v data/                 (not ignored at all)
+
+Git refuses to descend into an uninitialised submodule path, and refuses *with
+an error* rather than silently skipping. That is stronger than `.gitignore`,
+which `-f` defeats. So `./data` does not need reserving to stay safe: a user's
+library there is inert to git, cannot be committed by accident, and the code can
+simply use it.
+
+That removes the practical argument for the signature and leaves only the
+provenance one — which is the argument with the defect.
+
+### One exception: a git repo inside `data/`
+
+A *plain* directory at `data/` is invisible. A directory containing its own
+`.git` is not:
+
+     M data
+            modified:   data (new commits)
+
+The parent then sees a submodule whose HEAD differs from the pin, and says so
+permanently. A user who wants their dataset under version control should keep it
+elsewhere and point `config.toml` at it, rather than making `./data` a
+repository. Worth a line in the README, since it is the one arrangement that
+leaves a clone's tree dirty.
+
+## The signature check — implemented, set aside
 
 `data/signature.txt` holds a 32-byte random value. `code/lib/config.py` holds
 only its SHA-256. `master_data_available()` reads the file, hashes it, compares.
@@ -123,15 +162,18 @@ signature cannot — the parent already records the exact dataset commit, so no 
 file is needed and it cannot drift. The manifest catches partial sync for 0.11 s.
 Neither resists forgery, which may not matter.
 
-A plausible resolution is **manifest for integrity + pin for version + no
-signature at all**, accepting that a determined person could fake a canonical
-dataset and observing that no one has any reason to.
+**The leading candidate is no signature at all**: accept `./data` on a `jpg/`
+tree like any other location. If a version check is wanted later, the submodule
+pin gives it for nothing; if an integrity check is wanted, the manifest costs
+0.11 s. Both can be added when a real failure motivates them, and neither has to
+be decided now.
 
 ## Open questions
 
-1. Does the signature survive, or is provenance better served by the pin and a
-   manifest?
-2. If it survives: should a valid master outrank `--data-dir`?
+1. ~~Does the signature survive?~~ Leading candidate: no. See above.
+2. Provenance without it: is the submodule pin recorded in `args.json` enough to
+   say which dataset a run used? It is free and exact, but only meaningful when
+   `./data` really is the submodule.
 3. What goes in `sample_data/` — it should be chosen to exercise the edge cases
    (sidecar-less image, derived export, duplicate capture, Chinese and
    comma-bearing trip names, Bag *and* Seq sidecars), and must exclude the
