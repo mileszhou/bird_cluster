@@ -123,6 +123,24 @@ def seriate(C):
     return np.argsort(v[:, 1])
 
 
+def order_within(X, bounds):
+    """Row permutation putting each cluster's members in distance-to-centre order.
+
+    Untouched, members sit in `seq` order -- the order the vectors were loaded,
+    unrelated to appearance -- so a diagonal block is bright but grainy. Sorting
+    by distance to the centroid makes each block a smooth mound: the core is the
+    top-left corner of its own block, the periphery the bottom-right, and how
+    fast the block fades outwards is the cluster's radial profile drawn in
+    place. It also makes N(r) readable straight off the block edge, since row
+    position within a cluster is now rank in radius.
+    """
+    idx = []
+    for a, b in bounds:
+        block = X[a:b]
+        idx.append(a + np.argsort(np.linalg.norm(block - block.mean(0), axis=1)))
+    return np.concatenate(idx)
+
+
 def tile_starts_by_cluster(bounds, size: int, warp: float):
     """Tile boundaries that give cluster *i* screen width proportional to its
     size**warp, and never let a tile straddle two clusters.
@@ -252,6 +270,10 @@ def run(run_dir: Path, args) -> str:
         cuts = np.cumsum([0] + [b - a for a, b in order])
         bounds = list(zip(cuts[:-1], cuts[1:]))
 
+    if args.within == "centre":
+        idx = order_within(X, bounds)
+        X, rows = X[idx], [rows[i] for i in idx]
+
     starts = (tile_starts_by_cluster(bounds, args.size, args.warp) if args.by_cluster
               else tile_starts(len(rows), args.size, args.warp))
     M = tile_matrix(X, starts)
@@ -281,6 +303,7 @@ def run(run_dir: Path, args) -> str:
     suffix = ("" if args.warp >= 1 and not args.by_cluster else
               f"-{'c' if args.by_cluster else 'p'}{args.warp:g}")
     suffix += "-ser" if args.order == "similarity" else ""
+    suffix += "-ctr" if args.within == "centre" else ""
     out = (run_dir /
            f"matrix-{args.style}{suffix}{'-noise' if args.include_noise else ''}.png")
     draw(M, out, title, args.style, edges,
@@ -308,6 +331,10 @@ def main():
                     help="cluster layout order. 'size' is the file order (largest "
                          "first, a reading order); 'similarity' seriates the centroids "
                          "so related clusters sit adjacent")
+    ap.add_argument("--within", choices=("seq", "centre"), default="seq",
+                    help="order inside each cluster. 'seq' is load order; 'centre' "
+                         "sorts by distance to the cluster centroid, turning each "
+                         "diagonal block into a mound and its edge into N(r)")
     ap.add_argument("--by-cluster", action="store_true",
                     help="allocate screen width per cluster as size**warp, snapped to "
                          "cluster boundaries, instead of warping the index smoothly")
