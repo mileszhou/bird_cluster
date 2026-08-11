@@ -4,13 +4,19 @@
 run-vllm ended at its own last flag and never passed "$@" through. Nothing in
 the output said so -- argparse saw defaults and reported them faithfully, so
 args.json recorded `years: null` and looked correct.
+
+All three prefixes are covered, not just `run-`: `run-` is a pipeline stage that
+writes to output/, `tool-` reports on the dataset without changing it, and
+`server-` starts a long-running process. The bug is a property of being a
+wrapper, not of being a stage.
 """
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
-SCRIPTS = sorted(p for p in ROOT.glob("run-*") if p.is_file())
+SCRIPTS = sorted(p for pre in ("run-*", "tool-*", "server-*")
+                 for p in ROOT.glob(pre) if p.is_file())
 
 
 def test_there_are_wrapper_scripts():

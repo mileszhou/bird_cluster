@@ -44,6 +44,8 @@ from pathlib import Path
 
 import numpy as np
 
+from code.lib.config import data_dir
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("discover")
 
@@ -251,7 +253,7 @@ def run_one(X, rows, min_cluster_size, min_samples, out_root: Path, source, git_
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--embeddings", type=Path, default=Path("./data/embed/embeddings.jsonl"),
+    ap.add_argument("--embeddings", type=Path, default=None,
                     help="the curated vector set (default: data/embed/)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/cluster"))
     ap.add_argument("--min-cluster-size", default="5,15,40",
@@ -263,6 +265,8 @@ def main():
                          "near-identical vectors double the local density exactly where a "
                          "cluster is being decided")
     args = ap.parse_args()
+    if args.embeddings is None:
+        args.embeddings = data_dir() / "embed" / "embeddings.jsonl"
 
     if not args.embeddings.is_file():
         sys.exit(f"error: {args.embeddings} not found")

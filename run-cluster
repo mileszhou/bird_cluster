@@ -6,7 +6,6 @@
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
 python3 -m code.cluster.discover \
-   --embeddings ./data/embed/embeddings.jsonl \
    --output-dir ./output/cluster \
    --min-cluster-size 5,15,40 \
    "$@"

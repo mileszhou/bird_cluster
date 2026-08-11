@@ -150,3 +150,17 @@ def data_dir(override=None) -> Path:
         "error: no dataset found. Expected ./sample_data (shipped -- see the README "
         "for how to fetch it), ./data (the private submodule -- "
         "`git submodule update --init`), or a path in .datapath (copy _datapath).")
+
+
+def display_path(path) -> Path:
+    """`path` relative to the repo when it is inside it, else unchanged.
+
+    data_dir() returns an absolute path, and a tracked report that prints one
+    carries somebody's home directory into git -- so it diffs on every machine
+    and stops being a record of what moved in the *dataset*. Keeping the reports
+    diffable is the whole reason their filenames never change.
+    """
+    try:
+        return Path(path).relative_to(CONFIG_PATH.parent)
+    except ValueError:
+        return Path(path)
