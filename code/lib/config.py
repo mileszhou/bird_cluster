@@ -42,14 +42,52 @@ def working_output(default: str = "./output") -> Path:
     return Path(load_config().get("current_working_output", default))
 
 
+DATAPATH = CONFIG_PATH.parent / ".datapath"
+
+
+def declared_data_dir() -> str | None:
+    """The path written in `.datapath`, or None.
+
+    `.datapath` is the user's own copy of the tracked `_datapath` template, and
+    is gitignored -- the whole point. `config.toml` is committed, so configuring
+    the dataset there means a working tree that is dirty for as long as you keep
+    your setting, and a `git diff` whose first hunk is always yours. Splitting
+    the local part into an ignored file is the same shape as `_env` -> `.env`,
+    which this project already uses for secrets.
+
+    Format: the first non-blank, non-comment line. Relative paths resolve from
+    the repository root rather than the caller's cwd, so a run started from a
+    subdirectory picks the same dataset as one started from the top.
+    """
+    try:
+        text = DATAPATH.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        line = line.split("#", 1)[0].strip()
+        if line:
+            return line
+    return None
+
+
 def data_dir(override=None) -> Path:
     """The dataset to work on, resolved in order of specificity.
 
         1. an explicit --data-dir
         2. $BIRD_DATA_DIR
-        3. ./data, the private submodule
-        4. config.toml's `data_dir`
+        3. .datapath, your local copy of the _datapath template
+        4. ./data, the private submodule
         5. ./sample_data, shipped
+
+    A fresh clone therefore runs on the sample with no setup at all, and a
+    checkout with the submodule finds it without setup either. `.datapath` is
+    for the third case: a library somewhere else entirely. $BIRD_DATA_DIR stays
+    for the one-off -- CI, a quick comparison -- where writing a file would be
+    heavier than the job.
+
+    There is no `data_dir` key in config.toml any more. It did this same job
+    through a second mechanism, and one way to point at a dataset means one
+    place for it to be wrong -- the same argument that removed `--years`.
 
     **Every candidate is tested the same way: does it hold a `jpg/` tree.**
     There was once a signature check on `./data` -- a hash of a secret living
@@ -74,11 +112,10 @@ def data_dir(override=None) -> Path:
     existence test would send every fresh clone into an empty directory instead
     of the sample. Found by cloning and trying it.
 
-    Nobody edits a versioned file to get the right answer: on a working checkout
-    `./data` wins and the `config.toml` line is inert whatever it says; on a
-    clone that line is what points at the user's own library. $BIRD_DATA_DIR
-    covers a library outside the repo entirely -- a path, not a secret, so it
-    does not belong in .env.
+    Nobody edits a versioned file to get the right answer, and now nobody has to
+    reason about whether their edit is inert either: the file they touch is
+    ignored. `$BIRD_DATA_DIR` is a path, not a secret, so it does not belong in
+    .env.
     """
     if override:
         return Path(override)
@@ -86,13 +123,30 @@ def data_dir(override=None) -> Path:
     if env:
         return Path(env)
     root = CONFIG_PATH.parent
-    configured = load_config().get("data_dir")
-    for candidate in ["./data"] + ([configured] if configured else []) + ["./sample_data"]:
-        p = Path(candidate)
-        p = p if p.is_absolute() else root / p
+    resolve = lambda c: (Path(c).expanduser() if Path(c).expanduser().is_absolute()
+                         else root / Path(c).expanduser())
+
+    # A declaration is binding. If `.datapath` names a path, that is the dataset
+    # or the run stops -- it must never quietly fall through to ./data or the
+    # sample, which is how a typo becomes a run against the wrong population
+    # that reports success. Same reason the stages exit on an empty selection,
+    # and the same failure the signature check produced on its way out.
+    declared = declared_data_dir()
+    if declared:
+        p = resolve(declared)
+        if not (p / "jpg").is_dir():
+            raise SystemExit(
+                f"error: .datapath names {declared!r}, which has no jpg/ directory "
+                f"(looked in {p}).\n"
+                f"       Fix the path, or delete .datapath to fall back to ./data "
+                f"or ./sample_data.")
+        return p
+
+    for candidate in ("./data", "./sample_data"):
+        p = resolve(candidate)
         if (p / "jpg").is_dir():
             return p
     raise SystemExit(
-        "error: no dataset found. Expected ./data (the private submodule -- "
-        "`git submodule update --init`) or ./sample_data (shipped), or set "
-        "BIRD_DATA_DIR / data_dir in config.toml.")
+        "error: no dataset found. Expected ./sample_data (shipped -- see the README "
+        "for how to fetch it), ./data (the private submodule -- "
+        "`git submodule update --init`), or a path in .datapath (copy _datapath).")

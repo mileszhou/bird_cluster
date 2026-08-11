@@ -35,16 +35,28 @@ Most specific first. Implemented in `code/lib/config.py:data_dir()`.
 |---|---|---|
 | 1 | `--data-dir` | an instruction for this invocation |
 | 2 | `$BIRD_DATA_DIR` | a path, not a secret — deliberately not `.env` |
-| 3 | **`./data`** | the private submodule, tested for a `jpg/` tree |
-| 4 | `config.toml`'s `data_dir` | inert while 3 is populated |
-| 5 | `./sample_data` | shipped, last resort |
+| 3 | **`.datapath`** | your copy of the tracked `_datapath` template; gitignored |
+| 4 | `./data` | the private submodule |
+| 5 | `./sample_data` | the shipped sample, last resort |
+
+Every candidate is accepted on one test: does it hold a `jpg/` tree.
+
+**A path in `.datapath` is binding.** If it does not resolve, the run stops — it
+must never fall through to `./data` or the sample, because that turns a typo
+into a run against a different population that reports success. This is the
+failure the signature check produced on its way out, and the same reason both
+stages exit on an empty selection.
 
 Two properties this buys:
 
-**No one edits a versioned file to get the right answer.** `config.toml` is
-checked in, so a local edit to it would show as a dirty tree indefinitely. On a
-working checkout the `data_dir` line is inert regardless of what it says; on a
-clone it is what points at the user's library.
+**No one edits a versioned file to get the right answer.** The earlier design
+put the user's path in `config.toml` and relied on it being *inert* on a working
+checkout — correct, but it still meant a tracked file carrying a local value and
+a `git diff` whose first hunk was always yours. `.datapath` is gitignored and
+`_datapath` is the tracked template, which is the `_env` → `.env` pattern this
+project already uses for secrets. `config.toml` has no `data_dir` key any more:
+it did this job through a second mechanism, and one way to point at a dataset
+means one place for it to be wrong — the argument that removed `--years`.
 
 **A fresh clone simply runs.** It falls to `sample_data/` with no setup.
 

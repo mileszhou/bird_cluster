@@ -8,12 +8,10 @@
 # archive to re-analyse it, and every tool follows without a flag.
 current_working_output = "./output"
 
-# The dataset. Left unset on purpose: resolution is by existence, so a working
-# checkout finds ./data (the private submodule) and a fresh clone finds the
-# shipped ./sample_data without either editing this file. Set it only for a
-# library that lives elsewhere -- or use $BIRD_DATA_DIR, which does not dirty
-# the tree.
-# data_dir = "/mnt/photos/library"
+# The dataset is deliberately NOT configured here. This file is tracked, so a
+# local edit to it would show as a dirty tree for as long as you keep it. Point
+# the tools at your own library by copying `_datapath` to `.datapath`, which is
+# gitignored, or set $BIRD_DATA_DIR for a one-off. See `_datapath`.
 
 [servers.vllm]
 host = "darwin"
