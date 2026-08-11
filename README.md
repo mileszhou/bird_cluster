@@ -20,7 +20,7 @@ Clone it into `sample_data/`, which is gitignored so it stays a separate repo:
     git clone <SAMPLE-DATA-REPO-URL> sample_data     # TODO: fill in once published
 
 With nothing else set up, every tool finds it. Labels have been stripped from
-its sidecars on purpose: the sample is the pipeline's *input*, so `./run-vllm`
+its sidecars on purpose: the sample is the pipeline's *input*, so `./run-label`
 has something to actually do. Run labelling before embedding — `./run-embed`
 reads a labelling run's CSV and will tell you so if it is missing.
 
