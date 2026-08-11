@@ -47,11 +47,26 @@ class EmbedRequest(BaseModel):
     images: list[str]  # base64-encoded JPEG bytes
 
 
-def load_model(model_id: str):
+def load_model(model_id: str, device: str = "auto"):
+    """Load the backbone onto `device`.
+
+    `auto` prefers CUDA. Naming a device explicitly matters because the GPU
+    being *present* is not the same as it being *free*: a co-tenant inference
+    server holding most of the memory makes `.to("cuda")` fail with a plain
+    out-of-memory error after the weights have already loaded. ViT-B/16 is small
+    enough to run on CPU, so `--device cpu` keeps a demo or a small job going
+    without evicting whatever else is resident.
+
+    Recorded in /health and copied into the client's run.json, because the
+    device is part of a vector's provenance: CPU and GPU kernels agree to about
+    the last decimal place, not exactly. Vectors from the two are close enough to
+    compare and not identical, so a single embedding set should stick to one.
+    """
     import platform
     import transformers
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"loading {model_id} on {device}")
     processor = AutoImageProcessor.from_pretrained(model_id)
     model = AutoModel.from_pretrained(model_id).to(device).eval()
@@ -131,9 +146,12 @@ def main():
                     help="bind address (config.toml's host names the client's target, "
                          "not necessarily a local bind address)")
     ap.add_argument("--port", type=int, default=servers.get("port", 9100))
+    ap.add_argument("--device", default="auto", choices=("auto", "cuda", "cpu"),
+                    help="auto prefers CUDA. Use cpu when the GPU is present but "
+                         "occupied -- ViT-B/16 runs fine there for small jobs")
     args = ap.parse_args()
 
-    load_model(args.model)
+    load_model(args.model, args.device)
     uvicorn.run(app, host=args.host, port=args.port)
 
 

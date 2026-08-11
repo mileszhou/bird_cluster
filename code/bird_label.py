@@ -382,6 +382,11 @@ def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
         sys.exit(f"error: {base_url}/v1/models returned no models, so the serving model "
                  f"cannot be identified.\n       Refusing to record '{requested_model}' "
                  f"unverified.")
+    if not requested_model:
+        # No hint given, which is the normal case: the server is the authority
+        # on what it serves, so there is nothing to reconcile.
+        logger.info(f"\u2139\ufe0f  Server is serving '{available_models[0]}'")
+        return available_models[0]
     if requested_model not in available_models:
         actual = available_models[0]
         logger.info(f"\u2139\ufe0f  Server mismatch: requested '{requested_model}', "
@@ -748,7 +753,12 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Bird ID using GPT‑4o (Vision) with Chinese name support")
     parser.add_argument("--run-label", default="", help="Label for this run (e.g., 'first successful run')")
-    parser.add_argument("--model", default="gpt-4o", help="OpenAI model (default gpt-4o)")
+    parser.add_argument("--model", default="",
+                        help="Model name. For vllm/llama.cpp this is only a hint -- the "
+                             "server is probed and whatever it actually serves wins, so "
+                             "leaving it empty is the honest default. Required in "
+                             "practice only for chatgpt, which has nothing to probe "
+                             "(defaults to gpt-4o there)")
     parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
     parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
     parser.add_argument("--output-dir", default="./output/label",
@@ -780,6 +790,10 @@ if __name__ == "__main__":
     # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
+    # chatgpt has no server to probe, so it is the one backend that needs a name
+    # up front. vllm and llama.cpp resolve theirs below, from the server itself.
+    if args.approach == "chatgpt" and not args.model:
+        args.model = "gpt-4o"
 
 
     if args.approach == "vllm" and not args.vllm_url:
