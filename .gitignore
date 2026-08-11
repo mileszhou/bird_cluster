@@ -25,5 +25,4 @@ project/reports/*.csv
 __pycache__/
 .DS*
 
-!.openclaw
-scratch-verify/
+sample_data/
