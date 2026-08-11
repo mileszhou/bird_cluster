@@ -17,7 +17,7 @@ the first two.
 images with no sidecar, Lightroom virtual copies, an `&` in a folder name.
 Clone it into `sample_data/`, which is gitignored so it stays a separate repo:
 
-    git clone <SAMPLE-DATA-REPO-URL> sample_data     # TODO: fill in once published
+    git clone https://github.com/mileszhou/sample_data.git sample_data
 
 With nothing else set up, every tool finds it. Labels have been stripped from
 its sidecars on purpose: the sample is the pipeline's *input*, so `./run-label`
