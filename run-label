@@ -3,7 +3,6 @@
 source .env
 python3 -m code.bird_label \
    --conf-threshold 0.6 --no-bird 0.2 \
-   --output-dir ./output \
    --approach vllm \
    --batch-size 16 \
    --model Qwen/Qwen3-VL-32B-Instruct \

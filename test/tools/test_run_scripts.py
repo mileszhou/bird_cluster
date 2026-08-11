@@ -24,7 +24,19 @@ def test_there_are_wrapper_scripts():
 
 
 @pytest.mark.parametrize("script", SCRIPTS, ids=lambda p: p.name)
-def test_wrapper_forwards_user_arguments(script):
-    assert '"$@"' in script.read_text(encoding="utf-8"), (
-        f'{script.name} does not forward "$@", so any flag passed to it is '
-        f'silently discarded')
+def test_wrapper_does_not_silently_discard_arguments(script):
+    """Forward everything, or refuse what you do not understand.
+
+    Most of these are thin wrappers and satisfy this by ending in "$@". run-all
+    is not thin -- it parses its own flags and drives five stages -- so it
+    cannot forward blindly, and instead exits non-zero on an argument it does
+    not recognise. Either is fine. What is not fine is accepting a flag and
+    doing nothing with it, which is how `./run-vllm --years 2024,2025`
+    relabelled the whole library.
+    """
+    text = script.read_text(encoding="utf-8")
+    forwards = '"$@"' in text
+    rejects = "unknown argument" in text
+    assert forwards or rejects, (
+        f"{script.name} neither forwards \"$@\" nor rejects unknown arguments, "
+        f"so a flag passed to it is silently discarded")

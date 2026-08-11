@@ -137,7 +137,7 @@ is string identity: two keys are the same item when the strings are equal. Nothi
 meaning from a key that it could not equally get from a column.
 
 The string is a path relative to an agreed-upon root: `data/jpg` everywhere downstream of
-labelling, which is what the CSV's `jpg` column, `output/processed.txt` and the embedding
+labelling, which is what the CSV's `jpg` column, `output/label/processed.txt` and the embedding
 JSONL all hold. The root is a convention between stages, not a lookup — `code/lib/path_filter.py`
 compares keys without opening anything.
 
@@ -177,7 +177,7 @@ renamed output folder — it is built by cherry-picking what is actually wanted,
 
 Because `data/` is a submodule, anything curated in must be committed there and the pointer
 bumped in the parent, or it exists only on one machine. Keep it small: a run's CSV is ~5 MB at
-49k rows, but `output/raw` is 739 MB and does not belong in the dataset — the labelled sidecars
+49k rows, but `output/label/raw` is 739 MB and does not belong in the dataset — the labelled sidecars
 belong in the Lightroom library, which is where they are rsynced anyway.
 
 **Why this matters more than tidiness.** `embed.py` currently takes its bird filter from
@@ -185,7 +185,7 @@ belong in the Lightroom library, which is where they are rsynced anyway.
 to embedding like this:
 
 ```
-label → output/raw/*.xmp → rsync → Lightroom → re-export → data/xmp → embed reads is_bird
+label → output/label/raw/*.xmp → rsync → Lightroom → re-export → data/xmp → embed reads is_bird
 ```
 
 A boolean makes a round trip through a foreign database to get between two stages of this
@@ -219,9 +219,9 @@ re-embedding, while any filter can be added later without touching a vector alre
 **Data flow:**
 1. Input: `data/xmp/<Photos-YY>/<trip>/*.xmp` sidecars; the JPEG export **mirrors the same
    folder structure** at `data/jpg/<Photos-YY>/<trip>/*.jpg`.
-2. `code/bird_label.py` copies the sidecar tree to `output/raw/` and works on the copy —
+2. `code/bird_label.py` copies the sidecar tree to `output/label/raw/` and works on the copy —
    **the pipeline never writes `data/`** (see Stages above). Labels therefore land in
-   `output/raw/`, and getting them back into the Lightroom library is a separate, manual step.
+   `output/label/raw/`, and getting them back into the Lightroom library is a separate, manual step.
 3. It walks **`data/jpg`** — one work item per exported JPEG — and looks up the sidecar each
    one writes into (see JPEG-driven walk below)
 4. Each backend sends a system prompt + base64-encoded JPEG to the model (vLLM/llama.cpp backends call an OpenAI-compatible HTTP server; chatgpt calls OpenAI directly)
@@ -271,7 +271,7 @@ trips — `2025-04-25.1 Birding Birds` alone holds 118.
 
 **Never key anything by basename** — not the checkpoint, not the CSV, not a filter set. Stems
 repeat across trips as camera counters wrap (10,832 of the sidecars share a basename with
-another). `output/processed.txt` and the CSV's `jpg` column both hold the JPEG's path relative to
+another). `output/label/processed.txt` and the CSV's `jpg` column both hold the JPEG's path relative to
 `data/jpg`; the CSV's `filename` column is kept for readability only. `--filter-csv` refuses a CSV
 with no `jpg` column for the same reason.
 
@@ -354,7 +354,7 @@ false only where the master was never exported and every candidate is decorated 
 **Two key spaces, deliberately.** The audit tools ask questions *about sidecars*, so their
 worklists carry a `path` column — the sidecar's path relative to `data/xmp`. The labeler and the
 embedding step ask questions *about images*, so they key on the JPEG's path relative to
-`data/jpg`: the labeler's `jpg` column, `output/processed.txt`, and `embed.py`'s JSONL. The
+`data/jpg`: the labeler's `jpg` column, `output/label/processed.txt`, and `embed.py`'s JSONL. The
 labeler's CSV carries **both** (`jpg` and `xmp`, the latter empty where the JPEG has no sidecar),
 so it is the bridge between the two spaces. Nothing is ever keyed by basename (see above).
 
@@ -555,7 +555,11 @@ Tests run from within `test/` (`../.venv/bin/python -m pytest lib/`). `test/conf
 exists because the project package is named `code`, which shadows the stdlib module of the
 same name once pytest preloads it.
 
-**Outputs** (in `output/`). The CSV is *the* output; `raw/` is a by-product:
+**Outputs** (in `output/label/`). Each stage writes its own subdirectory of the
+run root -- `output/label/`, `output/embed/`, `output/cluster/` -- so one `./clean`
+archives a whole pipeline pass together. Labelling used to write the run root
+directly, which put its `raw/`, `args.json` and checkpoint beside the other
+stages' folders. The CSV is *the* output; `raw/` is a by-product:
 - `bird_identification_output.csv` — the result (jpg, xmp, filename, category, label, label_cn, confidence, note, prior_category, prior_label, applied, run_label, response_json). **`jpg` is the key** — the JPEG's path relative to `data/jpg`, one row per image. `xmp` is the sidecar the label went into, relative to `data/xmp`, empty when the image has none. `filename` is a bare basename kept for readability and must never be used to look a row up. `category` is its own column — `note` still embeds it as `"bird (0.90)"`, but parse the column, not the string. **`prior_category` / `prior_label` hold the label the previous run left**, mostly early paid GPT-4o — this CSV is the *only* record of it, so don't discard old CSVs. `applied` says what reached the sidecar: `written`, `kept-existing` (a non-bird result deferring to the prior category), `csv-only` (no sidecar to write — either the image never had a raw, or its capture's sidecar went to the exact-stem export) or `failed`.
   - **`category` is this run's verdict, not the library's state.** Where `applied` is `kept-existing`, the sidecar keeps `prior_category` and the new verdict was overruled. Anything filtering on the *effective* label — e.g. picking the bird set to embed — must read `'bird' in (category, prior_category)`, lowercased, or it silently drops every photo the never-demote rule was written to protect.
   - A schema change makes the CSV un-appendable; `check_csv_schema()` refuses to resume against a mismatched header rather than shifting every new row one field left.
@@ -666,7 +670,7 @@ otherwise a resumed run records its own fresh labels as the prior ones.
 
 ## Key Behaviors
 
-- **Checkpoint resumption:** Already-processed filenames in `output/processed.txt` are skipped on re-run; CSV is opened in append mode so prior results are preserved
+- **Checkpoint resumption:** Already-processed filenames in `output/label/processed.txt` are skipped on re-run; CSV is opened in append mode so prior results are preserved
 - **XMP permissions:** Script calls `chmod` on XMP files before writing keywords (needed for library-managed files)
 - **JSON parsing:** Model may wrap response in markdown fences or return Chinese in the `label` field; post-processing strips fences and moves Chinese characters from `label` to `label_cn` automatically
 - **vLLM prompt constraints:** `category: "bird"` is strictly class Aves; insects/butterflies must be `animal`. `label` must use Latin characters only; `label_cn` is Mandarin. For `scenery`, the prompt asks for the specific subject of the scene (landmark, landscape feature, or activity — e.g. "Sunset over Lofoten fjord") rather than a generic description.

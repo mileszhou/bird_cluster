@@ -751,7 +751,9 @@ if __name__ == "__main__":
     parser.add_argument("--model", default="gpt-4o", help="OpenAI model (default gpt-4o)")
     parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
     parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
-    parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
+    parser.add_argument("--output-dir", default="./output/label",
+                        help="Directory for run outputs (default: ./output/label, "
+                             "beside ./output/embed and ./output/cluster)")
     parser.add_argument("--data-dir", default=None,
                         help="Root data directory (contains jpg/). Default: resolved by "
                              "code.lib.config.data_dir() -- ./data, else config.toml's "
