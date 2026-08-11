@@ -48,6 +48,21 @@ directory there is invisible to git, but a repo is read as the submodule at the
 wrong commit and leaves your tree permanently dirty. Keep your own versioned
 dataset elsewhere and name it in `.datapath`.
 
+# Licence
+
+Two works, two licences, because code and photographs want opposite terms.
+
+**The code is MIT** (`LICENSE`) — use it, change it, ship it.
+
+**The sample photographs are not.** They live in their own repository with
+their own `LICENSE`, and are provided to run and understand this project, not
+to be republished or used as model training data. Asymmetry like this is
+ordinary for a dataset shipped alongside code; the restrictive half is a
+statement of what the photographers are willing to have happen, and the images
+are deliberately small (1024 px) so that little rides on it.
+
+The private `data/` submodule is not published at all.
+
 # Project structure
 * first level: architectural components, like code, docks, and so on.
 * the subfolders are organized according to the domain subjects, like embedding, cluster, grouping, etc.
