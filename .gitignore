@@ -14,9 +14,8 @@ project/reports/*.csv
 #results/
 **/.env
 
-# Your local dataset path. `_datapath` is the tracked template; this is your
-# copy of it, so pointing the tools at your own library never dirties the tree.
-.datapath
+# Your machines' host names. `_config.local.toml` is the tracked template.
+config.local.toml
 
 *.log
 *.tmp
