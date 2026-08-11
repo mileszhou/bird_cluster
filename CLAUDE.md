@@ -32,8 +32,25 @@ through that path — but neither is a way to label 49k images. `--approach`
 defaults to `vllm` accordingly; it used to default to `llama.cpp`, so a direct
 `python -m code.bird_label` quietly took the slow path.
 
-**One wrapper per pipeline stage, named for the stage** — `run-label`,
-`run-embed`, `run-cluster`, `tool-audit`. The backend is a flag, not a script:
+**`./run-all`** runs the three stages back to back on `./sample_data`: the
+one-command demo, and the integration test, since a change to one stage has
+repeatedly broken another. It **does not curate** — the two hand-offs are staged
+into `output/curated/` and the `cp` a person would run is printed instead. It
+refuses `--data-dir ./data` without `--force`, refuses a non-empty `./output`
+(`./clean` first), and preflights both model servers before doing any work.
+
+**Three prefixes, by what a script does to the world.** `run-` is a pipeline
+stage writing to `output/` (`run-label`, `run-embed`, `run-cluster`, `run-all`);
+`tool-` inspects and reports without changing anything (`tool-audit`,
+`tool-dedup`, `tool-decode-jpg`); `server-` starts a long-running process
+(`server-embed`). All were `run-` before 2026-08-11, which put a read-only
+report and an 11-hour labelling run behind the same verb.
+
+Every wrapper must either forward `"$@"` or reject arguments it does not know;
+`test/tools/test_run_scripts.py` asserts it across all three prefixes, after
+`./run-vllm --years` silently relabelled the whole library.
+
+The backend is a flag, not a script:
 `run-gpt` / `run-cpp` / `run-tf` were four wrappers differing only in
 `--approach`, which put a deployment detail in the command name and let
 `run-tf` sit there broken (its approach was never a valid choice). Deleted
