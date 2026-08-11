@@ -756,7 +756,11 @@ if __name__ == "__main__":
                         help="Root data directory (contains jpg/). Default: resolved by "
                              "code.lib.config.data_dir() -- ./data, else config.toml's "
                              "data_dir, else ./sample_data")
-    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
+    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"],
+                        default="vllm",
+                        help="Inference backend. vllm is the only one fast enough for a "
+                             "full run -- the others are kept for comparison against a "
+                             "prior model, not for labelling 49k images")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (llama.cpp approach only; default: from config.toml [servers.llama_cpp])")
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")

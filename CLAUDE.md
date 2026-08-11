@@ -25,6 +25,13 @@ at the repo root, checked into git — see `[servers.*]` entries, read via
 `code/lib/config.py:server_url()`. Keep it separate from `.env`: `.env` is for secrets only and
 is gitignored.
 
+**vLLM is the only backend fast enough for a real run.** `chatgpt` and
+`llama.cpp` work and are kept — the paired-verdict design makes this project a
+model-comparison instrument, and the early GPT-4o labels in `prior_label` came
+through that path — but neither is a way to label 49k images. `--approach`
+defaults to `vllm` accordingly; it used to default to `llama.cpp`, so a direct
+`python -m code.bird_label` quietly took the slow path.
+
 **One wrapper per pipeline stage, named for the stage** — `run-label`,
 `run-embed`, `run-cluster`, `run-audit`. The backend is a flag, not a script:
 `run-gpt` / `run-cpp` / `run-tf` were four wrappers differing only in
