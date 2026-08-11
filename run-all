@@ -14,29 +14,34 @@
 # must not have" (CLAUDE.md). A script that did it would not be running the
 # pipeline, it would be deleting the judgement from it.
 #
-# So this stages each hand-off into $WORK/curated/ instead, and prints the `cp`
+# So this stages each hand-off into $OUT/curated/ instead, and prints the `cp`
 # a person would run for real. Nothing here ever writes data/. That is also why
 # it defaults to ./sample_data: the demo and the test both want a dataset small
 # enough to run in minutes, and neither wants the master.
+#
+# Output goes to ./output like any other run -- one subdirectory per stage,
+# label/ embed/ cluster/ -- so `./clean` archives a whole pipeline pass as one
+# output_NNN_<description>/. It refuses to start on a non-empty ./output rather
+# than mixing this pass into the last one.
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
 
 DATA=./sample_data
-WORK=./output_all
+OUT=./output
 MCS=3,5                     # suits ~100 images; 5,15,40 is the library setting
 FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --data-dir)          DATA=$2; shift 2 ;;
-        --work)              WORK=$2; shift 2 ;;
+        --output-dir)        OUT=$2; shift 2 ;;
         --min-cluster-size)  MCS=$2; shift 2 ;;
         --force)             FORCE=1; shift ;;
         -h|--help)
             sed -n '2,22p' "$0" | sed 's/^# \?//'
             echo
-            echo "usage: ./run-all [--data-dir DIR] [--work DIR] [--min-cluster-size LIST] [--force]"
+            echo "usage: ./run-all [--data-dir DIR] [--output-dir DIR] [--min-cluster-size LIST] [--force]"
             exit 0 ;;
         *) echo "run-all: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -57,8 +62,13 @@ case "$(cd "$DATA" && pwd -P)" in
        run-all stages hand-offs that a person is supposed to make by hand, and it
        is meant for the sample. Pass --force if you really mean it." ;;
 esac
-if [ -e "$WORK" ] && [ "$FORCE" != 1 ]; then
-    die "$WORK already exists. Move it aside, or pass --force to overwrite."
+# A non-empty run root means a previous pass is sitting there. ./clean archives
+# it under a new name, which is the project's way of keeping every run; silently
+# writing over it would lose one and interleave two.
+if [ -n "$(ls -A "$OUT" 2>/dev/null)" ] && [ "$FORCE" != 1 ]; then
+    die "$OUT is not empty -- a previous run is there.
+       Archive it first:  ./clean run-all-demo
+       or pass --force to overwrite it."
 fi
 
 python3 - "$DATA" <<'PY' || exit 1
@@ -80,54 +90,54 @@ if not ok:
 sys.exit(0 if ok else 1)
 PY
 
-rm -rf "$WORK"; mkdir -p "$WORK/curated/label" "$WORK/curated/embed"
-echo "  dataset $DATA -> work $WORK"
+mkdir -p "$OUT/curated/label" "$OUT/curated/embed"
+echo "  dataset $DATA -> output $OUT"
 
 # --- 1. label --------------------------------------------------------------
 say "1/5  label  (data/jpg -> CSV + sidecar keywords)"
-python3 -m code.bird_label --data-dir "$DATA" --output-dir "$WORK/1-label" \
+python3 -m code.bird_label --data-dir "$DATA" --output-dir "$OUT/label" \
     --approach vllm --batch-size 8 --conf-threshold 0.6 --no-bird 0.2 \
     --run-label run-all
 
 say "     curate  (a PERSON does this; here it is staged, not decided)"
-cp "$WORK/1-label/bird_identification_output.csv" "$WORK/curated/label/"
+cp "$OUT/label/bird_identification_output.csv" "$OUT/curated/label/"
 echo "  for real you would choose a run and copy it yourself:"
 echo "      cp output_NNN_<description>/bird_identification_output.csv data/label/"
 
 # --- 2. embed --------------------------------------------------------------
 say "2/5  embed  (JPEGs of the birds -> 768-d vectors)"
 python3 -m code.embedding.embed --data-dir "$DATA" \
-    --label-dir "$WORK/curated/label" --output-dir "$WORK/2-embed" --batch-size 32
+    --label-dir "$OUT/curated/label" --output-dir "$OUT/embed" --batch-size 32
 
 say "     curate  (again a PERSON's choice; staged here)"
-cp "$WORK/2-embed/embeddings.jsonl" "$WORK/curated/embed/"
+cp "$OUT/embed/embeddings.jsonl" "$OUT/curated/embed/"
 echo "      cp output_NNN/embed/embeddings.jsonl data/embed/"
 
 # --- 3. cluster ------------------------------------------------------------
 say "3/5  cluster  (HDBSCAN sweep over min_cluster_size $MCS)"
-python3 -m code.cluster.discover --embeddings "$WORK/curated/embed/embeddings.jsonl" \
-    --output-dir "$WORK/3-cluster" --min-cluster-size "$MCS"
+python3 -m code.cluster.discover --embeddings "$OUT/curated/embed/embeddings.jsonl" \
+    --output-dir "$OUT/cluster" --min-cluster-size "$MCS"
 
 # --- 4. post-process -------------------------------------------------------
 # Order matters and is enforced by the C_ marks, not by this script:
 # order_assignments refuses to run before add_cluster_size.
 say "4/5  post-process  (cluster_size, then the reading order)"
-python3 -m tools.add_cluster_size  --output-dir "$WORK/3-cluster"
-python3 -m tools.order_assignments --output-dir "$WORK/3-cluster"
+python3 -m tools.add_cluster_size  --output-dir "$OUT/cluster"
+python3 -m tools.order_assignments --output-dir "$OUT/cluster"
 
 # --- 5. pictures -----------------------------------------------------------
 say "5/5  plots  (the ordered similarity matrix, and radial profiles)"
-python3 -m tools.plot_matrix --output-dir "$WORK/3-cluster" \
-    --embeddings "$WORK/curated/embed/embeddings.jsonl" \
+python3 -m tools.plot_matrix --output-dir "$OUT/cluster" \
+    --embeddings "$OUT/curated/embed/embeddings.jsonl" \
     --by-cluster --warp 0.5 --order similarity --within centre || true
-python3 -m tools.plot_radial --output-dir "$WORK/3-cluster" \
-    --embeddings "$WORK/curated/embed/embeddings.jsonl" || true
+python3 -m tools.plot_radial --output-dir "$OUT/cluster" \
+    --embeddings "$OUT/curated/embed/embeddings.jsonl" || true
 
 say "done"
-echo "  $WORK/1-label/bird_identification_output.csv   one row per image"
-echo "  $WORK/2-embed/embeddings.jsonl                 one vector per bird"
-echo "  $WORK/3-cluster/mcs*/assignments.csv           cluster per image"
-echo "  $WORK/3-cluster/mcs*/*.png                     what the clusters look like"
+echo "  $OUT/label/bird_identification_output.csv   one row per image"
+echo "  $OUT/embed/embeddings.jsonl                 one vector per bird"
+echo "  $OUT/cluster/mcs*/assignments.csv           cluster per image"
+echo "  $OUT/cluster/mcs*/*.png                     what the clusters look like"
 echo
 echo "  Nothing was written to data/. The two 'curate' steps above are the"
 echo "  hand-offs a person makes; run-all only stages them so the demo can"
