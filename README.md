@@ -68,7 +68,7 @@ cluster/ (marked as .)
         reports/    # analysis output. The report is tracked under a fixed
                     # filename so successive runs diff cleanly; the worklist
                     # csvs beside it are gitignored (large, fully regenerated)
-            archive/    # numbered snapshots, ./run-audit --snapshot $label
+            archive/    # numbered snapshots, ./tool-audit --snapshot $label
     docs/       # product documentation: output for whoever uses the result,
                 # rather than notes about building it
     research/   # theoretical and research notes, mainly above software implimentation layer

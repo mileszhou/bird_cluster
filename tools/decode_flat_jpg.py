@@ -33,6 +33,10 @@ import re
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from code.lib.config import data_dir  # noqa: E402
+
 DELIM = "~~"
 YEAR_RE = re.compile(r"^(\d{4})-")
 
@@ -84,14 +88,17 @@ def plan_moves(flat_dir: Path, trip_years: dict[str, str]):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--jpg-dir", default="./data/jpg", help="JPEG export root (default: ./data/jpg)")
-    ap.add_argument("--xmp-dir", default="./data/xmp", help="Sidecar root, for the trip->year mapping (default: ./data/xmp)")
+    ap.add_argument("--jpg-dir", default=None, help="JPEG export root (default: <data-dir>/jpg)")
+    ap.add_argument("--xmp-dir", default=None, help="Sidecar root, for the trip->year mapping (default: <data-dir>/xmp)")
     ap.add_argument("--flat-subdir", default="_flat", help="Name of the flat folder under --jpg-dir (default: _flat)")
     ap.add_argument("--apply", action="store_true", help="Actually move files (default is a dry run)")
     ap.add_argument("--manifest", default="./project/reports/decode_flat_jpg_manifest.csv",
                      help="Where to record src/dest of every move actually made, for reversibility "
                           "(default: ./project/reports/decode_flat_jpg_manifest.csv)")
     args = ap.parse_args()
+    root = data_dir()
+    args.jpg_dir = args.jpg_dir or root / "jpg"
+    args.xmp_dir = args.xmp_dir or root / "xmp"
 
     jpg_dir = Path(args.jpg_dir)
     xmp_dir = Path(args.xmp_dir)
