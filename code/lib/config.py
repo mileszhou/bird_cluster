@@ -5,7 +5,6 @@ config.toml is checked in and holds everything safe to commit: which host/port
 each backend server runs on, and which run directory the analysis tools work on.
 """
 
-import hashlib
 import os
 import tomllib
 from functools import lru_cache
@@ -43,58 +42,43 @@ def working_output(default: str = "./output") -> Path:
     return Path(load_config().get("current_working_output", default))
 
 
-# sha256 of the value in `<master>/signature.txt`. Only the hash is public, so a
-# directory cannot be made to pass as the canonical dataset by anyone who has not
-# cloned it -- deriving the value from this would mean inverting sha256.
-MASTER_SIGNATURE_SHA = "c0dac9b799814d96489fe974fb1022f38142f9919774ae4fc27491875465f1d8"
-
-
-def master_data_available(path=None) -> bool:
-    """True when `path` is *the* canonical dataset, not merely a directory named
-    like it.
-
-    The point is provenance rather than defence. Nobody here is an adversary --
-    substituting your own dataset is an intended feature, via `$BIRD_DATA_DIR`,
-    `data_dir`, or `sample_data/`. What this buys is that a run recording
-    `data_dir: ./data` made a *checkable* claim: it really was the dataset the
-    published figures refer to, not a lookalike assembled later.
-
-    A checked-in expected *value* would be forgeable by anyone reading the repo.
-    Checking a hash of a value that lives only inside the private dataset is not:
-    the value cannot be recovered from the hash, so only someone who has the
-    dataset can produce a directory that passes.
-    """
-    root = Path(path) if path else CONFIG_PATH.parent / "data"
-    sig = root / "signature.txt"
-    try:
-        value = sig.read_text(encoding="utf-8").strip()
-    except OSError:
-        return False
-    return hashlib.sha256(value.encode()).hexdigest() == MASTER_SIGNATURE_SHA
-
-
 def data_dir(override=None) -> Path:
     """The dataset to work on, resolved in order of specificity.
 
         1. an explicit --data-dir
         2. $BIRD_DATA_DIR
-        3. config.toml's `data_dir`, if that directory exists
-        4. ./data, if it exists
-        5. ./sample_data
+        3. ./data, the private submodule
+        4. config.toml's `data_dir`
+        5. ./sample_data, shipped
 
-`./data` is accepted only when it passes `master_data_available()` -- the
-    signature check -- so an empty directory left behind by an uninitialised
-    submodule is skipped rather than used. That case is the reason the test is
-    not `is_dir()`: `git submodule update --init` leaves `data/` present and
-    empty when the clone fails, which is exactly the situation the fallback
-    exists to handle. Other candidates need only a `jpg/` tree, since they are
-    the user's own data and have nothing to prove. A working checkout has
-    `data/` and lands there. Neither has to edit a committed file to get the
-    right answer, which matters because config.toml is versioned and a local
-    edit to it shows up as a dirty tree forever.
+    **Every candidate is tested the same way: does it hold a `jpg/` tree.**
+    There was once a signature check on `./data` -- a hash of a secret living
+    only inside the private dataset -- so that a run recording `data_dir: ./data`
+    made a claim that could be verified. It is gone, on 2026-08-11, and
+    `docs/design/dataset-resolution.md` records why. Briefly: it checked
+    *identity* while every failure that actually happens is one of *integrity*
+    (a half-finished rsync, a dataset from before the dedup), there is no
+    adversary since substituting a dataset is a supported feature, and the
+    gitlink already stops a stray `data/` from being committed -- `git add -f`
+    refuses to descend into an uninitialised submodule path, which `.gitignore`
+    does not.
 
-    $BIRD_DATA_DIR exists for the third case: a library that lives outside the
-    repo entirely. It is a path, not a secret, so it does not belong in .env.
+    It also failed open in the worst direction. With `signature.txt` absent the
+    check said "not the master", resolution fell through `config.toml` to
+    `./sample_data`, and a 109-image sample shadowed a 49,270-image library
+    while reporting success. That is the failure shape this project keeps
+    meeting: a stage that does no useful work and cannot tell.
+
+    A `jpg/` tree, not `is_dir()`. `git submodule update --init` against an
+    unreachable host **fails but leaves `data/` present and empty**, so an
+    existence test would send every fresh clone into an empty directory instead
+    of the sample. Found by cloning and trying it.
+
+    Nobody edits a versioned file to get the right answer: on a working checkout
+    `./data` wins and the `config.toml` line is inert whatever it says; on a
+    clone that line is what points at the user's own library. $BIRD_DATA_DIR
+    covers a library outside the repo entirely -- a path, not a secret, so it
+    does not belong in .env.
     """
     if override:
         return Path(override)
@@ -103,10 +87,7 @@ def data_dir(override=None) -> Path:
         return Path(env)
     root = CONFIG_PATH.parent
     configured = load_config().get("data_dir")
-    master = root / "data"
-    if master_data_available(master):
-        return master
-    for candidate in ([configured] if configured else []) + ["./sample_data"]:
+    for candidate in ["./data"] + ([configured] if configured else []) + ["./sample_data"]:
         p = Path(candidate)
         p = p if p.is_absolute() else root / p
         if (p / "jpg").is_dir():

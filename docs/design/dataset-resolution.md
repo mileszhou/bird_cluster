@@ -1,11 +1,12 @@
-# Which dataset a run uses — TENTATIVE
+# Which dataset a run uses
 
-> **Status: tentative, with a leading candidate.**
+> **Status: settled 2026-08-11. No signature.**
 >
-> **No signature.** Accept `./data` when it holds a `jpg/` tree, like any other
-> candidate. The signature check is implemented but set aside — its reservations
-> stand, and the argument that finally settled it is below under *What the
-> gitlink already does*. Nothing should depend on the signature mechanism.
+> Every candidate is accepted on the same test — does it hold a `jpg/` tree —
+> and `./data` has nothing to prove that the others do not. The signature check
+> was implemented, set aside as the leading candidate against it, and removed
+> once it produced a live wrong answer. The reasoning is kept below rather than
+> deleted: a road looked at and rejected is worth as much as the ones taken.
 
 ## The problem
 
@@ -34,8 +35,8 @@ Most specific first. Implemented in `code/lib/config.py:data_dir()`.
 |---|---|---|
 | 1 | `--data-dir` | an instruction for this invocation |
 | 2 | `$BIRD_DATA_DIR` | a path, not a secret — deliberately not `.env` |
-| 3 | **valid `./data`** | the canonical dataset, signature-checked |
-| 4 | `config.toml`'s `data_dir` | ignored while 3 is valid |
+| 3 | **`./data`** | the private submodule, tested for a `jpg/` tree |
+| 4 | `config.toml`'s `data_dir` | inert while 3 is populated |
 | 5 | `./sample_data` | shipped, last resort |
 
 Two properties this buys:
@@ -55,19 +56,18 @@ leaves `data/` present and empty**, so an existence test sends every GitHub clon
 into an empty directory instead of the sample. Found by cloning the repo and
 trying it, not by reading the code.
 
-Candidates other than `./data` are therefore tested for a `jpg/` tree. `./data`
-is tested by signature — which subsumes the problem, since an empty directory
-has no signature either.
+Every candidate is therefore tested for a `jpg/` tree, `./data` included. The
+signature happened to subsume this — an empty directory has no signature either
+— which is why the trap stayed hidden while the check was in place.
 
 ### Experimenting on another dataset
 
-Rename `data/signature.txt` aside. The master stops validating, the resolver
-falls through to `config.toml`, and the rename shows up in `git -C data status`
-as a reminder to put it back.
+`--data-dir`, `$BIRD_DATA_DIR`, or the `config.toml` line with `./data` moved
+aside. All three outrank or bypass it, and all three are recorded in the run's
+`args.json`, so the substitution is visible in the result rather than inferred.
 
-This is also the argument for making a valid master **absolute** — outranking
-even `--data-dir` — so that an `args.json` claiming `./data` can never be wrong.
-Currently it does not; flags 1 and 2 still win. Unresolved.
+(Under the signature the recipe was to rename `signature.txt`. That worked, and
+was also how the check came to fail silently once the file was never committed.)
 
 ## What the gitlink already does
 
@@ -106,9 +106,13 @@ elsewhere and point `config.toml` at it, rather than making `./data` a
 repository. Worth a line in the README, since it is the one arrangement that
 leaves a clone's tree dirty.
 
-## The signature check — implemented, set aside
+## The signature check — removed 2026-08-11
 
-`data/signature.txt` holds a 32-byte random value. `code/lib/config.py` holds
+*Kept as a record of the reasoning, not as a description of the code. Nothing
+below is implemented any more; `master_data_available()` and
+`MASTER_SIGNATURE_SHA` are gone from `code/lib/config.py`.*
+
+`data/signature.txt` held a 32-byte random value. `code/lib/config.py` holds
 only its SHA-256. `master_data_available()` reads the file, hashes it, compares.
 
 The property: **only someone who has cloned the private dataset can produce a
@@ -162,22 +166,52 @@ signature cannot — the parent already records the exact dataset commit, so no 
 file is needed and it cannot drift. The manifest catches partial sync for 0.11 s.
 Neither resists forgery, which may not matter.
 
-**The leading candidate is no signature at all**: accept `./data` on a `jpg/`
-tree like any other location. If a version check is wanted later, the submodule
-pin gives it for nothing; if an integrity check is wanted, the manifest costs
-0.11 s. Both can be added when a real failure motivates them, and neither has to
-be decided now.
+**The decision is no signature at all**: accept `./data` on a `jpg/` tree like
+any other location. If a version check is wanted later, the submodule pin gives
+it for nothing; if an integrity check is wanted, the manifest costs 0.11 s. Both
+can be added when a real failure motivates them.
+
+## What actually settled it
+
+Not the argument — the argument had been made and the mechanism was left in
+place anyway. What settled it was the check failing, in the direction that costs
+most.
+
+`data/signature.txt` was written but never committed to the submodule, so on
+this machine it did not exist. `master_data_available()` therefore reported
+"not the canonical dataset" about the canonical dataset, resolution fell through
+`config.toml` to `./sample_data`, and:
+
+    data_dir() -> /home/miles/projects/bird_cluster/sample_data
+
+A 109-image sample shadowing a 49,270-image library, with nothing to indicate
+it. Nothing consumed `data_dir()` yet — all six run scripts still pass
+`--data-dir ./data` — so no run was misdirected, and adding `sample_data/` was
+what armed it, since before that the fallback had nothing to find.
+
+The lesson is not that the hash was wrong but that **the check failed open into
+a smaller dataset**, which is the same shape as the `--years 2019` default that
+embedded a seventh of the library and reported success. A mechanism guarding
+provenance that can silently substitute the population is worse than no
+mechanism, because the claim it exists to protect is the one it breaks.
 
 ## Open questions
 
-1. ~~Does the signature survive?~~ Leading candidate: no. See above.
+1. ~~Does the signature survive?~~ **Resolved 2026-08-11: no, removed.**
 2. Provenance without it: is the submodule pin recorded in `args.json` enough to
    say which dataset a run used? It is free and exact, but only meaningful when
    `./data` really is the submodule.
-3. What goes in `sample_data/` — it should be chosen to exercise the edge cases
-   (sidecar-less image, derived export, duplicate capture, Chinese and
-   comma-bearing trip names, Bag *and* Seq sidecars), and must exclude the
-   `people` category since a public sample is permanent.
+3. What goes in `sample_data/` — **partly answered.** It exists: 109 JPEGs,
+   103 sidecars, 33 MB, its own git repo inside a gitignored directory (which
+   is why a repo there is invisible to the parent, unlike one at `data/`).
+   Labels stripped with `tools/strip_labels.py`, since a sample should ship the
+   pipeline's input rather than its output. It covers sidecar-less images (6),
+   `-2` virtual copies (3), an `&` in a trip name, sidecars with no
+   `dc:subject` (54), and excludes `people`. Still missing: a **non-ASCII trip
+   name** (nothing exercises the `utf-8-sig` worklist path that exists because
+   trip folders are Chinese) and a **`Seq` `dc:subject`** (all 49 are `Bag`,
+   against ~1,748 `Seq` sidecars in the library). No `label/` either, so the
+   embedding step cannot run standalone from a fresh clone.
 4. Should the clustering sample ship as **vectors rather than images**? 2,000
    real embeddings are 5.9 MB as float32, against ~31 MB for 200 photos — and
    clustering needs vectors, not pixels, so a reader could see real structure
