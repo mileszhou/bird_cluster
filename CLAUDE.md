@@ -25,19 +25,25 @@ at the repo root, checked into git — see `[servers.*]` entries, read via
 `code/lib/config.py:server_url()`. Keep it separate from `.env`: `.env` is for secrets only and
 is gitignored.
 
+**One wrapper per pipeline stage, named for the stage** — `run-label`,
+`run-embed`, `run-cluster`, `run-audit`. The backend is a flag, not a script:
+`run-gpt` / `run-cpp` / `run-tf` were four wrappers differing only in
+`--approach`, which put a deployment detail in the command name and let
+`run-tf` sit there broken (its approach was never a valid choice). Deleted
+2026-08-11.
+
 Run via convenience scripts or directly:
 ```bash
-./run-gpt                         # GPT-4o (requires OPENAI_API_KEY)
-./run-cpp                         # llama.cpp server, host from config.toml [servers.llama_cpp]
-./run-vllm                        # vLLM server, host from config.toml [servers.vllm] (recommended)
-./run-tf                          # HuggingFace Transformers
+./run-label                       # vLLM server, host from config.toml [servers.vllm]
+./run-label --approach chatgpt    # GPT-4o (requires OPENAI_API_KEY)
+./run-label --approach llama.cpp  # llama.cpp server, host from [servers.llama_cpp]
 
 # Or directly with options:
 python3 -m code.bird_label --approach vllm --model "Qwen/Qwen3-VL-132B-Instruct" --conf-threshold 0.6
 ```
 
 Key CLI flags:
-- `--approach` — `chatgpt`, `llama.cpp`, `vllm`, or `transformer`
+- `--approach` — `chatgpt`, `llama.cpp` or `vllm`. Not `transformer`: `transformers_engine.py` exists but was never added to the choices, so `--approach transformer` has always been rejected by argparse
 - `--vllm-url URL` — vLLM OpenAI-compatible server endpoint (default: `config.toml` `[servers.vllm]`, vllm approach only)
 - `--conf-threshold FLOAT` — confidence below which to flag as low-confidence (default 0.6)
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
@@ -62,7 +68,7 @@ archives are too. `raw/` is a full copy of the sidecar tree (739 MB) and dominat
 archive's size; it is safe to drop from an archive once its labels have been rsynced into the
 library, keeping the CSV, log, `args.json` and checkpoint.
 
-`run-vllm` is the recommended approach — it talks to a vLLM OpenAI-compatible server (`--vllm-url`, default from `config.toml` `[servers.vllm]`) rather than loading the model in-process, so start the server separately (see `run-server-vllm` for an example) before running this. On startup the script probes `{vllm-url}/models` and swaps in whatever model the server actually has loaded if `--model` doesn't match, so the requested model name doesn't need to be exact.
+`run-label` defaults to `--approach vllm`, which talks to a vLLM OpenAI-compatible server (`--vllm-url`, default from `config.toml` `[servers.vllm]`) rather than loading the model in-process, so start the server separately (see `run-server-vllm` for an example) before running this. On startup the script probes `{vllm-url}/models` and swaps in whatever model the server actually has loaded if `--model` doesn't match, so the requested model name doesn't need to be exact.
 
 ## Architecture
 
@@ -559,11 +565,11 @@ same name once pytest preloads it.
 - `label_generator.py` — formats `{pinyin_initials}-{chinese_name}-{english_name}({confidence}%)` labels
 - `jpg_claim.py` — which sidecar a JPEG's label writes into; the local claim rule and its ordering
 - `xmp_write.py` — sets keywords by editing the sidecar text, so the diff stays reviewable
-- `transformers_engine.py` — HuggingFace Transformers backend (in progress)
+- `transformers_engine.py` — HuggingFace Transformers backend, unreachable: `transformer` is not one of `--approach`'s choices, and the `run-tf` wrapper that pretended otherwise was deleted 2026-08-11 rather than wired up
 
 ## Re-labelling an already-labelled library
 
-`./clean && ./run-vllm` relabels everything — the checkpoint is what causes skipping, and
+`./clean && ./run-label` relabels everything — the checkpoint is what causes skipping, and
 `./clean` moves it aside with the rest of `output/`. Nothing keys off whether a sidecar already
 carries a label.
 
