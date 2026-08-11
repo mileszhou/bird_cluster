@@ -55,7 +55,7 @@ from pathlib import Path
 
 import requests
 
-from code.lib.config import server_url
+from code.lib.config import data_dir, server_url
 from code.lib import path_filter
 from code.lib.jpg_index import library_year
 from code.lib.xmp_labels import parse_label   # parses a CSV string; reads no file
@@ -304,10 +304,11 @@ def report(stats: Counter, per_year: Counter, candidates, title):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--data-dir", type=Path, default=Path("./data"))
-    ap.add_argument("--label-dir", type=Path, default=Path("./data/label"),
+    ap.add_argument("--data-dir", type=Path, default=None,
+                    help="Default: resolved by code.lib.config.data_dir()")
+    ap.add_argument("--label-dir", type=Path, default=None,
                     help="a curated labelling run; its bird_identification_output.csv "
-                         "is the guide (default: ./data/label)")
+                         "is the guide (default: <data-dir>/label)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/embed"))
     ap.add_argument("--embed-url", default=None,
                     help="default: config.toml [servers.embed]")
@@ -334,6 +335,11 @@ def main():
                     help="scan and resolve only; no network calls, no output written")
     args = ap.parse_args()
 
+    args.data_dir = data_dir(args.data_dir)
+    # Defaults to the dataset's own curated labels, so pointing --data-dir at a
+    # different library does not silently keep reading the old one's CSV.
+    if args.label_dir is None:
+        args.label_dir = args.data_dir / "label"
     if not (args.data_dir / "jpg").is_dir():
         sys.exit(f"error: expected {args.data_dir}/jpg to exist")
     label_csv = args.label_dir / "bird_identification_output.csv"
