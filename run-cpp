@@ -3,7 +3,6 @@
 #source .env
 python3 -m code.bird_label \
    --conf-threshold 0.7 --no-bird 0.2 \
-   --data-dir ./data \
    --output-dir ./output \
    --approach llama.cpp \
    --model "Qwen/Qwen3-VL-32B-FP8" \

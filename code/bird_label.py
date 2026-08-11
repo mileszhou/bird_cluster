@@ -30,7 +30,7 @@ from PIL import Image
 import time
 
 from code.lib.label_generator import pinyin_initials
-from code.lib.config import server_url
+from code.lib.config import data_dir, server_url
 from code.lib.jpg_index import library_year
 from code.lib.jpg_claim import SidecarClaims, sort_key
 from code.lib import path_filter
@@ -752,7 +752,10 @@ if __name__ == "__main__":
     parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
     parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
     parser.add_argument("--output-dir", default="./output", help="Directory for run outputs")
-    parser.add_argument("--data-dir", default="./data", help="Root data directory (contains jpg/ raw)")
+    parser.add_argument("--data-dir", default=None,
+                        help="Root data directory (contains jpg/). Default: resolved by "
+                             "code.lib.config.data_dir() -- ./data, else config.toml's "
+                             "data_dir, else ./sample_data")
     parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"], default="llama.cpp", help="Use LLaMA.cpp API instead of OpenAI (ignored in this script)")
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (llama.cpp approach only; default: from config.toml [servers.llama_cpp])")
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
@@ -796,7 +799,7 @@ if __name__ == "__main__":
 
     # Paths. `data/` is treated as read-only: the sidecar tree is copied into
     # output/raw and keywords are injected there, never back into the submodule.
-    DATA_DIR = Path(args.data_dir)
+    DATA_DIR = data_dir(args.data_dir)
     JPG_DIR = DATA_DIR / "jpg"
     RAW_DIR = DATA_DIR / "xmp"
     # Prior labels are always read from here, never from the working copy --
