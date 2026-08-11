@@ -14,6 +14,10 @@ project/reports/*.csv
 #results/
 **/.env
 
+# Your local dataset path. `_datapath` is the tracked template; this is your
+# copy of it, so pointing the tools at your own library never dirties the tree.
+.datapath
+
 *.log
 *.tmp
 *.bak

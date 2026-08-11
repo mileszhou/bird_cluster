@@ -8,6 +8,46 @@ The code base under code/ will be removed with the project going. Particularly, 
 # Theory
 The goal and underlying theory is outlined in the document "./research/Bird Semantic Study Plan.md". 
 
+# Data
+
+The code ships without photographs. Pick one of three; nothing needs editing for
+the first two.
+
+**1. The sample (default).** A small tree that exercises the awkward cases —
+images with no sidecar, Lightroom virtual copies, an `&` in a folder name.
+Clone it into `sample_data/`, which is gitignored so it stays a separate repo:
+
+    git clone <SAMPLE-DATA-REPO-URL> sample_data     # TODO: fill in once published
+
+With nothing else set up, every tool finds it. Labels have been stripped from
+its sidecars on purpose: the sample is the pipeline's *input*, so `./run-vllm`
+has something to actually do. Run labelling before embedding — `./run-embed`
+reads a labelling run's CSV and will tell you so if it is missing.
+
+**2. The private library.** `data/` is a submodule and needs access:
+
+    git submodule update --init
+
+**3. Your own photos, anywhere.** Copy the template and edit your copy:
+
+    cp _datapath .datapath          # .datapath is gitignored; _datapath is not
+
+Put one path in it. Whatever you point at must contain a `jpg/` directory —
+that is the only test, and it is the same test for all three. `$BIRD_DATA_DIR`
+does the same thing for a one-off, and `--data-dir` overrides everything for a
+single run.
+
+Resolution order: `--data-dir`, `$BIRD_DATA_DIR`, `.datapath`, `./data`,
+`./sample_data`. **A path in `.datapath` is binding** — if it does not resolve
+the run stops rather than falling back, so a typo cannot silently point a run at
+a different population. Details and the reasoning in
+`docs/design/dataset-resolution.md`.
+
+One thing to avoid: do not make `./data` a git repository of your own. A plain
+directory there is invisible to git, but a repo is read as the submodule at the
+wrong commit and leaves your tree permanently dirty. Keep your own versioned
+dataset elsewhere and name it in `.datapath`.
+
 # Project structure
 * first level: architectural components, like code, docks, and so on.
 * the subfolders are organized according to the domain subjects, like embedding, cluster, grouping, etc.
