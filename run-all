@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# The whole pipeline end to end: label -> embed -> cluster -> post-process.
+#
+# Two jobs. It shows a newcomer what the project actually does, in one command
+# on the shipped sample; and it is our integration test, because every stage
+# here has at some point been broken by a change to a different one.
+#
+# ---------------------------------------------------------------------------
+# IT DOES NOT CURATE, AND IT MUST NOT.
+#
+# Between stages a human chooses which run graduates to become the next stage's
+# input, and copies it into data/. That choice is the entire content of the
+# step -- "automating it would make it routine, which is the one property it
+# must not have" (CLAUDE.md). A script that did it would not be running the
+# pipeline, it would be deleting the judgement from it.
+#
+# So this stages each hand-off into $WORK/curated/ instead, and prints the `cp`
+# a person would run for real. Nothing here ever writes data/. That is also why
+# it defaults to ./sample_data: the demo and the test both want a dataset small
+# enough to run in minutes, and neither wants the master.
+# ---------------------------------------------------------------------------
+set -euo pipefail
+cd "$(dirname "$0")"
+[ -d .venv ] && source .venv/bin/activate
+
+DATA=./sample_data
+WORK=./output_all
+MCS=3,5                     # suits ~100 images; 5,15,40 is the library setting
+FORCE=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --data-dir)          DATA=$2; shift 2 ;;
+        --work)              WORK=$2; shift 2 ;;
+        --min-cluster-size)  MCS=$2; shift 2 ;;
+        --force)             FORCE=1; shift ;;
+        -h|--help)
+            sed -n '2,22p' "$0" | sed 's/^# \?//'
+            echo
+            echo "usage: ./run-all [--data-dir DIR] [--work DIR] [--min-cluster-size LIST] [--force]"
+            exit 0 ;;
+        *) echo "run-all: unknown argument $1" >&2; exit 2 ;;
+    esac
+done
+
+say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+die() { printf '\033[31mrun-all: %s\033[0m\n' "$*" >&2; exit 1; }
+
+# --- preflight -------------------------------------------------------------
+# Fail before doing any work rather than an hour in. Both model servers are
+# separate processes on separate hosts; a down embed server used to surface as
+# a stack trace after labelling had already finished.
+say "preflight"
+[ -d "$DATA/jpg" ] || die "$DATA has no jpg/ directory."
+case "$(cd "$DATA" && pwd -P)" in
+    "$(cd . && pwd -P)/data"|*/bird_cluster/data)
+        [ "$FORCE" = 1 ] || die "refusing to run against the master dataset at $DATA.
+       run-all stages hand-offs that a person is supposed to make by hand, and it
+       is meant for the sample. Pass --force if you really mean it." ;;
+esac
+if [ -e "$WORK" ] && [ "$FORCE" != 1 ]; then
+    die "$WORK already exists. Move it aside, or pass --force to overwrite."
+fi
+
+python3 - "$DATA" <<'PY' || exit 1
+import sys, urllib.request
+from code.lib.config import server_url
+ok = True
+# The same endpoints the stages themselves probe: bird_label hits
+# {base}/v1/models, embed.py talks to the bare embed URL.
+for name, url in (("vllm", server_url("vllm", path="/v1/models")),
+                  ("embed", server_url("embed", path="/health"))):
+    try:
+        urllib.request.urlopen(url, timeout=5).read(1)
+        print(f"  {name:<6} up    {url}")
+    except Exception as exc:
+        print(f"  {name:<6} DOWN  {url}  ({exc})")
+        ok = False
+if not ok:
+    print("\n  start them with: ./server-embed   (and your vLLM server)")
+sys.exit(0 if ok else 1)
+PY
+
+rm -rf "$WORK"; mkdir -p "$WORK/curated/label" "$WORK/curated/embed"
+echo "  dataset $DATA -> work $WORK"
+
+# --- 1. label --------------------------------------------------------------
+say "1/5  label  (data/jpg -> CSV + sidecar keywords)"
+python3 -m code.bird_label --data-dir "$DATA" --output-dir "$WORK/1-label" \
+    --approach vllm --batch-size 8 --conf-threshold 0.6 --no-bird 0.2 \
+    --run-label run-all
+
+say "     curate  (a PERSON does this; here it is staged, not decided)"
+cp "$WORK/1-label/bird_identification_output.csv" "$WORK/curated/label/"
+echo "  for real you would choose a run and copy it yourself:"
+echo "      cp output_NNN_<description>/bird_identification_output.csv data/label/"
+
+# --- 2. embed --------------------------------------------------------------
+say "2/5  embed  (JPEGs of the birds -> 768-d vectors)"
+python3 -m code.embedding.embed --data-dir "$DATA" \
+    --label-dir "$WORK/curated/label" --output-dir "$WORK/2-embed" --batch-size 32
+
+say "     curate  (again a PERSON's choice; staged here)"
+cp "$WORK/2-embed/embeddings.jsonl" "$WORK/curated/embed/"
+echo "      cp output_NNN/embed/embeddings.jsonl data/embed/"
+
+# --- 3. cluster ------------------------------------------------------------
+say "3/5  cluster  (HDBSCAN sweep over min_cluster_size $MCS)"
+python3 -m code.cluster.discover --embeddings "$WORK/curated/embed/embeddings.jsonl" \
+    --output-dir "$WORK/3-cluster" --min-cluster-size "$MCS"
+
+# --- 4. post-process -------------------------------------------------------
+# Order matters and is enforced by the C_ marks, not by this script:
+# order_assignments refuses to run before add_cluster_size.
+say "4/5  post-process  (cluster_size, then the reading order)"
+python3 -m tools.add_cluster_size  --output-dir "$WORK/3-cluster"
+python3 -m tools.order_assignments --output-dir "$WORK/3-cluster"
+
+# --- 5. pictures -----------------------------------------------------------
+say "5/5  plots  (the ordered similarity matrix, and radial profiles)"
+python3 -m tools.plot_matrix --output-dir "$WORK/3-cluster" \
+    --embeddings "$WORK/curated/embed/embeddings.jsonl" \
+    --by-cluster --warp 0.5 --order similarity --within centre || true
+python3 -m tools.plot_radial --output-dir "$WORK/3-cluster" \
+    --embeddings "$WORK/curated/embed/embeddings.jsonl" || true
+
+say "done"
+echo "  $WORK/1-label/bird_identification_output.csv   one row per image"
+echo "  $WORK/2-embed/embeddings.jsonl                 one vector per bird"
+echo "  $WORK/3-cluster/mcs*/assignments.csv           cluster per image"
+echo "  $WORK/3-cluster/mcs*/*.png                     what the clusters look like"
+echo
+echo "  Nothing was written to data/. The two 'curate' steps above are the"
+echo "  hand-offs a person makes; run-all only stages them so the demo can"
+echo "  continue."
