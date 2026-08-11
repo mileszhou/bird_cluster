@@ -28,25 +28,41 @@ reads a labelling run's CSV and will tell you so if it is missing.
 
     git submodule update --init
 
-**3. Your own photos, anywhere.** Copy the template and edit your copy:
+**3. Your own photos, anywhere.** Copy the template and set one line:
 
-    cp _datapath .datapath          # .datapath is gitignored; _datapath is not
+    cp _config.local.toml config.local.toml     # the copy is gitignored
+    # data_dir = "/mnt/photos/library"
 
-Put one path in it. Whatever you point at must contain a `jpg/` directory —
-that is the only test, and it is the same test for all three. `$BIRD_DATA_DIR`
-does the same thing for a one-off, and `--data-dir` overrides everything for a
-single run.
+Whatever you name must contain a `jpg/` directory — that is the only test, and
+it is the same test for all three. `$BIRD_DATA_DIR` does the same for a one-off,
+and `--data-dir` overrides everything for a single run.
 
-Resolution order: `--data-dir`, `$BIRD_DATA_DIR`, `.datapath`, `./data`,
-`./sample_data`. **A path in `.datapath` is binding** — if it does not resolve
+Resolution order: `--data-dir`, `$BIRD_DATA_DIR`, `config.local.toml`, `./data`,
+`./sample_data`. **A `data_dir` you name is binding** — if it does not resolve
 the run stops rather than falling back, so a typo cannot silently point a run at
-a different population. Details and the reasoning in
-`docs/design/dataset-resolution.md`.
+a different population. Details in `docs/design/dataset-resolution.md`.
 
 One thing to avoid: do not make `./data` a git repository of your own. A plain
 directory there is invisible to git, but a repo is read as the submodule at the
 wrong commit and leaves your tree permanently dirty. Keep your own versioned
-dataset elsewhere and name it in `.datapath`.
+dataset elsewhere and name it as `data_dir` in `config.local.toml`.
+
+# Servers
+
+Two model servers run as separate processes, and the tools reach them over HTTP:
+vLLM for labelling, and the DINOv3 embedder. `config.toml` points at
+`localhost` for both, so if you run them on the same machine nothing needs
+configuring.
+
+If yours are elsewhere, set them in the same `config.local.toml` — it is
+gitignored and layered over `config.toml` recursively, so naming just a host
+keeps the port. `--vllm-url` and `--embed-url` override
+either for a single run.
+
+    ./server-embed              # the embedder; --device cpu if the GPU is busy
+
+The vLLM server is not started by this project; run it however you normally do,
+and `run-label` will probe it for the model it is actually serving.
 
 # Licence
 

@@ -1,6 +1,11 @@
 # Non-secret, checked-in project configuration. Secrets (API keys) stay in .env
-# (gitignored) — this file is for anything safe to commit, starting with which
-# host each backend server runs on. Add new parameters here as they come up.
+# (gitignored); machine-specific values go in config.local.toml (also gitignored,
+# copy _config.local.toml), which is layered over this file.
+#
+# Everything here must be a value that works for a stranger, because this file is
+# tracked: anything you change to suit your own machines dirties your tree for as
+# long as your setup is right. The server hosts below say localhost for that
+# reason -- they used to name the author's own boxes.
 
 # Which run directory the analysis tools work on by default. Runs get renamed —
 # ./clean archives output/ to output_NNN_<description>/ — so the post-processors
@@ -13,14 +18,17 @@ current_working_output = "./output"
 # the tools at your own library by copying `_datapath` to `.datapath`, which is
 # gitignored, or set $BIRD_DATA_DIR for a one-off. See `_datapath`.
 
+# Override any of these in config.local.toml -- host alone is enough, the port
+# is inherited. --vllm-url / --embed-url still win for a single run.
+
 [servers.vllm]
-host = "darwin"
+host = "localhost"
 port = 8000
 
 [servers.embed]
-host = "spark"
+host = "localhost"
 port = 9100
 
 [servers.llama_cpp]
-host = "darwin"
+host = "localhost"
 port = 8080

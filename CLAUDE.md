@@ -20,10 +20,22 @@ work on by default. Runs get archived under new names (`./clean` moves `output/`
 whatever happened to be sitting there. Point the setting at an archive to re-analyse an old
 run and every tool follows without a flag; `--output-dir` still wins per invocation.
 
-Non-secret configuration (which host each backend server runs on, etc.) lives in `config.toml`
-at the repo root, checked into git — see `[servers.*]` entries, read via
-`code/lib/config.py:server_url()`. Keep it separate from `.env`: `.env` is for secrets only and
-is gitignored.
+Non-secret configuration lives in `config.toml` at the repo root, checked into git — see
+`[servers.*]`, read via `code/lib/config.py:server_url()`. **Everything tracked there must be
+a value that works for a stranger**, so the hosts say `localhost`; they used to say `darwin`
+and `spark`, which meant a public clone either failed to resolve them or reached somebody
+else's machine, and the only fix was editing a tracked file.
+
+Machine-specific values go in **`config.local.toml`** (gitignored, copy `_config.local.toml`),
+layered over `config.toml` recursively — naming a host alone keeps the tracked port. It holds
+**everything local except secrets**: the `[servers.*]` hosts and `data_dir`. A `.datapath` file
+did the dataset half for a day and was folded in on 2026-08-11 — two mechanisms for "local
+settings" is exactly the second mechanism this project keeps removing.
+
+`.env` stays separate for a reason that is not tidiness: the run scripts `source` it as shell,
+which a TOML file cannot be, and a leaked API key is a different problem from a leaked
+hostname. So: two ignored files, one boundary, and nobody edits a versioned file to point the
+project at their own machine.
 
 **vLLM is the only backend fast enough for a real run.** `chatgpt` and
 `llama.cpp` work and are kept — the paired-verdict design makes this project a

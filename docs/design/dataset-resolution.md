@@ -35,13 +35,13 @@ Most specific first. Implemented in `code/lib/config.py:data_dir()`.
 |---|---|---|
 | 1 | `--data-dir` | an instruction for this invocation |
 | 2 | `$BIRD_DATA_DIR` | a path, not a secret — deliberately not `.env` |
-| 3 | **`.datapath`** | your copy of the tracked `_datapath` template; gitignored |
+| 3 | **`config.local.toml`**'s `data_dir` | your copy of `_config.local.toml`; gitignored |
 | 4 | `./data` | the private submodule |
 | 5 | `./sample_data` | the shipped sample, last resort |
 
 Every candidate is accepted on one test: does it hold a `jpg/` tree.
 
-**A path in `.datapath` is binding.** If it does not resolve, the run stops — it
+**A `data_dir` named there is binding.** If it does not resolve, the run stops — it
 must never fall through to `./data` or the sample, because that turns a typo
 into a run against a different population that reports success. This is the
 failure the signature check produced on its way out, and the same reason both
@@ -52,9 +52,15 @@ Two properties this buys:
 **No one edits a versioned file to get the right answer.** The earlier design
 put the user's path in `config.toml` and relied on it being *inert* on a working
 checkout — correct, but it still meant a tracked file carrying a local value and
-a `git diff` whose first hunk was always yours. `.datapath` is gitignored and
-`_datapath` is the tracked template, which is the `_env` → `.env` pattern this
-project already uses for secrets. `config.toml` has no `data_dir` key any more:
+a `git diff` whose first hunk was always yours. `config.local.toml` is
+gitignored and `_config.local.toml` is the tracked template, which is the
+`_env` → `.env` pattern this project already uses for secrets. It carries the
+`[servers.*]` hosts too — they had the identical problem, `darwin` and `spark`
+being names only the author's network knows.
+
+(A dedicated `.datapath` file held this for one day, 2026-08-10 to -11, before
+being folded in. Two ignored files for "local settings" was the same second
+mechanism this document argues against elsewhere.) `config.toml` has no `data_dir` key any more:
 it did this job through a second mechanism, and one way to point at a dataset
 means one place for it to be wrong — the argument that removed `--years`.
 

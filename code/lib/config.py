@@ -11,12 +11,42 @@ from functools import lru_cache
 from pathlib import Path
 
 CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.toml"
+LOCAL_CONFIG_PATH = CONFIG_PATH.with_name("config.local.toml")
+
+
+def _merge(base: dict, over: dict) -> dict:
+    """`over` wins, recursively, so a local file may set one key of a table."""
+    out = dict(base)
+    for k, v in over.items():
+        out[k] = _merge(out[k], v) if isinstance(v, dict) and isinstance(out.get(k), dict) else v
+    return out
 
 
 @lru_cache(maxsize=1)
 def load_config() -> dict:
+    """config.toml, with config.local.toml layered over it.
+
+    The tracked file holds values that work for a stranger; the local file holds
+    the ones that are true only of your machines. Host names are the obvious
+    case: `darwin` and `spark` mean nothing to anyone else, and before this split
+    the only way to point the tools at your own servers was to edit a committed
+    file -- so every user's tree was dirty for as long as their setup was right.
+    This file holds everything machine-specific except secrets: host names and
+    `data_dir`. Secrets stay in `.env` because the run scripts `source` it as
+    shell, which TOML cannot be, and because a leaked key is a different problem
+    from a leaked hostname. Two ignored files, one boundary.
+
+    The merge is recursive so a local file can override one key of a table --
+    `[servers.vllm] host = ...` without restating the port.
+    """
     with open(CONFIG_PATH, "rb") as f:
-        return tomllib.load(f)
+        config = tomllib.load(f)
+    try:
+        with open(LOCAL_CONFIG_PATH, "rb") as f:
+            config = _merge(config, tomllib.load(f))
+    except FileNotFoundError:
+        pass
+    return config
 
 
 def server_url(name: str, scheme: str = "http", path: str = "") -> str:
@@ -42,52 +72,31 @@ def working_output(default: str = "./output") -> Path:
     return Path(load_config().get("current_working_output", default))
 
 
-DATAPATH = CONFIG_PATH.parent / ".datapath"
-
-
-def declared_data_dir() -> str | None:
-    """The path written in `.datapath`, or None.
-
-    `.datapath` is the user's own copy of the tracked `_datapath` template, and
-    is gitignored -- the whole point. `config.toml` is committed, so configuring
-    the dataset there means a working tree that is dirty for as long as you keep
-    your setting, and a `git diff` whose first hunk is always yours. Splitting
-    the local part into an ignored file is the same shape as `_env` -> `.env`,
-    which this project already uses for secrets.
-
-    Format: the first non-blank, non-comment line. Relative paths resolve from
-    the repository root rather than the caller's cwd, so a run started from a
-    subdirectory picks the same dataset as one started from the top.
-    """
-    try:
-        text = DATAPATH.read_text(encoding="utf-8")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        line = line.split("#", 1)[0].strip()
-        if line:
-            return line
-    return None
-
-
 def data_dir(override=None) -> Path:
     """The dataset to work on, resolved in order of specificity.
 
         1. an explicit --data-dir
         2. $BIRD_DATA_DIR
-        3. .datapath, your local copy of the _datapath template
+        3. config.local.toml's `data_dir`
         4. ./data, the private submodule
         5. ./sample_data, shipped
 
     A fresh clone therefore runs on the sample with no setup at all, and a
-    checkout with the submodule finds it without setup either. `.datapath` is
-    for the third case: a library somewhere else entirely. $BIRD_DATA_DIR stays
-    for the one-off -- CI, a quick comparison -- where writing a file would be
-    heavier than the job.
+    checkout with the submodule finds it without setup either. `data_dir` in
+    config.local.toml is for the third case: a library somewhere else entirely.
+    $BIRD_DATA_DIR stays for the one-off -- CI, a quick comparison -- where
+    writing a file would be heavier than the job.
 
-    There is no `data_dir` key in config.toml any more. It did this same job
-    through a second mechanism, and one way to point at a dataset means one
-    place for it to be wrong -- the same argument that removed `--years`.
+    This lived in a dedicated `.datapath` file for a day. Folding it into
+    config.local.toml leaves **one** ignored file for everything
+    machine-specific rather than two, which is this project's own rule about
+    second mechanisms. `.env` stays separate for a real reason: the run scripts
+    `source` it as shell, which a TOML file cannot be, and a secret is a
+    different risk class from a hostname.
+
+    Note the key is back in a *config file* but not in a *tracked* one, which
+    was the whole objection: config.toml is committed, config.local.toml is
+    ignored.
 
     **Every candidate is tested the same way: does it hold a `jpg/` tree.**
     There was once a signature check on `./data` -- a hash of a secret living
@@ -126,19 +135,19 @@ def data_dir(override=None) -> Path:
     resolve = lambda c: (Path(c).expanduser() if Path(c).expanduser().is_absolute()
                          else root / Path(c).expanduser())
 
-    # A declaration is binding. If `.datapath` names a path, that is the dataset
-    # or the run stops -- it must never quietly fall through to ./data or the
-    # sample, which is how a typo becomes a run against the wrong population
-    # that reports success. Same reason the stages exit on an empty selection,
-    # and the same failure the signature check produced on its way out.
-    declared = declared_data_dir()
+    # A declaration is binding. If config.local.toml names a data_dir, that is
+    # the dataset or the run stops -- it must never quietly fall through to
+    # ./data or the sample, which is how a typo becomes a run against the wrong
+    # population that reports success. Same reason the stages exit on an empty
+    # selection, and the same failure the signature check produced on its way out.
+    declared = load_config().get("data_dir")
     if declared:
         p = resolve(declared)
         if not (p / "jpg").is_dir():
             raise SystemExit(
-                f"error: .datapath names {declared!r}, which has no jpg/ directory "
-                f"(looked in {p}).\n"
-                f"       Fix the path, or delete .datapath to fall back to ./data "
+                f"error: config.local.toml sets data_dir = {declared!r}, which has no "
+                f"jpg/ directory (looked in {p}).\n"
+                f"       Fix the path, or remove the line to fall back to ./data "
                 f"or ./sample_data.")
         return p
 
@@ -149,7 +158,8 @@ def data_dir(override=None) -> Path:
     raise SystemExit(
         "error: no dataset found. Expected ./sample_data (shipped -- see the README "
         "for how to fetch it), ./data (the private submodule -- "
-        "`git submodule update --init`), or a path in .datapath (copy _datapath).")
+        "`git submodule update --init`), or data_dir in config.local.toml "
+        "(copy _config.local.toml).")
 
 
 def display_path(path) -> Path:

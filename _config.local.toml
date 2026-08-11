@@ -1,0 +1,34 @@
+# Machine-specific configuration. Template -- copy it, do not edit in place:
+#
+#     cp _config.local.toml config.local.toml
+#
+# `config.local.toml` is gitignored, so the hosts your servers actually run on
+# never dirty your tree. This is the same split as `_env` -> `.env` for secrets
+# and `_datapath` -> `.datapath` for the dataset.
+#
+# It is layered over `config.toml` recursively, so naming just the host keeps
+# the port from the tracked file. You only need the sections you are changing,
+# and you do not need this file at all if your servers are on localhost.
+#
+# `--vllm-url` and `--embed-url` still override everything for a single run.
+
+# Where your photo library is. Whatever you name must contain a jpg/ directory.
+# Omit this line entirely to use ./data (the private submodule, if you have it)
+# or the shipped ./sample_data -- neither needs configuring.
+#
+# A path named here is BINDING: if it does not resolve the run stops, rather
+# than quietly falling back to a different and probably smaller dataset.
+# Relative paths are taken from the repository root. `--data-dir` and
+# $BIRD_DATA_DIR override it for a single run.
+
+# data_dir = "/mnt/photos/library"
+
+# [servers.vllm]
+# host = "gpu-box"          # port 8000 inherited from config.toml
+
+# [servers.embed]
+# host = "gpu-box"
+# port = 9100
+
+# [servers.llama_cpp]
+# host = "localhost"
