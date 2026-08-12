@@ -1,0 +1,43 @@
+services:
+  vllm:
+    image: nvcr.io/nvidia/vllm:26.06-py3
+    container_name: vllm
+
+    network_mode: host
+
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    volumes:
+      - ~/.cache/huggingface:/root/.cache/huggingface
+
+    environment:
+      HUGGING_FACE_HUB_TOKEN: ${HF_TOKEN:-}
+
+    command:
+      - vllm
+      - serve
+
+      - "--model"
+      - "$MODEL_NAME"
+
+      # Limit GPU memory used by vLLM
+      - "--gpu-memory-utilization"
+      - "0.8"
+
+      # Optional
+      - "--max-model-len"
+      - "8192"
+
+      - "--kv-cache-dtype"
+      - "auto"
+
+      - "--port"
+      - "8000"
+
+    restart: unless-stopped
