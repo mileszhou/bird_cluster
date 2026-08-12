@@ -435,12 +435,28 @@ regenerated every run. `./tool-audit --snapshot <label>` additionally files a nu
 `project/reports/archive/NN-data_preview_report-<label>.md` when a specific run is worth
 keeping to compare against later.
 
+**This repository is the software. Research on the data goes elsewhere.** Settled
+2026-08-12, after the repo was briefly public and a check found what it was carrying.
+Anything *computed from the library* — audit reports, dedup proposals, cluster statistics,
+species findings — describes a private photo collection: trip names, places, dates,
+per-trip counts. It is also not what a reader of this repo came for. It belongs in a
+separate private repository, or purely locally. What stays here is code, tests, the design
+record, and documents that would still make sense to someone who has never seen the
+library.
+
+The line is *what the document is about*, not who wrote it: a plan for how clustering
+should work is software; a table of which of your trips are captive collections is data.
+When in doubt, ask whether the document would mean anything to a stranger with the code and
+no photographs.
+
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
-`status/` handoffs, `reports/` (analysis output and worklists), `messages/` (correspondence
-with the user, named `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder
-file they leave), `bookeeping/` (pointers to state held outside this repo), `ideas/`. `docs/` is
-reserved for product documentation, i.e. output meant for whoever uses the result rather than
-notes about building it.
+`status/` handoffs, `reports/` (analysis output and worklists — generated ones are
+gitignored, see above), `messages/` (correspondence with the user, named
+`YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave),
+`bookeeping/` (pointers to state held outside this repo), `ideas/`. `local/` is gitignored
+and holds period-specific run commands; `manifests/local/` holds manifests that name real
+trips. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
+the result rather than notes about building it.
 
 **`project/ideas/` is not `plans/`.** A plan is a commitment to an approach; an idea is a
 thought that surfaced while doing something else and would be lost by the time the project is
