@@ -17,6 +17,15 @@ project/reports/*.csv
 # Your machines' host names. `_config.local.toml` is the tracked template.
 config.local.toml
 
+# Period-specific working files: ad-hoc run commands for whatever is being
+# tried this week, and manifests that name real trips. Neither is permanent or
+# shareable, and the manifests would publish a travel history. Scripts here
+# should start with `cd "$(dirname "$0")/.."` so they act on the repo root
+# whatever directory you invoke them from -- the same idiom the run- wrappers
+# use.
+/local/
+manifests/local/
+
 *.log
 *.tmp
 *.bak
