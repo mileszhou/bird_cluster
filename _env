@@ -1,3 +1,17 @@
+# Secrets only. Copy to .env, which is gitignored:
+#
+#     cp _env .env
+#
+# Non-secret machine-specific settings (server hosts, where your photo library
+# is) go in config.local.toml instead -- copy _config.local.toml.
+
+# Required. DINOv3 is a gated model, so the embedding step cannot download its
+# backbone without a token -- and the licence must be accepted for the same
+# account, at
+#     https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m
+# Without the licence the download 403s while the model page still resolves,
+# which looks like a network fault rather than a permission one.
+# export HF_TOKEN=hf_...
 
 # Required for --approach chatgpt only; not needed for vllm/llama.cpp.
 # export OPENAI_API_KEY=sk-...
