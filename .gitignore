@@ -11,6 +11,16 @@ output*/
 # derivable from the dataset. The report itself stays tracked -- keeping its
 # filename stable is what makes `git diff` between runs readable.
 project/reports/*.csv
+
+# Generated audit reports. They describe the *library* -- trip-by-trip counts,
+# folder names -- not the software, and ./tool-audit and ./tool-dedup rewrite
+# them on every run. Tracking them published a travel history and meant a run
+# dirtied the tree. Hand-written analysis (species_discovery_report.md) stays.
+project/reports/data_preview_report.md
+project/reports/sidecar_dedup_report.md
+project/reports/label_run_audit.md
+project/reports/wraparound_split_report.md
+project/reports/archive/
 #results/
 **/.env
 

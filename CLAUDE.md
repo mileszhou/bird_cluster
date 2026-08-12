@@ -427,8 +427,10 @@ goes to `A-2` rather than reading as `A`'s virtual copy. Treating these as missi
 189 discrepancies that are not there. (`JpgIndex` answers sidecar → JPEG for the audit and the
 embedding step; `jpg_claim.SidecarClaims` answers the reverse for the labeler.)
 
-The report's filename never changes, so `git diff` after a run shows exactly what moved in the
-dataset — keep it that way. The worklist CSVs are gitignored: they are large and fully
+The report's filename never changes, so `diff` between runs shows exactly what moved in the
+dataset. It is **no longer tracked** (2026-08-12): it is trip-by-trip counts of a private
+library, and it described the data rather than the software. Compare against a copy you keep
+in `local/` instead. The worklist CSVs are gitignored: they are large and fully
 regenerated every run. `./tool-audit --snapshot <label>` additionally files a numbered copy in
 `project/reports/archive/NN-data_preview_report-<label>.md` when a specific run is worth
 keeping to compare against later.
