@@ -41,11 +41,81 @@ import re
 from pathlib import Path
 
 # Namespace prefixes vary between Lightroom versions, so match on the local name.
-XMP_ATTR = re.compile(
-    r'\s+[A-Za-z0-9_]+:(?:Body)?(?:Lens)?SerialNumber="[^"]*"'
-    r'|\s+[A-Za-z0-9_]+:GPS[A-Za-z]*="[^"]*"')
+#
+# What is NOT here is as considered as what is. `crs:*` -- the develop settings,
+# 13,271 attributes and ~90% of the bytes -- stays. It identifies nobody, and a
+# realistic sidecar is exactly what this sample exists to be: `xmp_write`'s
+# whole text-surgery design comes from these files being 330 lines of
+# Lightroom-formatted settings, and a stripped one would stop exercising it.
+# Timestamps stay too: the trip folder already carries the date, so removing
+# them hides nothing while breaking `sidecar_meta.read_meta()`.
+#
+# Camera *brand* is not removable and is not pretended to be. `crs:RawFileName`
+# ends in .nef / .arw / .cr3, and `read_meta()` reads that field -- so Nikon,
+# Sony or Canon is legible whatever tiff:Make says. Stripping
+# `photoshop:SidecarForExtension` as well would be theatre. A brand is not a
+# body; the serial was the identifier and it is gone.
+IDENTIFYING = (
+    r'[A-Za-z0-9_]+:(?:Body)?(?:Lens)?SerialNumber',   # links to every other photo
+    r'[A-Za-z0-9_]+:GPS[A-Za-z]*',                     # where somebody was
+    r'tiff:Make', r'tiff:Model',                       # camera body
+    r'aux:Lens', r'aux:LensID', r'aux:LensInfo',       # lens
+    r'aux:Firmware',
+    r'aux:ImageNumber',                                # the body's shutter count
+    r'aux:LensDistortInfo',                            # a lens profile: reinstates the lens
+    r'exif:LensMake',                                  # ditto, from the other namespace
+    r'xmp:Rating', r'xmp:Label',                       # the photographer's own judgement
+)
+XMP_ATTR = re.compile("|".join(rf'\s+{a}="[^"]*"' for a in IDENTIFYING))
 
 SOI, APP1, SOS, EOI = b"\xff\xd8", 0xE1, 0xDA, 0xD9
+
+
+# --minimal: keep only what the pipeline reads, drop the rest. Local names, since
+# Lightroom's prefixes move between versions.
+#
+# Everything else goes: 13,271 crs:* develop attributes, the exposure and lens
+# EXIF, the edit history, the ratings. That loses realism -- a genuine sidecar
+# is ~330 lines and `xmp_write`'s text-surgery design exists because of it -- and
+# the sample stops representing what the labeller meets in the wild. Chosen
+# deliberately: nobody reads a sample dataset's develop settings, and the less
+# it carries the less there is to regret publishing.
+KEEP_ATTRS = {
+    "OriginalDocumentID", "DocumentID",   # sidecar_meta: capture identity, dedup
+    "RawFileName",                        # sidecar_meta: which raw this describes
+    "DateTimeOriginal", "CreateDate",     # sidecar_meta: capture time
+    "about",                              # rdf:Description's own attribute
+}
+KEEP_ELEMENTS = {"subject", "hierarchicalSubject", "Bag", "Seq", "Alt", "li",
+                 "xmpmeta", "RDF", "Description"}
+ATTR_RE = re.compile(r'\s+([A-Za-z0-9_]+):([A-Za-z0-9]+)="[^"]*"')
+
+
+def minimal_xmp(text: str) -> str:
+    """Drop every attribute and element block outside the keep-lists.
+
+    Text surgery rather than a parse-and-rewrite, so the container each file
+    uses survives: 49 of these sidecars carry `dc:subject` as an `rdf:Bag` and
+    54 have none at all, and `xmp_write` reuses whichever is present. A
+    reserialisation would normalise that away and delete the case.
+    """
+    # Element blocks first, so their inner attributes go with them.
+    for tag in ("crs:ToneCurvePV2012", "crs:ToneCurvePV2012Red",
+                "crs:ToneCurvePV2012Green", "crs:ToneCurvePV2012Blue",
+                "crs:ToneCurve", "crs:PointColors", "crs:ColorVariance",
+                "crs:Look", "xmpMM:History", "xmpMM:DerivedFrom",
+                "exif:ISOSpeedRatings", "exif:Flash", "dc:format",
+                "crs:MaskGroupBasedCorrections", "crs:CircularGradientBasedCorrections",
+                "crs:GradientBasedCorrections", "crs:PaintBasedCorrections",
+                "crs:RetouchAreas", "crd:Look"):
+        text = re.sub(rf"[ \t]*<{tag}\b[^>]*/>\n", "", text)
+        text = re.sub(rf"[ \t]*<{tag}\b.*?</{tag}>\n", "", text, flags=re.S)
+    # Then loose attributes. `xmlns:` declarations are attributes too and must
+    # survive -- removing them leaves every remaining prefix unbound and the file
+    # stops being XML at all, which is exactly what happened the first time.
+    return ATTR_RE.sub(
+        lambda m: m.group(0) if m.group(1) == "xmlns" or m.group(2) in KEEP_ATTRS
+        else "", text)
 
 
 def scrub_xmp(text: str):
@@ -92,6 +162,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("root", type=Path, help="a dataset tree, e.g. sample_data")
     ap.add_argument("--apply", action="store_true", help="write the changes")
+    ap.add_argument("--minimal", action="store_true",
+                    help="keep only the fields the pipeline reads; drop develop "
+                         "settings, EXIF, history, everything else")
     ap.add_argument("--verify", action="store_true",
                     help="decode each JPEG before and after and assert the pixels match")
     args = ap.parse_args()
@@ -102,7 +175,9 @@ def main():
     for path in sorted(args.root.rglob("*.xmp")):
         text = path.read_text(encoding="utf-8")
         new, found = scrub_xmp(text)
-        if not found:
+        if args.minimal:
+            new = minimal_xmp(new)
+        if not found and new == text:
             continue
         attrs.update(found)
         xmp_changed += 1
