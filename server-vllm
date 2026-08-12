@@ -3,6 +3,15 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# One optional positional: the model. Anything further would be silently
+# dropped, which is how `./run-vllm --years 2024,2025` once relabelled a whole
+# library -- so refuse it rather than ignore it.
+if [ "$#" -gt 1 ]; then
+    echo "server-vllm: unknown argument '$2'" >&2
+    echo "usage: ./server-vllm [MODEL_NAME]    (edit the compose file for vLLM flags)" >&2
+    exit 2
+fi
+
 export HF_TOKEN=$(cat ~/.huggingface/.token)
 export MODEL_NAME="${1:-${MODEL_NAME:-Qwen/Qwen3-VL-4B-Instruct}}"
 
