@@ -10,15 +10,37 @@ The goal and underlying theory is outlined in the document "./research/Bird Sema
 
 # Quickstart
 
+## Before you start: a Hugging Face token
+
+You need one, and it takes a few minutes to arrange, so do it first. The
+embedding step uses **DINOv3, which is a gated model** — it cannot be downloaded
+anonymously.
+
+1. Accept the licence **for your own account**:
+   <https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m>
+2. Create a token: <https://huggingface.co/settings/tokens> (read access is enough)
+3. After cloning, put it in `.env`:
+
+       cp _env .env
+       echo "export HF_TOKEN=hf_..." >> .env
+
+Step 1 is the one people skip, and it fails confusingly: with a valid token but
+no accepted licence the model *page* still resolves and `model_info()` succeeds,
+while the file download returns 403 — so it reads like a network fault rather
+than a permission. Only the first download needs the token; after that the model
+is cached.
+
+## Then
+
     git clone <this repo> && cd bird_cluster
+    # set up .env as above
     ./run-all
 
 `run-all` is the whole pipeline — label, embed, cluster, plot — on a small
 sample dataset. On a fresh clone it creates the virtualenv and fetches the
-sample itself; it stops with instructions for the two things it will not do for
-you: an `HF_TOKEN` (DINOv3 is gated) and starting the two model servers, since
+sample itself. It will not start the two model servers for you, because
 starting a GPU process is a decision about a machine rather than a step in a
-demo.
+demo:
 
     ./server-vllm       # labelling backend, in docker
     ./server-embed      # DINOv3 embedder; --device cpu if the GPU is busy
