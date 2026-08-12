@@ -164,7 +164,7 @@ step 6 can see.
 Physically relocating files breaks the LrC catalog. Write `cluster/NN` as a **hierarchical
 keyword into XMP sidecars** with `exiftool`, then *Metadata → Read Metadata from Files* in
 LrC. Instant filter / group-by-cluster in the Keyword List panel, non-destructive, **survives
-re-clustering** (overwrite the keyword). Fits the existing openrsync→the-nas workflow — photos
+re-clustering** (overwrite the keyword). Fits the existing openrsync→the NAS workflow — photos
 never move, only metadata changes.
 
 ### 5.5 Persistence as the instrument (step 6)
@@ -236,7 +236,7 @@ is uninterpretable (can't tell topology-change from coordinate-change).
 > between persistence diagrams, ARI / AMI between assignments — **never raw distances.** This
 > is what makes the study *evidential*: "β₀ for species X held at 2 across three independent
 > refinements" is a finding; "the clusters looked stable" is not. Tag each iteration; keep
-> artifacts on the-nas; diff the invariants.
+> artifacts on the NAS; diff the invariants.
 
 ---
 

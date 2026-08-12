@@ -200,9 +200,9 @@ def test_non_bird_writes_over_user_keywords_without_a_category(tmp_path):
 
 
 def test_user_keywords_survive_and_stay_first(tmp_path):
-    p = sidecar(tmp_path, ["bhl-山公园", "bird", "old-旧-old bird(95%)"])
+    p = sidecar(tmp_path, ["sgy-山公园", "bird", "old-旧-old bird(95%)"])
     bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
-    assert subjects(p) == ("bhl-山公园", "bird", "new-新-new bird(88%)")
+    assert subjects(p) == ("sgy-山公园", "bird", "new-新-new bird(88%)")
 
 
 def test_hierarchical_subject_is_written_in_step(tmp_path):
@@ -228,10 +228,10 @@ def test_existing_container_kind_is_reused(tmp_path, box):
 
 def test_writing_is_idempotent(tmp_path):
     """A resumed run re-processes sidecars it already wrote; they must not stack."""
-    p = sidecar(tmp_path, ["bhl-山公园"])
+    p = sidecar(tmp_path, ["sgy-山公园"])
     for _ in range(3):
         bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
-    assert subjects(p) == ("bhl-山公园", "bird", "new-新-new bird(88%)")
+    assert subjects(p) == ("sgy-山公园", "bird", "new-新-new bird(88%)")
 
 
 def test_user_keyword_paths_are_not_flattened(tmp_path):
@@ -255,7 +255,7 @@ def test_user_keyword_paths_are_not_flattened(tmp_path):
 
 def test_the_rest_of_the_file_is_left_alone(tmp_path):
     """These sidecars are rsynced into a Lightroom library; the diff must be readable."""
-    p = sidecar(tmp_path, ["bhl-山公园"])
+    p = sidecar(tmp_path, ["sgy-山公园"])
     before = p.read_text(encoding="utf-8")
     bl.set_keywords_in_xmp(p, "bird", "new-新-new bird(88%)")
     after = p.read_text(encoding="utf-8")

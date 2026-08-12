@@ -32,7 +32,7 @@ def test_parse_model_label():
 
 @pytest.mark.parametrize("keyword", [
     "kq-孔雀-Peacock",       # hand-written species keyword: no confidence
-    "bhl-山公园",             # user location tag
+    "sgy-山公园",             # user location tag
     "add=20231014",          # batch marker
     "bird",                  # bare category
     "",
@@ -56,7 +56,7 @@ def test_read_labels_bird(tmp_path):
 
 def test_read_labels_ignores_user_keywords(tmp_path):
     """Pre-existing user tags coexist with the injected ones and must not confuse it."""
-    p = write_xmp(tmp_path, ["add=20231014", "bhl-山公园", "bird", "ml-麻雀-house sparrow(98%)"])
+    p = write_xmp(tmp_path, ["add=20231014", "sgy-山公园", "bird", "ml-麻雀-house sparrow(98%)"])
     got = read_labels(p)
     assert got.is_bird
     assert got.species == "house sparrow"
@@ -140,8 +140,8 @@ def test_a_category_claims_descriptive_phrases_only(tmp_path):
 
 def test_hand_written_names_survive_a_labelled_sidecar(tmp_path):
     """After a full re-label every sidecar has a category; this must still hold."""
-    ours, theirs = split_keywords(["qq-昵称", "xs-小隼-Kestrel", "bird", "x-y-z(90%)"])
-    assert theirs == ("qq-昵称", "xs-小隼-Kestrel")
+    ours, theirs = split_keywords(["pp-昵称", "xs-小隼-Kestrel", "bird", "x-y-z(90%)"])
+    assert theirs == ("pp-昵称", "xs-小隼-Kestrel")
     assert ours == ("bird", "x-y-z(90%)")
 
 

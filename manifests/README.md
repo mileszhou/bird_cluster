@@ -8,8 +8,8 @@ skip. Consumed by `--include-from` / `--exclude-from`
 
 One rule: the argument is a path, and once resolved it has to be inside this directory.
 
-    --exclude-from manifests/exclude-captive.txt    # tab-completes; matches disk
-    --exclude-from exclude-captive.txt              # bare name, manifest-relative
+    --exclude-from manifests/local/exclude-captive.txt   # tab-completes; matches disk
+    --exclude-from local/exclude-captive.txt             # bare name, manifest-relative
     --exclude-from captive/zoos.txt                 # subdirectories, either way
     --exclude-from /tmp/scratch.txt                 # refused
     --exclude-from manifests/../data/x              # refused
@@ -52,7 +52,7 @@ a diff, and can be swapped per experiment.
 
 ## Current
 
-- **`exclude-captive.txt`** — zoos and aviaries, 1,090 bird photos across 12
+- **`local/exclude-captive.txt`** (gitignored) — zoos and aviaries, 1,090 bird photos across 12
   trips. The species mix in a collection is an artefact of the collection rather
   than a place or season, and the enclosure is a background the model can learn
   instead of the bird.

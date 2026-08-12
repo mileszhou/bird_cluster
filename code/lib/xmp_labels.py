@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from typing import NamedTuple, Optional
 
 # Categories bird_label writes as a bare keyword. Any other short keyword in
-# dc:subject is a pre-existing user tag (locations like "bhl-山公园", batch
+# dc:subject is a pre-existing user tag (locations like "sgy-山公园", batch
 # markers like "add=20231014") and is not a category.
 CATEGORIES = ("bird", "animal", "people", "scenery")
 
@@ -37,7 +37,7 @@ CONFIDENCE_SUFFIX_RE = re.compile(r"^_?.+\(\d{1,3}%\)$")
 EARLY_CATEGORIES = ("People", "Unknown")
 
 # A hand-written species keyword: the same `py-cn-en` shape as a model label
-# but with no confidence. "xs-小隼-Kestrel", "bhl-山公园". These are the user's
+# but with no confidence. "xs-小隼-Kestrel", "sgy-山公园". These are the user's
 # own work and are never claimed, even in a sidecar this pipeline has labelled.
 HAND_WRITTEN_RE = re.compile(r"^[A-Za-z]+-\s*[^-]*[一-鿿]")
 # mk_label() prefixes a low-confidence result with an underscore; "_nb" is the
@@ -113,7 +113,7 @@ def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:
     it. The sidecar: a category keyword is only ever written by this pipeline.
     And the text: that generation always wrote a *descriptive phrase*, while
     the user's own keywords are single tokens (`Family`, `Rivertown`, `jx`) or
-    the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `qq-昵称`).
+    the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `pp-昵称`).
 
     Measured over the dataset, the two signals together claim 2,241 free-text
     entries -- every one a scene description -- while sparing 45 single tokens,

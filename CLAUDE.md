@@ -22,9 +22,9 @@ run and every tool follows without a flag; `--output-dir` still wins per invocat
 
 Non-secret configuration lives in `config.toml` at the repo root, checked into git — see
 `[servers.*]`, read via `code/lib/config.py:server_url()`. **Everything tracked there must be
-a value that works for a stranger**, so the hosts say `localhost`; they used to say `darwin`
-and `spark`, which meant a public clone either failed to resolve them or reached somebody
-else's machine, and the only fix was editing a tracked file.
+a value that works for a stranger**, so the hosts say `localhost`; they used to name the
+author's own machines, which meant a public clone either failed to resolve them or
+reached somebody else's machine, and the only fix was editing a tracked file.
 
 Machine-specific values go in **`config.local.toml`** (gitignored, copy `_config.local.toml`),
 layered over `config.toml` recursively — naming a host alone keeps the tracked port. It holds
@@ -86,7 +86,7 @@ Key CLI flags:
 - `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
-- `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
+- `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `manifests/local/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
 - `--dry-run` — resolve the scope and report it, then stop. No model probe, no sidecar copy, no writes
 
 **A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
@@ -296,7 +296,7 @@ sidecars and warns. A partial re-export would otherwise drop those photos in sil
 raws lost to a filing mistake). They have nowhere to carry a keyword, so their label goes to the
 CSV alone as `applied=csv-only`. Do not assume they are non-birds: 607 come from
 interchangeable-lens bodies (Nikon Z9/D500/D850/D5/Z8, Canon R5, Sony) and cluster in birding
-trips — `2025-04-25.1 Birding Birds` alone holds 118.
+trips — one birding trip alone holds 118.
 
 **Never key anything by basename** — not the checkpoint, not the CSV, not a filter set. Stems
 repeat across trips as camera counters wrap (10,832 of the sidecars share a basename with
@@ -317,7 +317,7 @@ Stages above). The Lightroom export mirrors the photo library exactly, so both t
 same shape:
 
 ```
-data/xmp/<Photos-YY>/<trip>/*.xmp     # Photos-19/2019-01-13 山公园/_D8S0025.xmp
+data/xmp/<Photos-YY>/<trip>/*.xmp     # Photos-19/<YYYY-MM-DD trip>/_D8S0025.xmp
 data/jpg/<Photos-YY>/<trip>/*.jpg     # same folder, same stem
 data/jpg/export.report.txt            # what the exporter skipped, and why
 data/label/                           # curated from a labelling run -- input to embedding
@@ -357,6 +357,20 @@ itself a question that can only be asked against a stored run.
 
 Trip folders match verbatim between the two photo trees, so resolving a JPEG is a lookup inside
 one folder. Nothing is hardcoded per year — any dataset in this shape works.
+
+**Two gitignored working directories, added 2026-08-12.** `local/` holds
+period-specific run commands — whatever is being tried this week — and
+`manifests/local/` holds manifests that name real trips. Neither is permanent or
+shareable: an ad-hoc command is stale within days, and a manifest listing
+`Photos-16/2016-07-12 <zoo>` publishes a travel history. `path_filter.resolve()`
+already accepts subdirectories, so `manifests/local/x.txt` needs no code change.
+Scripts in `local/` should open with `cd "$(dirname "$0")/.."` so they act on the
+repo root whatever directory they are invoked from — the same idiom the `run-`
+wrappers use.
+
+The cost is real and accepted: a `run.json` naming a manifest under
+`manifests/local/` is a dangling reference for anyone but you. The versioned
+`inclusion-*.txt` name only libraries (`Photos-16`…) and stay tracked.
 
 **Scope is a manifest and nothing else.** `--years` was removed on 2026-08-09: it did the same
 job through a second mechanism, and a manifest expresses everything it could (`--years
@@ -551,7 +565,7 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    reference makes the scope irreproducible).
    `--include-from` / `--exclude-from` take a path that must land inside `manifests/` once
    resolved — checked on the resolved location, not the leading segment, so `manifests/../x`
-   is refused rather than merely looking compliant. `manifests/exclude-captive.txt` is the form
+   is refused rather than merely looking compliant. `manifests/local/exclude-captive.txt` is the form
    worth typing (it tab-completes, and matches disk and `args.json`); a bare name is read as
    manifest-relative, and subdirectories work either way. Where scope lists live is not the
    caller's choice: a list read from `/tmp` makes a `run.json` a dangling reference and the
@@ -564,11 +578,11 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    for every consumer, leaves no record of what was excluded, cannot express two scopes at
    once, and is a submodule commit each time. Both paths are copied into `run.json`, so a
    result carries the scope that produced it. This is the *mini* manifest, deliberately: no
-   predicates, no set algebra. `manifests/exclude-captive.txt` drops 12 zoo and aviary trips
+   predicates, no set algebra. `manifests/local/exclude-captive.txt` drops 12 zoo and aviary trips
    (1,090 birds) — a collection's species mix is an artefact of the collection rather than a
    place or season, and the enclosure is a background the model can learn instead of the bird.
-   It deliberately keeps the Safari "Safari" trips, which are a waterhole in the park National
-   Park and therefore wild; a keyword match on `safari` would have dropped 143 wild wild
+   It deliberately keeps several "Safari" trips, which are a waterhole in a national
+   park and therefore wild; a keyword match on `safari` would have dropped 143 wild
    records, which is the argument for writing these by hand and commenting them.
 
    Output is a single flat `output/embed/embeddings.jsonl` plus `run.json`; the folder structure
@@ -629,7 +643,7 @@ looking at one sidecar.
 
 - **`bird` was protected** so a fresh false negative could not drop a photo from the clustering
   set. Of the 554 rows it held, 66 are provably a same-stem twin's label from the basename-keyed
-  era — a wombat carrying `common myna` because a Sydney photo with the same stem
+  era — a wombat carrying `common myna` because a city photo with the same stem
   really is one (`tools/stale_bird_labels.py` buckets them by evidence). Given up 2026-08-09.
 - **`scenery` was protected** because the early GPT-4o pass wrote specific descriptions where a
   fresh run wrote a bare `scenery`. By the time it was measured across its 2,401 rows the
@@ -691,7 +705,7 @@ things it has to get right:
   common marker: scenery/people labels are a bare description, so `LABEL_RE` does not match them.
   Early free text is claimed on two signals together — the sidecar carries a category (only this
   pipeline writes one) *and* the text is a descriptive phrase. Single tokens (`Family`,
-  `Rivertown`) and the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `qq-昵称`) are always
+  a place name) and the `HAND_WRITTEN_RE` species shape (`xs-小隼-Kestrel`, `pp-昵称`) are always
   the user's. Err towards leaving a stale keyword, never towards deleting hand-written work.
 
 `prior_labels()` reads the previous label from `data/xmp`, **not** from the working copy —
