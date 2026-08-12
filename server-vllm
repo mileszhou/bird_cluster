@@ -1,0 +1,35 @@
+#!/usr/bin/bash
+# Start the vLLM server on this box, in docker.
+set -euo pipefail
+cd "$(dirname "$0")"
+
+export HF_TOKEN=$(cat ~/.huggingface/.token)
+export MODEL_NAME="${1:-${MODEL_NAME:-Qwen/Qwen3-VL-4B-Instruct}}"
+
+docker compose -f docker.compose/docker-compose.spark.yaml down
+docker compose -f docker.compose/docker-compose.spark.yaml up -d
+
+# The container runs as root and bind-mounts ~/.cache/huggingface, so every
+# model it downloads lands root-owned on the *host* -- 255 files had piled up
+# before this, and once hub/.locks goes root-owned the host's own tools can no
+# longer write their cache.
+#
+# Running the container as the host user would prevent it, but vLLM's model
+# inspection subprocess segfaults under `user: 1000:1000` on this image, so the
+# repair happens after the fact instead. It needs no sudo here: root *inside*
+# the container owns those files and can hand them back.
+#
+# Backgrounded and gated on readiness, because the downloads that create the
+# problem happen during startup. -h so symlinks are fixed too -- chown follows
+# them by default and would leave every snapshot link behind.
+(
+    until curl -sf http://localhost:8000/v1/models >/dev/null 2>&1; do
+        sleep 5
+        docker inspect vllm --format '{{.State.Status}}' 2>/dev/null | grep -q running || exit 0
+    done
+    docker exec -u 0 vllm find /root/.cache/huggingface ! -uid "$(id -u)" \
+        -exec chown -h "$(id -u):$(id -g)" {} + 2>/dev/null || true
+    echo "[server-vllm] cache ownership returned to $(id -un)"
+) &
+
+docker logs -f vllm
