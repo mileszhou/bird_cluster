@@ -19,6 +19,12 @@
 # it defaults to ./sample_data: the demo and the test both want a dataset small
 # enough to run in minutes, and neither wants the master.
 #
+# It is also the quickstart: on a fresh clone it creates the venv and fetches
+# the sample dataset rather than telling you to. Only the two model servers are
+# left to you -- starting a GPU process is a decision about a machine, not a
+# step in a demo -- and it says exactly which command to run. `--no-setup`
+# skips the fixing and only reports.
+#
 # Output goes to ./output like any other run -- one subdirectory per stage,
 # label/ embed/ cluster/ -- so `./clean` archives a whole pipeline pass as one
 # output_NNN_<description>/. It refuses to start on a non-empty ./output rather
@@ -26,22 +32,24 @@
 # ---------------------------------------------------------------------------
 set -euo pipefail
 cd "$(dirname "$0")"
-[ -d .venv ] && source .venv/bin/activate
 
 DATA=./sample_data
 OUT=./output
 MCS=3,5                     # suits ~100 images; 5,15,40 is the library setting
 FORCE=0
+SETUP=1
 while [ $# -gt 0 ]; do
     case "$1" in
         --data-dir)          DATA=$2; shift 2 ;;
         --output-dir)        OUT=$2; shift 2 ;;
         --min-cluster-size)  MCS=$2; shift 2 ;;
         --force)             FORCE=1; shift ;;
+        --no-setup)          SETUP=0; shift ;;
         -h|--help)
             sed -n '2,22p' "$0" | sed 's/^# \?//'
             echo
-            echo "usage: ./run-all [--data-dir DIR] [--output-dir DIR] [--min-cluster-size LIST] [--force]"
+            echo "usage: ./run-all [--data-dir DIR] [--output-dir DIR] [--min-cluster-size LIST]
+                 [--force] [--no-setup]"
             exit 0 ;;
         *) echo "run-all: unknown argument $1" >&2; exit 2 ;;
     esac
@@ -54,6 +62,47 @@ die() { printf '\033[31mrun-all: %s\033[0m\n' "$*" >&2; exit 1; }
 # Fail before doing any work rather than an hour in. Both model servers are
 # separate processes on separate hosts; a down embed server used to surface as
 # a stack trace after labelling had already finished.
+# --- setup: make the prerequisites true rather than complain about them -----
+say "setup"
+if [ ! -d .venv ]; then
+    if [ "$SETUP" = 1 ]; then
+        echo "  no .venv -- creating it (this takes a few minutes)"
+        ./venv base client cluster
+    else
+        die "no .venv. Run ./venv base client cluster"
+    fi
+else
+    echo "  .venv present"
+fi
+source .venv/bin/activate
+
+if [ ! -d "$DATA/jpg" ] && [ "$DATA" = "./sample_data" ]; then
+    if [ "$SETUP" = 1 ]; then
+        echo "  no sample dataset -- cloning it (31 MB)"
+        git clone -q https://github.com/mileszhou/sample_data.git sample_data
+    else
+        die "no $DATA/jpg. Run: git clone https://github.com/mileszhou/sample_data.git sample_data"
+    fi
+else
+    echo "  dataset present at $DATA"
+fi
+
+# HF_TOKEN is required, not advisory: the embed step cannot run without it on a
+# machine that has not already cached DINOv3.
+if [ -z "${HF_TOKEN:-}" ] && ! grep -qs HF_TOKEN .env && [ ! -s ~/.huggingface/.token ]; then
+    die "HF_TOKEN is required.
+       DINOv3 is gated, so without a token the embed server cannot fetch the
+       backbone -- and that failure would otherwise arrive at stage 2, after
+       labelling had already spent minutes.
+         1. accept the licence for your account at
+            https://huggingface.co/facebook/dinov3-vitb16-pretrain-lvd1689m
+         2. create a token at https://huggingface.co/settings/tokens
+         3. echo 'export HF_TOKEN=hf_...' >> .env
+       Step 1 matters as much as step 2: without the licence the download 403s
+       while the model page still resolves, which reads like a network fault."
+fi
+echo "  HF_TOKEN available"
+
 say "preflight"
 [ -d "$DATA/jpg" ] || die "$DATA has no jpg/ directory."
 case "$(cd "$DATA" && pwd -P)" in
@@ -86,7 +135,9 @@ for name, url in (("vllm", server_url("vllm", path="/v1/models")),
         print(f"  {name:<6} DOWN  {url}  ({exc})")
         ok = False
 if not ok:
-    print("\n  start them with: ./server-embed   (and your vLLM server)")
+    print("\n  start them and re-run:")
+    print("      ./server-vllm     # in another terminal; blocks on docker logs")
+    print("      ./server-embed    # add --device cpu if the GPU is busy")
 sys.exit(0 if ok else 1)
 PY
 

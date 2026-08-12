@@ -8,6 +8,29 @@ The code base under code/ will be removed with the project going. Particularly, 
 # Theory
 The goal and underlying theory is outlined in the document "./research/Bird Semantic Study Plan.md". 
 
+# Quickstart
+
+    git clone <this repo> && cd bird_cluster
+    ./run-all
+
+`run-all` is the whole pipeline — label, embed, cluster, plot — on a small
+sample dataset. On a fresh clone it creates the virtualenv and fetches the
+sample itself; it stops with instructions for the two things it will not do for
+you: an `HF_TOKEN` (DINOv3 is gated) and starting the two model servers, since
+starting a GPU process is a decision about a machine rather than a step in a
+demo.
+
+    ./server-vllm       # labelling backend, in docker
+    ./server-embed      # DINOv3 embedder; --device cpu if the GPU is busy
+
+`--no-setup` reports what is missing without fixing anything. Results land in
+`output/`, one subdirectory per stage.
+
+On a DGX Spark this is genuinely all of it: `config.toml` already points at
+`localhost` for both servers. Other hosts need the compose file adjusted —
+`docker.compose/docker-compose.spark.yaml` pins an ARM/GB10 image — and their
+own hosts named in `config.local.toml`.
+
 # Data
 
 The code ships without photographs. Pick one of three; nothing needs editing for
