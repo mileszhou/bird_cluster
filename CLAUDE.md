@@ -304,7 +304,7 @@ another). `output/label/processed.txt` and the CSV's `jpg` column both hold the 
 `data/jpg`; the CSV's `filename` column is kept for readability only. `--filter-csv` refuses a CSV
 with no `jpg` column for the same reason.
 
-## Clustering pipeline (branch `cluster`)
+## Clustering pipeline
 
 Downstream of the labeler: embed the identified bird photos and discover species
 structure from appearance rather than trusting the VLM's per-photo guess. Theory in
