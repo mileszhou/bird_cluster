@@ -1,7 +1,9 @@
 
 # Evolution
 
-This project (branch cluster) is a continuation of the bird_label project. It uses as the input the results/ organized from the output/ of the bird_label (branche bird_label). 
+This project continues the earlier bird_label work, taking as its input the labelling
+results that project produced. Development is on `main`; the `cluster` branch it grew on
+was merged into it on 2026-08-12.
 
 The code base under code/ will be removed with the project going. Particularly, those immediately under code/ will all be moved to code/bird_label/ upon the first project review (supportive, can be ignore if it doesn't deem useful).
 
