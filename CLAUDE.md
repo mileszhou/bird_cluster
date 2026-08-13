@@ -86,7 +86,7 @@ Key CLI flags:
 - `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
-- `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `manifests/local/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
+- `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `local/manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
 - `--dry-run` — resolve the scope and report it, then stop. No model probe, no sidecar copy, no writes
 
 **A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
@@ -358,19 +358,22 @@ itself a question that can only be asked against a stored run.
 Trip folders match verbatim between the two photo trees, so resolving a JPEG is a lookup inside
 one folder. Nothing is hardcoded per year — any dataset in this shape works.
 
-**Two gitignored working directories, added 2026-08-12.** `local/` holds
-period-specific run commands — whatever is being tried this week — and
-`manifests/local/` holds manifests that name real trips. Neither is permanent or
-shareable: an ad-hoc command is stale within days, and a manifest listing
-`Photos-16/2016-07-12 <zoo>` publishes a travel history. `path_filter.resolve()`
-already accepts subdirectories, so `manifests/local/x.txt` needs no code change.
-Scripts in `local/` should open with `cd "$(dirname "$0")/.."` so they act on the
-repo root whatever directory they are invoked from — the same idiom the `run-`
+**`local/` is everything local, and gitignored.** Added 2026-08-12: ad-hoc run
+commands for whatever is being tried this week, `local/manifests/` for scope
+lists that name real trips, and working copies of the generated reports. None of
+it is permanent or shareable — an ad-hoc command is stale within days, and a
+manifest listing `Photos-16/2016-07-12 <zoo>` publishes a travel history.
+Scripts here should open with `cd "$(dirname "$0")/.."` so they act on the repo
+root whatever directory they are invoked from, the same idiom the `run-`
 wrappers use.
 
-The cost is real and accepted: a `run.json` naming a manifest under
-`manifests/local/` is a dangling reference for anyone but you. The versioned
-`inclusion-*.txt` name only libraries (`Photos-16`…) and stay tracked.
+**A manifest can therefore be in one of two places**, and `resolve()` accepts
+both: `manifests/` for lists that mean the same to anyone (the `inclusion-*.txt`
+name only libraries), `local/manifests/` for lists that name places. Both are
+inside the repository, which is the part worth keeping — a list read from `/tmp`
+makes a run's recorded scope a dangling reference. The cost is accepted: a
+`run.json` naming a `local/` manifest is reproducible only for the person who
+has it.
 
 **Scope is a manifest and nothing else.** `--years` was removed on 2026-08-09: it did the same
 job through a second mechanism, and a manifest expresses everything it could (`--years
@@ -453,9 +456,9 @@ no photographs.
 `status/` handoffs, `reports/` (analysis output and worklists — generated ones are
 gitignored, see above), `messages/` (correspondence with the user, named
 `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave),
-`bookeeping/` (pointers to state held outside this repo), `ideas/`. `local/` is gitignored
-and holds period-specific run commands; `manifests/local/` holds manifests that name real
-trips. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
+`bookeeping/` (pointers to state held outside this repo), `ideas/`. `local/` is gitignored and holds everything local: period-specific run commands,
+`local/manifests/` for scope lists naming real trips, and working copies of generated
+reports. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
 the result rather than notes about building it.
 
 **`project/ideas/` is not `plans/`.** A plan is a commitment to an approach; an idea is a
@@ -583,7 +586,7 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    reference makes the scope irreproducible).
    `--include-from` / `--exclude-from` take a path that must land inside `manifests/` once
    resolved — checked on the resolved location, not the leading segment, so `manifests/../x`
-   is refused rather than merely looking compliant. `manifests/local/exclude-captive.txt` is the form
+   is refused rather than merely looking compliant. `local/manifests/exclude-captive.txt` is the form
    worth typing (it tab-completes, and matches disk and `args.json`); a bare name is read as
    manifest-relative, and subdirectories work either way. Where scope lists live is not the
    caller's choice: a list read from `/tmp` makes a `run.json` a dangling reference and the
@@ -596,7 +599,7 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    for every consumer, leaves no record of what was excluded, cannot express two scopes at
    once, and is a submodule commit each time. Both paths are copied into `run.json`, so a
    result carries the scope that produced it. This is the *mini* manifest, deliberately: no
-   predicates, no set algebra. `manifests/local/exclude-captive.txt` drops 12 zoo and aviary trips
+   predicates, no set algebra. `local/manifests/exclude-captive.txt` drops 12 zoo and aviary trips
    (1,090 birds) — a collection's species mix is an artefact of the collection rather than a
    place or season, and the enclosure is a background the model can learn instead of the bird.
    It deliberately keeps several "Safari" trips, which are a waterhole in a national

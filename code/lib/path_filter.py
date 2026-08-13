@@ -130,47 +130,53 @@ def read_paths(path) -> list[str]:
     return out
 
 
+LOCAL_MANIFEST_DIR = MANIFEST_DIR.parent / "local" / "manifests"
+
+
 def resolve(name) -> Path:
-    """A manifest argument -> its path, which must land inside `manifests/`.
+    """A manifest argument -> its path, which must land in one of two directories.
 
-    One rule: it is a path, and after resolving it, it has to be in the manifest
-    directory. Everything else follows from that.
+    One rule: it is a path, and after resolving it, it has to be under
+    `manifests/` or under `local/manifests/`. Everything else follows.
 
-    - `exclude-captive.txt` and `captive/zoos.txt` are read as manifest-relative.
-    - `manifests/exclude-captive.txt` is read as repo-relative, so what you type
-      is what is on disk -- which is the form tab-completion produces, and the
-      reason it is the one worth typing.
+    - `exclude-captive.txt` and `captive/zoos.txt` are read as manifest-relative,
+      falling back to `local/manifests/` when not found in `manifests/`.
+    - `manifests/inclusion-all.txt` and `local/manifests/exclude-captive.txt` are
+      read as repo-relative, so what you type is what is on disk -- the form tab
+      completion produces, and the one worth typing.
     - `manifests/../data/x` and `/tmp/x` are refused. Checking the *resolved*
-      location rather than the first path segment is what makes that true; an
-      earlier version compared the leading segment and let `manifests/../` walk
-      straight out.
+      location rather than the leading path segment is what makes that true; an
+      earlier version compared the segment and let `manifests/../` walk out.
 
-    The one path this cannot express is a directory literally named
-    `manifests` *inside* `manifests/`, since the leading segment is read as the
-    repo-relative prefix. Writing that is nearly always a mistake, so it loses
-    nothing worth having.
+    **Two directories, because a manifest can be one of two things.** A list of
+    libraries (`Photos-16`) means the same to anyone and is versioned in
+    `manifests/`. A list of real trips names places somebody went, so it lives
+    in the gitignored `local/manifests/` alongside the other local working files
+    -- see the `local/` note in CLAUDE.md.
 
-    Where scope lists live is not the caller's choice. A list read from outside
-    the repo cannot be recovered from history, so a run's recorded scope becomes
-    a dangling reference and the population behind a result is unrecoverable --
-    which is the whole reason these are versioned.
+    Both are still inside the repository, which is the part worth keeping: a
+    list read from `/tmp` makes a run's recorded scope a dangling reference and
+    the population behind a result unrecoverable. A gitignored manifest weakens
+    that for the one person who has it; a manifest outside the tree loses it for
+    everyone, including them.
     """
     p = Path(str(name))
+    roots = (MANIFEST_DIR, LOCAL_MANIFEST_DIR)
     if p.is_absolute():
-        candidate = p
-    elif p.parts and p.parts[0] == MANIFEST_DIR.name:
-        candidate = MANIFEST_DIR.parent / p
+        candidates = [p]
+    elif p.parts and p.parts[0] in ("manifests", "local"):
+        candidates = [MANIFEST_DIR.parent / p]
     else:
-        candidate = MANIFEST_DIR / p
+        candidates = [r / p for r in roots]
 
-    resolved = candidate.resolve()
-    root = MANIFEST_DIR.resolve()
-    if root not in resolved.parents:
+    resolved = next((c.resolve() for c in candidates if c.exists()),
+                    candidates[0].resolve())
+    if not any(r.resolve() in resolved.parents for r in roots):
         raise ValueError(
-            f"manifest must live in {MANIFEST_DIR.name}/, but {name!r} resolves to "
-            f"{resolved}\n"
-            f"       Scope lists are versioned so a run's recorded scope can be "
-            f"recovered later.")
+            f"manifest must live in manifests/ or local/manifests/, but {name!r} "
+            f"resolves to {resolved}\n"
+            f"       Keeping scope lists in the repository is what lets a run's "
+            f"recorded scope be found again.")
     return resolved
 
 
