@@ -452,11 +452,16 @@ should work is software; a table of which of your trips are captive collections 
 When in doubt, ask whether the document would mean anything to a stranger with the code and
 no photographs.
 
+**`project/` is working material, not deliverable.** The intent has always been that on a
+release day its contents go; `docs/` is what survives. `project/messages/` went further and
+left the repository on 2026-08-12 — correspondence between the two of us is team
+communication, not project content, and it reads as neither to anyone else. It lives in
+`local/messages/` now.
+
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
-`status/` handoffs, `reports/` (analysis output and worklists — generated ones are
-gitignored, see above), `messages/` (correspondence with the user, named
-`YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave),
-`bookeeping/` (pointers to state held outside this repo), `ideas/`. `local/` is gitignored and holds everything local: period-specific run commands,
+`status/` handoffs, `reports/` (analysis output — generated ones are gitignored, see
+above), `plans/`, `ideas/`. Correspondence is `local/messages/`, named
+`YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave. `local/` is gitignored and holds everything local: period-specific run commands,
 `local/manifests/` for scope lists naming real trips, and working copies of generated
 reports. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
 the result rather than notes about building it.
