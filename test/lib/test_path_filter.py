@@ -164,3 +164,47 @@ def test_anything_landing_outside_is_refused(bad):
     from code.lib.path_filter import resolve
     with pytest.raises(ValueError):
         resolve(bad)
+
+
+# --- two manifest roots -----------------------------------------------------
+# `manifests/` is versioned and means the same to anyone; `local/manifests/` is
+# gitignored and holds lists that name real places. Both are inside the repo,
+# which is what keeps a run's recorded scope findable.
+
+def _roots(tmp_path, monkeypatch):
+    from code.lib import path_filter as pf
+    versioned = tmp_path / "manifests"
+    local = tmp_path / "local" / "manifests"
+    versioned.mkdir(parents=True)
+    local.mkdir(parents=True)
+    monkeypatch.setattr(pf, "MANIFEST_DIR", versioned)
+    monkeypatch.setattr(pf, "LOCAL_MANIFEST_DIR", local)
+    return pf, versioned, local
+
+
+def test_bare_name_falls_back_to_the_local_root(tmp_path, monkeypatch):
+    pf, _, local = _roots(tmp_path, monkeypatch)
+    (local / "trips.txt").write_text("Photos-16/x\n", encoding="utf-8")
+    assert pf.resolve("trips.txt") == (local / "trips.txt").resolve()
+
+
+def test_bare_name_prefers_the_versioned_root(tmp_path, monkeypatch):
+    pf, versioned, local = _roots(tmp_path, monkeypatch)
+    for d in (versioned, local):
+        (d / "both.txt").write_text("Photos-16/x\n", encoding="utf-8")
+    assert pf.resolve("both.txt") == (versioned / "both.txt").resolve()
+
+
+def test_repo_relative_form_works_for_both(tmp_path, monkeypatch):
+    pf, versioned, local = _roots(tmp_path, monkeypatch)
+    (versioned / "a.txt").write_text("x\n", encoding="utf-8")
+    (local / "b.txt").write_text("x\n", encoding="utf-8")
+    assert pf.resolve("manifests/a.txt") == (versioned / "a.txt").resolve()
+    assert pf.resolve("local/manifests/b.txt") == (local / "b.txt").resolve()
+
+
+@pytest.mark.parametrize("bad", ["/tmp/x.txt", "manifests/../data/x", "local/../../x"])
+def test_escapes_are_still_refused(tmp_path, monkeypatch, bad):
+    pf, _, _ = _roots(tmp_path, monkeypatch)
+    with pytest.raises(ValueError, match="manifests/ or local/manifests/"):
+        pf.resolve(bad)
