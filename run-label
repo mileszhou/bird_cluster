@@ -1,5 +1,13 @@
 #!/bin/bash
+set -euo pipefail
 
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer. This script had no cd at all and only
+# worked when invoked from the repository root.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
+[ -d .venv ] && source .venv/bin/activate
 source .env
 python3 -m code.bird_label \
    --conf-threshold 0.6 --no-bird 0.2 \

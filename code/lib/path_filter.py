@@ -36,12 +36,14 @@ line takes nested children with it. Comparison is on whole path segments, so
 
 from pathlib import Path
 
+from code.lib.config import PROJECT_ROOT
+
 # Scope lists live here and nowhere else. They are inputs a run records by
 # *path*, so the file has to be in the repo for the scope to be reconstructible
 # later -- a manifest under /tmp makes a run.json a dangling reference, and the
 # population a result was computed over becomes unrecoverable. Naming the
 # directory in the code rather than in every command line is what enforces it.
-MANIFEST_DIR = Path(__file__).resolve().parents[2] / "manifests"
+MANIFEST_DIR = PROJECT_ROOT / "manifests"
 
 
 class PathFilter:

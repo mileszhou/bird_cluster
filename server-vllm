@@ -1,7 +1,11 @@
 #!/usr/bin/bash
 # Start the vLLM server on this box, in docker.
 set -euo pipefail
-cd "$(dirname "$0")"
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
 
 # One optional positional: the model. Anything further would be silently
 # dropped, which is how `./run-vllm --years 2024,2025` once relabelled a whole

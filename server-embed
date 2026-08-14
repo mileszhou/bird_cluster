@@ -1,7 +1,11 @@
 #!/bin/bash
 # DINOv3 embedding server. Runs on the GPU host; host/port from config.toml
 # [servers.embed]. Needs HF_TOKEN with the DINOv3 licence accepted (from .env).
-cd "$(dirname "$0")"
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
 [ -d .venv ] && source .venv/bin/activate
 source .env 2>/dev/null
 

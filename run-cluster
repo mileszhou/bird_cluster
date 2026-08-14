@@ -11,7 +11,11 @@
 # different sizes cannot tread on each other. Two calls on the *same* size at
 # once is a user error. local/cluster-parallel is a list of such calls.
 set -euo pipefail
-cd "$(dirname "$0")"
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
 [ -d .venv ] && source .venv/bin/activate
 
 python3 -m code.cluster.discover --output-dir ./output/cluster "$@"

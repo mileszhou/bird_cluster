@@ -2,6 +2,10 @@
 # Recover data/jpg/<Photos-YY>/<trip>/*.jpg from the flat Lightroom export in
 # data/jpg/_flat (filenames encoded as <trip>~~<filename>.jpg). Dry run by
 # default; pass --apply to actually move files.
-cd "$(dirname "$0")"
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
 [ -d .venv ] && source .venv/bin/activate
 python3 tools/decode_flat_jpg.py "$@"
