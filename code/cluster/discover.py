@@ -197,23 +197,34 @@ def write_assignments(path, labels, probs, rows, names):
         w.writerows(records)
 
 
-def run_one(X, rows, min_cluster_size, min_samples, out_root: Path, source, git_hash):
+def run_one(X, rows, min_cluster_size, min_samples, out_root: Path, source, git_hash,
+            force=False):
     import hdbscan
 
     out = out_root / f"mcs{min_cluster_size}"
-    # A size owns its own directory and clears it before writing. It used to
-    # refuse instead, on the grounds that runs are kept side by side -- but that
-    # is what ./clean is for, at the level of a whole run. Within one run root,
-    # refusing meant an interrupted fit left an empty mcs<N>/ that blocked the
-    # retry, which is worst exactly when it matters: a parallel sweep where one
-    # job dies and the others do not.
+    # A finished run is protected; an unfinished one is not. run.json is written
+    # last, after assignments.csv, centers.jsonl and clusterer.pkl, so its
+    # presence means the run completed and its absence means it did not.
     #
-    # Two instances on the same size at once is a user error, not a case to
-    # defend against. The name check is the one cheap guard kept, because this
-    # deletes a directory tree and --output-dir is a caller-supplied path.
+    # This is the rule that satisfies both pressures. Refusing outright meant an
+    # interrupted fit left an empty mcs<N>/ that blocked its own retry -- worst
+    # in a parallel sweep, where one job dies and the others do not. Clearing
+    # outright meant re-running a size silently destroyed a real result, with
+    # ./clean the only way back, and ./clean is no longer cheap now that a run
+    # root holds several sweeps.
+    #
+    # So: a partial directory is cleared without ceremony, a complete one stops
+    # the run and says how to proceed. The name check is kept because this
+    # deletes a tree and --output-dir is caller-supplied.
     if out.exists():
         if not re.fullmatch(r"mcs\d+", out.name):
             sys.exit(f"error: refusing to clear {out}: not an mcs<N> directory.")
+        if (out / "run.json").exists() and not force:
+            sys.exit(f"error: {out} holds a finished run. Re-running would "
+                     f"destroy it.\n"
+                     f"       Pass --force to replace it, or ./clean to archive "
+                     f"the whole run root first.")
+        logger.info(f"  clearing {'finished' if (out / 'run.json').exists() else 'partial'} {out}")
         shutil.rmtree(out)
     out.mkdir(parents=True)
 
@@ -283,6 +294,9 @@ def main():
     ap.add_argument("--output-dir", type=Path, default=Path("./output/cluster"))
     ap.add_argument("--min-cluster-size", default="5,15,40",
                     help="comma-separated sweep; each value gets its own output directory")
+    ap.add_argument("--force", action="store_true",
+                    help="replace a finished run in mcs<N>/; partial ones are always "
+                         "cleared without it")
     ap.add_argument("--min-samples", type=int, default=None,
                     help="HDBSCAN's conservativeness; defaults to min_cluster_size")
     ap.add_argument("--keep-duplicate-captures", action="store_true",
@@ -317,7 +331,7 @@ def main():
     sizes = [int(s) for s in args.min_cluster_size.split(",") if s.strip()]
     for mcs in sizes:
         run_one(X, rows, mcs, args.min_samples, args.output_dir,
-                str(args.embeddings), git_hash)
+                str(args.embeddings), git_hash, args.force)
 
 
 if __name__ == "__main__":
