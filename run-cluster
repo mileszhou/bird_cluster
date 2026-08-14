@@ -1,11 +1,14 @@
-#!/bin/bash
-# Step 2: HDBSCAN over the curated embeddings.
+#!/usr/bin/bash
+# Step 2: HDBSCAN over the curated embeddings, swept across min_cluster_size.
 #
-# Each --min-cluster-size gets its own output directory; nothing is overwritten,
-# because how the structure changes across the sweep is the finding.
+# Sequential on purpose. discover.py already loops over the comma list, and one
+# process keeps the 27k x 768 matrix in memory once rather than once per size.
+# For the parallel version see local/cluster-parallel.
+set -euo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
+
 python3 -m code.cluster.discover \
    --output-dir ./output/cluster \
-   --min-cluster-size 5,15,40 \
+   --min-cluster-size 3,5,8,15,40 \
    "$@"
