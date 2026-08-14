@@ -1,14 +1,17 @@
 #!/usr/bin/bash
-# Step 2: HDBSCAN over the curated embeddings, swept across min_cluster_size.
+# Step 2: HDBSCAN over the curated embeddings. One invocation, one run.
 #
-# Sequential on purpose. discover.py already loops over the comma list, and one
-# process keeps the 27k x 768 matrix in memory once rather than once per size.
-# For the parallel version see local/cluster-parallel.
+#     ./run-cluster                          # discover.py's default sweep
+#     ./run-cluster --min-cluster-size 15    # one size
+#     ./run-cluster --min-cluster-size 3,5,8 # a sweep in one process
+#
+# It does not decide which sizes to run -- that is the caller's business, which
+# is what makes it safe to call several times at once. Each size writes only its
+# own output/cluster/mcs<N>/, and discover.py refuses to overwrite one that
+# exists, so concurrent calls cannot tread on each other. local/cluster-parallel
+# is a list of such calls.
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
 
-python3 -m code.cluster.discover \
-   --output-dir ./output/cluster \
-   --min-cluster-size 3,5,8,15,40 \
-   "$@"
+python3 -m code.cluster.discover --output-dir ./output/cluster "$@"
