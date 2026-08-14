@@ -39,6 +39,8 @@ table. Never modifies assignments.csv.
 """
 
 import argparse
+import os
+import sys
 import collections
 import csv
 import json
@@ -51,6 +53,12 @@ warnings.filterwarnings("ignore")
 import hdbscan
 from sklearn.metrics import (adjusted_mutual_info_score as ami,
                              homogeneity_score, completeness_score)
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.csv_post import add_arguments, read_rows, resolve_runs
 

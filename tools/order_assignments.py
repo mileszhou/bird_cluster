@@ -15,11 +15,21 @@ against the fitter's order, which is the order vectors happened to be loaded in.
 
 Needs `cluster_size`; run `add_cluster_size.py` first if it is absent.
 
-    tools/order_assignments.py
-    tools/order_assignments.py --run output_003/cluster/mcs5
+    python3 -m tools.order_assignments
+    python3 -m tools.order_assignments --run output_003/cluster/mcs5
 """
 
 import argparse
+
+import os
+import sys
+from pathlib import Path
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.csv_marks import REGISTRY
 from code.lib.csv_post import add_arguments, apply_tool, resolve_runs

@@ -46,10 +46,18 @@ own: this produces a PNG beside the CSV and does not touch the CSV.
 """
 
 import argparse
+import os
+import sys
 import collections
 from pathlib import Path
 
 import numpy as np
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib import csv_marks
 from code.lib.csv_marks import REGISTRY

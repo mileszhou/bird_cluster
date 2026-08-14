@@ -11,7 +11,7 @@ The rule here is precise instead: **a sidecar is taken from the overlay only if
 the overlay's CSV has a row for it.** Everything the overlay did not label stays
 exactly as the base left it.
 
-    tools/merge_label_run.py --base data/label --overlay output_003_rerun-24-25 \\
+    python3 -m tools.merge_label_run --base data/label --overlay output_003_rerun-24-25 \\
                              --out data/label-v2 --dry-run
 
 Neither input is modified. The output is a new label directory, so a bad merge

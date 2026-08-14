@@ -9,14 +9,24 @@ Noise gets an **empty** value, not 0. `cluster_id = -1` is not a cluster with no
 members, it is the absence of one; a 0 would sort among real sizes and read as a
 measurement.
 
-    tools/add_cluster_size.py                       # every run under the working output
-    tools/add_cluster_size.py --run output_003/cluster/mcs5
+    python3 -m tools.add_cluster_size                       # every run under the working output
+    python3 -m tools.add_cluster_size --run output_003/cluster/mcs5
 
 Idempotent, and safe to run before or after any other post-processor.
 """
 
 import argparse
 import collections
+
+import os
+import sys
+from pathlib import Path
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.csv_marks import REGISTRY
 from code.lib.csv_post import add_arguments, apply_tool, resolve_runs
