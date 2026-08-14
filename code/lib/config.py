@@ -6,33 +6,53 @@ each backend server runs on, and which run directory the analysis tools work on.
 """
 
 import os
+import sys
 import tomllib
 from functools import lru_cache
 from pathlib import Path
 
+def _looks_like_repo(path: Path) -> bool:
+    return (path / "config.toml").is_file() and (path / "code").is_dir()
+
+
 def _project_root() -> Path:
-    """The repository root: `$PROJECT_ROOT` if set, else inferred from this file.
+    """The repository root, from the first source that yields it.
+
+        1. $PROJECT_ROOT          -- a declaration
+        2. the venv's parent      -- .venv/ lives at the root, so sys.prefix/..
+        3. this file's location   -- parents[2]
 
     One definition, so nothing else counts `parents[n]`. That count differs by
-    how deep a file sits -- 1 from `tools/`, 2 from `code/lib/` -- and it is
-    silently wrong the moment a file moves, which makes every path in the
-    project depend on where its own source happens to live.
+    how deep a file sits -- 1 from `tools/`, 2 from `code/lib/` -- and is
+    silently wrong the moment a file moves.
 
-    `$PROJECT_ROOT` wins when set, so a caller can point the whole project at a
-    checkout other than the one the code was imported from. It is validated
-    rather than trusted: a wrong value would otherwise surface far away, as a
-    missing config or an empty dataset, which is the failure this project keeps
-    trying to stop happening.
+    The venv is the most robust of the three in practice: `./venv` creates
+    `.venv/` at the root, so `sys.prefix` points there for anything running
+    under it, wherever the source lives and whatever the working directory.
+    `sys.prefix` rather than `$VIRTUAL_ENV` because running `.venv/bin/python`
+    directly sets the first and not the second, which is how the tests invoke it.
+
+    **A declaration is binding; an inference is not.** If `$PROJECT_ROOT` is set
+    and wrong, that stops the run -- someone said where the project is and was
+    mistaken, and continuing would surface far away as a missing config or an
+    empty dataset. If the venv is elsewhere, or there is no venv, that is not a
+    claim about anything and simply falls through to the next candidate. Same
+    rule as `data_dir()`, for the same reason.
     """
-    env = os.environ.get("PROJECT_ROOT")
-    if not env:
-        return Path(__file__).resolve().parents[2]
-    root = Path(env).expanduser().resolve()
-    if not (root / "config.toml").is_file() or not (root / "code").is_dir():
-        raise SystemExit(
-            f"error: $PROJECT_ROOT={env!r} does not look like this repository "
-            f"(no config.toml, or no code/).")
-    return root
+    declared = os.environ.get("PROJECT_ROOT")
+    if declared:
+        root = Path(declared).expanduser().resolve()
+        if not _looks_like_repo(root):
+            raise SystemExit(
+                f"error: $PROJECT_ROOT={declared!r} does not look like this "
+                f"repository (no config.toml, or no code/).")
+        return root
+
+    for candidate in (Path(sys.prefix).resolve().parent,
+                      Path(__file__).resolve().parents[2]):
+        if _looks_like_repo(candidate):
+            return candidate
+    return Path(__file__).resolve().parents[2]
 
 
 PROJECT_ROOT = _project_root()
