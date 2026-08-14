@@ -39,6 +39,8 @@ import json
 import logging
 import pickle
 import subprocess
+import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -199,15 +201,38 @@ def run_one(X, rows, min_cluster_size, min_samples, out_root: Path, source, git_
     import hdbscan
 
     out = out_root / f"mcs{min_cluster_size}"
+    # A size owns its own directory and clears it before writing. It used to
+    # refuse instead, on the grounds that runs are kept side by side -- but that
+    # is what ./clean is for, at the level of a whole run. Within one run root,
+    # refusing meant an interrupted fit left an empty mcs<N>/ that blocked the
+    # retry, which is worst exactly when it matters: a parallel sweep where one
+    # job dies and the others do not.
+    #
+    # Two instances on the same size at once is a user error, not a case to
+    # defend against. The name check is the one cheap guard kept, because this
+    # deletes a directory tree and --output-dir is a caller-supplied path.
     if out.exists():
-        sys.exit(f"error: {out} exists. Runs are kept side by side rather than "
-                 f"overwritten -- remove it or use a different --output-dir.")
+        if not re.fullmatch(r"mcs\d+", out.name):
+            sys.exit(f"error: refusing to clear {out}: not an mcs<N> directory.")
+        shutil.rmtree(out)
     out.mkdir(parents=True)
 
     logger.info(f"fitting min_cluster_size={min_cluster_size} on {X.shape[0]} vectors ...")
     clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size,
                                 min_samples=min_samples,
                                 metric="euclidean",
+                                # Measured 2026-08-14: a no-op on this data, kept
+                                # because it costs nothing and helps if the
+                                # dimensionality ever drops. At 768 dims hdbscan
+                                # takes the generic path -- KD/ball trees are
+                                # useless up here -- and the generic MST is
+                                # single-threaded, so n_jobs=1 and -1 both took
+                                # 21.1 s on 6,000 vectors. BLAS does the whole
+                                # pairwise product in 0.2 s on the same box, so
+                                # the cores are there; hdbscan cannot use them.
+                                # Running several min_cluster_size values as
+                                # separate processes is the only way to fill the
+                                # machine -- see local/cluster-parallel.
                                 core_dist_n_jobs=-1)
     labels = clusterer.fit_predict(X)
     probs = clusterer.probabilities_
