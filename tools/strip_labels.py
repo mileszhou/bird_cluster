@@ -36,8 +36,16 @@ anything is written.
 """
 
 import argparse
+import os
+import sys
 import collections
 from pathlib import Path
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.xmp_labels import read_subjects, split_keywords
 from code.lib import xmp_write

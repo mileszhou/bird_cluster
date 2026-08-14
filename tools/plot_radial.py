@@ -49,6 +49,8 @@ place, as the fade across each diagonal block.
 """
 
 import argparse
+import os
+import sys
 import collections
 import csv
 from pathlib import Path
@@ -56,6 +58,12 @@ from pathlib import Path
 import numpy as np
 from scipy import stats
 from scipy.signal import find_peaks
+
+# Running this as `python3 tools/x.py` puts tools/ on sys.path, not the repo
+# root -- and then `import code.lib` finds the *stdlib* `code` module, which is
+# not a package. Put the root first so both invocation forms work.
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.csv_post import add_arguments, read_rows, resolve_runs
 from tools.plot_matrix import load_vectors
