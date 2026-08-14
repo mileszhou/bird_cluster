@@ -27,7 +27,12 @@ per pair rather than O(n): the whole curve for 27,194 images costs about what
 one dense row would.
 
     python3 -m tools.plot_adjacency --run output/cluster/mcs15
+    python3 -m tools.plot_adjacency --run output/cluster/mcs15 --order fiedler
     python3 -m tools.plot_adjacency --run output/cluster/mcs15 --all-images
+
+Writes the PNG and a CSV of the same numbers -- seq, row_gap, cos_gap, a
+boundary flag, cluster_id and key -- so the curve can be charted or sorted by
+hand. Chart column B against column A and you have the top panel.
 
 By default it seriates the clustered rows of one run, so the cluster boundaries
 can be drawn on top and the claim checked. `--all-images` seriates the whole
@@ -35,6 +40,7 @@ embedding file instead, clusters unknown.
 """
 
 import argparse
+import csv
 import os
 import sys
 import json
@@ -110,11 +116,12 @@ def main():
 
     for run_dir in resolve_runs(args):
         if args.all_images:
-            keys, X = [], []
+            keys, species, X = [], [], []
             with open(args.embeddings, encoding="utf-8") as fh:
                 for line in fh:
                     d = json.loads(line)
-                    keys.append(d["key"]); X.append(d["embedding"])
+                    keys.append(d["key"]); species.append(d.get("species", ""))
+                    X.append(d["embedding"])
             X = np.asarray(X, dtype=np.float32)
             labels = None
         else:
@@ -122,6 +129,8 @@ def main():
                     if r["cluster_id"] != NOISE]
             X = load_vectors(args.embeddings, [r["key"] for r in rows])
             labels = [r["cluster_id"] for r in rows]
+            keys = [r["key"] for r in rows]
+            species = [r.get("species", "") for r in rows]
 
         if args.all_images or args.order == "fiedler":
             order = fiedler_order(X)
@@ -146,13 +155,35 @@ def main():
             lab = [labels[i] for i in order]
             boundaries = [i for i in range(1, len(lab)) if lab[i] != lab[i - 1]]
 
+        # The numbers as well as the picture. Excel charts a column directly, and
+        # the curve is the kind of thing worth poking at by hand.
+        #
+        # utf-8-sig: the key column carries trip folder names, and Excel reads a
+        # BOM-less UTF-8 file as the system codepage and mangles every one.
+        csv_out = run_dir / ("adjacency-all.csv" if args.all_images
+                             else f"adjacency-{args.order}.csv")
+        with open(csv_out, "w", newline="", encoding="utf-8-sig") as fh:
+            w = csv.writer(fh)
+            # Image and labels first: the row is about a photograph, and the
+            # numbers describe the step from it to the next one. Reading left to
+            # right you see what it is before what it measures.
+            w.writerow(["key", "species", "cluster_id",
+                        "seq", "row_gap", "cos_gap", "boundary"])
+            bset = set(boundaries)
+            for i in range(len(row_gap)):
+                j = order[i]
+                w.writerow([keys[j], species[j],
+                            labels[j] if labels is not None else "",
+                            i + 1, f"{row_gap[i]:.6f}", f"{cos_gap[i]:.6f}",
+                            1 if (i + 1) in bset else 0])
+
         out = run_dir / ("adjacency-all.png" if args.all_images
                          else f"adjacency-{args.order}.png")
         draw(cos_gap, row_gap, boundaries, out,
              f"{run_dir.name}: {len(X):,} images, "
              f"{'seriated clusters, members by distance to centroid' if not args.all_images and args.order == 'cluster' else 'spectral seriation of every image'}"
              + (f", {len(boundaries)} cluster boundaries" if boundaries else ""))
-        print(f"  {run_dir.name}: {len(X):,} rows -> {out.name}")
+        print(f"  {run_dir.name}: {len(X):,} rows -> {out.name}, {csv_out.name}")
 
         if boundaries:
             b = np.array(boundaries)
