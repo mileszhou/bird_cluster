@@ -151,6 +151,42 @@ def order_within(X, bounds):
     return np.concatenate(idx)
 
 
+def fiedler_order(X):
+    """Seriate every image, ignoring the clusters entirely.
+
+    The same spectral seriation as `seriate()`, applied to images rather than
+    centroids -- which is only affordable because the similarity is a Gram
+    matrix. `W = XX^T` has rank 768, so `Wv = X(X^T v)` costs O(n*d) and the
+    n x n matrix is never formed: at 27,194 images that is a 6 ms matvec against
+    a 5.5 GiB matrix that would not fit anywhere sensible. Lanczos wants one
+    eigenvector, and measured on this data it converges in about 40 matvecs
+    regardless of n -- the sqrt(n) iteration bound is worst-case, for graphs
+    with a tiny spectral gap like a path. Total: ~3 s for the whole library.
+
+    **The +1 is what makes it legitimate, not a fudge.** ABH assume a
+    non-negative similarity, and 23% of these cosines are below zero. Adding a
+    constant to every off-diagonal entry shifts the Laplacian's eigenvalues by
+    c*n and leaves every eigenvector orthogonal to 1 unchanged -- so `XX^T + 1`
+    is non-negative (cosine >= -1), keeps rank 769, and has exactly the Fiedler
+    vector we want. Clipping at zero would also give a non-negative matrix but a
+    different one, and it destroys the low rank: O(n^2) per matvec and the whole
+    matrix in memory.
+    """
+    from scipy.sparse.linalg import LinearOperator, eigsh
+    n = len(X)
+    Xd = np.asarray(X, dtype=np.float64)
+    ones = np.ones(n)
+    deg = Xd @ (Xd.T @ ones) + n - 1.0          # row sums of W, diagonal excluded
+
+    def mv(v):
+        v = v.ravel()
+        return deg * v - (Xd @ (Xd.T @ v) + ones * v.sum() - v)
+
+    vals, vecs = eigsh(LinearOperator((n, n), matvec=mv, dtype=np.float64),
+                       k=2, which="SA", tol=1e-6, maxiter=20000)
+    return np.argsort(vecs[:, np.argsort(vals)[1]])
+
+
 def tile_starts_by_cluster(bounds, size: int, warp: float):
     """Tile boundaries that give cluster *i* screen width proportional to its
     size**warp, and never let a tile straddle two clusters.
@@ -299,7 +335,14 @@ def run(run_dir: Path, args) -> str:
 
     X = load_vectors(args.embeddings, [r["key"] for r in rows])
 
-    if args.order == "similarity":
+    if args.order == "fiedler":
+        # A different picture from the others: no cluster blocks at all, just
+        # the ordering. If the data is one-dimensional the whole matrix bands;
+        # if it is not, this is what "not" looks like.
+        idx = fiedler_order(X)
+        X, rows = X[idx], [rows[i] for i in idx]
+        bounds = [(0, len(rows))]
+    elif args.order == "similarity":
         # Seriate the real clusters; noise, if kept, is not a cluster and stays
         # pinned at the end where order_assignments put it.
         real = [b for b, r in zip(bounds, (rows[a] for a, _ in bounds))
@@ -339,15 +382,17 @@ def run(run_dir: Path, args) -> str:
     scale = (f"{widths.min()}..{widths.max()} images/tile, "
              f"warp {args.warp:g}{' per cluster' if args.by_cluster else ''}"
              if args.warp < 1 or args.by_cluster else f"{widths[0]} images each")
-    what = "species labels" if args.group == "label" else "clusters"
+    what = ("images" if args.order == "fiedler"
+            else "species labels" if args.group == "label" else "clusters")
     head = f"{run_dir.name}" + (f" cluster {args.focus}" if args.focus else "")
     title = (f"{head}: {len(rows):,} images, {n_clusters} {what}"
              f"{' + noise' if args.include_noise else ''} "
              f"({len(starts)}x{len(starts)} tiles, {scale}"
-             f"{', seriated' if args.order == 'similarity' else ''})")
+             f"{', seriated' if args.order == 'similarity' else ''}"
+             f"{', spectrally seriated' if args.order == 'fiedler' else ''})")
     suffix = ("" if args.warp >= 1 and not args.by_cluster else
               f"-{'c' if args.by_cluster else 'p'}{args.warp:g}")
-    suffix += "-ser" if args.order == "similarity" else ""
+    suffix += {"similarity": "-ser", "fiedler": "-fiedler", "size": ""}[args.order]
     suffix += "-ctr" if args.within == "centre" else ""
     if args.focus:
         suffix = f"-focus{args.focus.replace('/', '_')[:24]}" + suffix
@@ -357,7 +402,8 @@ def run(run_dir: Path, args) -> str:
            f"matrix-{args.style}{suffix}{'-noise' if args.include_noise else ''}.png")
     draw(M, out, title, args.style, edges,
          f"image, {what} ordered by "
-         + ("centroid similarity" if args.order == "similarity" else "size"),
+         + {"similarity": "centroid similarity", "fiedler": "spectral seriation",
+            "size": "size"}[args.order],
          args.dpi)
     return f"{len(rows):,} rows -> {out.name}"
 
@@ -377,10 +423,11 @@ def main():
                     help="tile boundary exponent: start(k) = n*(k/T)**warp. 1 = uniform; "
                          "below 1 spends screen area on the small clusters at the tail "
                          "(0.5 is the square-root warp)")
-    ap.add_argument("--order", choices=("size", "similarity"), default="size",
-                    help="cluster layout order. 'size' is the file order (largest "
-                         "first, a reading order); 'similarity' seriates the centroids "
-                         "so related clusters sit adjacent")
+    ap.add_argument("--order", choices=("size", "similarity", "fiedler"), default="size",
+                    help="'size' is the file order (largest first, a reading order); "
+                         "'similarity' seriates the cluster centroids so related "
+                         "clusters sit adjacent; 'fiedler' seriates every image and "
+                         "ignores clusters entirely")
     ap.add_argument("--focus", default=None,
                     help="restrict to one cluster, by cluster_id or a substring of its "
                          "cluster_name. Raises the default resolution, since one "
