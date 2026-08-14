@@ -7,9 +7,9 @@
 #
 # It does not decide which sizes to run -- that is the caller's business, which
 # is what makes it safe to call several times at once. Each size writes only its
-# own output/cluster/mcs<N>/, and discover.py refuses to overwrite one that
-# exists, so concurrent calls cannot tread on each other. local/cluster-parallel
-# is a list of such calls.
+# own output/cluster/mcs<N>/, which it clears first, so concurrent calls on
+# different sizes cannot tread on each other. Two calls on the *same* size at
+# once is a user error. local/cluster-parallel is a list of such calls.
 set -euo pipefail
 cd "$(dirname "$0")"
 [ -d .venv ] && source .venv/bin/activate
