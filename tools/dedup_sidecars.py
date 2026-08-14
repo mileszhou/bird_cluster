@@ -21,11 +21,13 @@ Nothing is modified: this reads the library and writes a report.
 import argparse
 import collections
 import csv
+import os
 import sys
 from datetime import date
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.config import data_dir, display_path  # noqa: E402
 from code.lib.sidecar_meta import capture_key, read_meta  # noqa: E402

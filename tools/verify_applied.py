@@ -28,11 +28,13 @@ import argparse
 import collections
 import csv
 import hashlib
+import os
 import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib import xmp_write  # noqa: E402
 

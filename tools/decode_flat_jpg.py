@@ -30,10 +30,12 @@ import argparse
 import collections
 import csv
 import re
+import os
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.config import data_dir  # noqa: E402
 

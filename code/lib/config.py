@@ -10,7 +10,33 @@ import tomllib
 from functools import lru_cache
 from pathlib import Path
 
-CONFIG_PATH = Path(__file__).resolve().parents[2] / "config.toml"
+def _project_root() -> Path:
+    """The repository root: `$PROJECT_ROOT` if set, else inferred from this file.
+
+    One definition, so nothing else counts `parents[n]`. That count differs by
+    how deep a file sits -- 1 from `tools/`, 2 from `code/lib/` -- and it is
+    silently wrong the moment a file moves, which makes every path in the
+    project depend on where its own source happens to live.
+
+    `$PROJECT_ROOT` wins when set, so a caller can point the whole project at a
+    checkout other than the one the code was imported from. It is validated
+    rather than trusted: a wrong value would otherwise surface far away, as a
+    missing config or an empty dataset, which is the failure this project keeps
+    trying to stop happening.
+    """
+    env = os.environ.get("PROJECT_ROOT")
+    if not env:
+        return Path(__file__).resolve().parents[2]
+    root = Path(env).expanduser().resolve()
+    if not (root / "config.toml").is_file() or not (root / "code").is_dir():
+        raise SystemExit(
+            f"error: $PROJECT_ROOT={env!r} does not look like this repository "
+            f"(no config.toml, or no code/).")
+    return root
+
+
+PROJECT_ROOT = _project_root()
+CONFIG_PATH = PROJECT_ROOT / "config.toml"
 LOCAL_CONFIG_PATH = CONFIG_PATH.with_name("config.local.toml")
 
 

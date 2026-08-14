@@ -30,13 +30,15 @@ Nothing is modified: this reads the library and writes a report.
 """
 import argparse
 import csv
+import os
 import sys
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, os.environ.get("PROJECT_ROOT")
+                or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.config import display_path  # noqa: E402
 from code.lib.trips import frame_id, trip_date  # noqa: E402
