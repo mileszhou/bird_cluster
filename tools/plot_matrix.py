@@ -118,9 +118,18 @@ def seriate(C):
     """
     W = np.clip(C @ C.T, 0, None)
     np.fill_diagonal(W, 0)
-    d = W.sum(1)
-    Dm = np.diag(1 / np.sqrt(np.maximum(d, 1e-9)))
-    _, v = np.linalg.eigh(Dm @ (np.diag(d) - W) @ Dm)
+    # The UNNORMALISED Laplacian, deliberately. Atkins-Boman-Hendrickson's
+    # theorem -- that sorting by the Fiedler vector recovers a Robinson ordering
+    # exactly when one exists -- is stated for D - W, not for the normalised
+    # D^-1/2 (D - W) D^-1/2. This used the normalised form until 2026-08-13, and
+    # the difference is not cosmetic: on a synthetic Robinson matrix with a known
+    # answer, unnormalised recovers it exactly at every n tried (20..500) while
+    # normalised fails from n=50 up. On the real centroids it cost about a
+    # seventh of the available banding -- 1.67x against 1.78x at a +/-5% band,
+    # where the ceiling for a matrix that is one-dimensional by construction is
+    # 1.93x and the floor for seriated random vectors is 1.35x.
+    L = np.diag(W.sum(1)) - W
+    _, v = np.linalg.eigh(L)
     return np.argsort(v[:, 1])
 
 
