@@ -171,6 +171,13 @@ def fiedler_order(X):
     regardless of n -- the sqrt(n) iteration bound is worst-case, for graphs
     with a tiny spectral gap like a path. Total: ~3 s for the whole library.
 
+    **This orders; it does not group.** Seriation recovers well-separated
+    clusters as contiguous blocks only up to about 8 of them -- measured on
+    synthetic blobs 40 sigma apart, perfect at k=8 and gone by k=16. One
+    eigenvector carries one bipartition, and no amount of separation adds
+    capacity. So this is a display order for groups that clustering has already
+    found, not a way of finding them. See project/ideas/03.
+
     **The +1 is what makes it legitimate, not a fudge.** ABH assume a
     non-negative similarity, and 23% of these cosines are below zero. Adding a
     constant to every off-diagonal entry shifts the Laplacian's eigenvalues by
