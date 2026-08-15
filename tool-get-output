@@ -1,6 +1,0 @@
-#!/bin/bash
-# rsync the current output/ to desktop
-export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
-cd "$PROJECT_ROOT"
-
-rsync -av output/ .
