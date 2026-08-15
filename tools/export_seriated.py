@@ -14,9 +14,14 @@ damaged master.
 
 **The encoding.**
 
-    day     one calendar date per cluster, largest first
+    day     one calendar date per cluster, in seriated order
     minute  position within the cluster
     second  always 00, left free for inserting test images between two neighbours
+
+The dates follow the *seriation*, not cluster size -- so two adjacent dates are
+two clusters the seriation put next to each other, and the date sequence lines
+up with `adjacency-cluster.csv`. (This line used to read "largest first", which
+the code has never done and which would have made date adjacency meaningless.)
 
 A date holds 24*60 = 1440 minutes. Most clusters fit easily -- the largest at
 mcs15 is 427, about seven hours -- but a cluster larger than that continues onto
@@ -25,11 +30,23 @@ cluster index rather than literally the day number: with 146 clusters the run
 spans about five months of an imaginary year.
 
 **The tail.** Clusters below `--min-cluster` are concatenated in seriated order
-and share the dates after the big ones, because 121 separate one-day clusters of
-20 photos each is not a thing anyone wants to page through. At the default 100
-that is 25 clusters kept separate (4,123 images) and 121 in the tail (4,302).
-Lower the threshold to split the tail further; the numbers are printed so the
-choice can be made by looking.
+and share the dates after the big ones. The default is **15**, which at mcs15
+pools nothing at all: no cluster is smaller than the `min_cluster_size` it was
+clustered with, so all 146 get a date and every boundary is visible.
+
+It used to default to 100, on the reasoning that "121 separate one-day clusters
+of 20 photos each is not a thing anyone wants to page through". That was wrong
+twice over. In Lightroom a date is not a page you turn -- it is a segment marker
+in one continuous stream -- and at 100 the pool swallowed **51% of the export**
+into a single undifferentiated run of three dates, which is precisely the half
+you cannot study. A cluster is worth a date of its own; pooling earns its place
+only when a cluster is too small to be worth looking at separately, somewhere
+around 5. Raise it if a run has genuinely tiny clusters (mcs3 and mcs5 do); the
+numbers are printed so the choice can be made by looking.
+
+A pooled row keeps its **own** `cluster_id` in `index.csv` -- it used to be
+written as the literal `tail`, which discarded the identity of every pooled
+cluster, so nothing downstream could tell where one ended and the next began.
 
 **The folder structure is preserved**, `Photos-YY/<trip>/<name>.jpg` exactly as
 in `data/jpg`. Flattening would have collided: 429 of the 8,425 basenames repeat
@@ -41,7 +58,10 @@ original filenames untouched, and the capture time carries the ordering anyway
     python3 -m tools.export_seriated --run output/cluster/mcs15 --min-cluster 50
     python3 -m tools.export_seriated --run output/cluster/mcs15 --dry-run
 
-Writes to output/seriated/<run>/ plus an index CSV. Never touches data/.
+Writes to output/lightroom/jpg/<run>/ plus an index CSV. Never touches data/.
+The labels are written into the copies afterwards by tools/write_jpg_keywords.py
+-- Lightroom reads a sidecar only for raw formats, so a JPEG's keyword has to be
+embedded in the file itself.
 """
 
 import argparse
@@ -118,9 +138,10 @@ def main():
     ap.add_argument("--embeddings", type=Path,
                     default=Path("./data/embed/embeddings.jsonl"))
     ap.add_argument("--out", type=Path, default=None,
-                    help="default: output/seriated/<run>")
-    ap.add_argument("--min-cluster", type=int, default=100,
-                    help="clusters smaller than this share the tail dates (default 100)")
+                    help="default: output/lightroom/jpg/<run>")
+    ap.add_argument("--min-cluster", type=int, default=15,
+                    help="clusters smaller than this share the tail dates "
+                         "(default 15: at mcs15 nothing is pooled)")
     ap.add_argument("--base-date", default="2000-01-01",
                     help="date of the first cluster; a year far from real photos")
     ap.add_argument("--dry-run", action="store_true",
@@ -134,7 +155,7 @@ def main():
         X = load_vectors(args.embeddings, [r["key"] for r in rows])
         groups, n_tail = seriated_groups(rows, X, args.min_cluster)
 
-        out = args.out or (PROJECT_ROOT / "output" / "seriated" / run_dir.name)
+        out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" / run_dir.name)
         jpg_root = data_dir() / "jpg"
 
         plan, day, seq = [], 0, 0
@@ -165,8 +186,10 @@ def main():
                 dst = out / r["key"]          # mirror data/jpg's tree
                 dst.parent.mkdir(parents=True, exist_ok=True)
                 set_capture_time(jpg_root / r["key"], dst, when)
-                w.writerow([seq, when.strftime("%Y-%m-%d %H:%M:%S"), cid,
-                            r.get("species", ""), r["key"]])
+                # r's own cluster_id, not the group label: a pooled row would
+                # otherwise be recorded as `tail` and lose its identity.
+                w.writerow([seq, when.strftime("%Y-%m-%d %H:%M:%S"),
+                            r["cluster_id"], r.get("species", ""), r["key"]])
         print(f"    -> {out}  ({len(plan):,} files + index.csv)")
 
 
