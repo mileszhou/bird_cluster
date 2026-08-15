@@ -54,12 +54,17 @@ cluster boundary under a Fiedler ordering, against 98.6% random.
 
 ## The export, and what to do with it
 
-`output/seriated/mcs15/` — 8,425 copies, 1.0 GB, folder structure preserved,
+`output/lightroom/jpg/mcs15/` — 8,425 copies, 1.0 GB, folder structure preserved,
 capture time rewritten so **Lightroom's default sort walks the seriation**:
 
-    day     one date per cluster, largest first (2000-01-01 .. 2000-01-28)
+    day     one date per cluster, in seriated order (2000-01-01 .. 2000-05-25)
     minute  position within the cluster
     second  always :00, free for inserting test images between neighbours
+
+**146 dates, one per cluster, nothing pooled** (`--min-cluster 15`, the default
+since 2026-08-15). Dates follow the *seriation*, not cluster size, so adjacent
+dates are adjacent clusters and the date sequence lines up with the adjacency
+curve — the first days run warblers → robins → fulvettas → parrotbills.
 
 **Next action: import that folder into a *new* Lightroom catalogue** and study
 the clusters visually, using `output/cluster/mcs15/adjacency-cluster.csv` as the
@@ -67,12 +72,40 @@ guide — the curve's walls are cluster boundaries (86 of the 145 largest steps
 are real ones, 59% against 1.7% by chance) and the bumps *inside* a cluster are
 what wants a human eye.
 
-`output/seriated/mcs15/index.csv` joins the two: seq, capture_time, cluster_id,
-species, key.
+`output/lightroom/jpg/mcs15/index.csv` joins the two: seq, capture_time,
+cluster_id, species, key.
 
-The tail is 3 dates because 4,302 images do not fit in 1,440 minutes. If that is
-awkward, `--min-cluster 50` gives 54 separate clusters over 56 dates;
-`--min-cluster 200` gives 5 and a 10-date pool. `--dry-run` prints the shape.
+**The species label is embedded in each JPEG** as a `dc:subject` keyword
+(`jbly-极北柳莺-arctic warbler(98%)`), written by `tools/write_jpg_keywords.py`.
+It has to be embedded rather than deposited in a sidecar: Lightroom Classic
+reads `.xmp` sidecars only for raw formats, so the mechanism the labeller uses
+cannot reach a JPEG. Hand-written keywords in the export (`bhl-百花岭`,
+`cn-翠鸟-kingfisher` — 3,682 files carry them) are preserved; only the stale
+labels from the earlier pipeline era (846 files) are replaced. The `(NN%)`
+suffix is kept as the marker that a machine wrote the keyword, which is what
+`split_keywords()` recognises. Pixels verified byte-identical to `data/jpg`
+across all 8,425.
+
+**A keyword lives in two places in a JPEG, and the first pass only wrote one.**
+XMP `dc:subject` was set and verified everywhere, and Lightroom still showed the
+photos unlabelled: these files also carry legacy IPTC IIM keywords in a
+Photoshop `APP13` resource (`8BIM 0x0404`, dataset 2:25), which is what it
+displayed — nothing on 3,897, the user's own on 3,706, a stale label on 822.
+The capture time had the same split (`piexif` writes EXIF; IIM `2:55`/`2:60`
+still held the true date in 8,421). Both stores are now written together, so
+neither can win an argument. The general lesson: **verifying the field you just
+wrote proves the write, not the outcome.**
+
+**The pooling threshold was wrong and is fixed.** `--min-cluster` defaulted to
+100, which pooled 121 of the 146 clusters — **51% of the export** — into one
+undifferentiated three-date run, and `index.csv` recorded those rows as `tail`,
+discarding which cluster each belonged to. Both are corrected: the default is
+now 15 (at mcs15 nothing is pooled, since no cluster is smaller than the
+`min_cluster_size` it was clustered with), and a pooled row keeps its own
+`cluster_id`. Miles's rule for when pooling is legitimate: a cluster is worth a
+date of its own, and combining only makes sense when one is genuinely tiny —
+around 5. Raise the threshold for the mcs3 and mcs5 sweeps, which do have such
+clusters. `--dry-run` prints the shape.
 
 Nothing here touches `data/` or the Lightroom master. Copies, never hardlinks,
 deliberately.
