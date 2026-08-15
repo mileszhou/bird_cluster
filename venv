@@ -91,6 +91,7 @@ if has_stage cluster; then
     pip install hdbscan         # step 2 clustering; its condensed tree feeds step 3
     pip install pandas          # condensed_tree_.to_pandas() dump
     pip install matplotlib      # tools/plot_matrix.py renders the ordered matrix
+    pip install piexif          # export_seriated rewrites EXIF without re-encoding
 fi
 
 if has_stage server; then
