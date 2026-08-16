@@ -78,7 +78,8 @@ sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[1]))
 
 from code.lib.config import PROJECT_ROOT, data_dir  # noqa: E402
-from code.lib.csv_post import add_arguments, read_rows, resolve_runs  # noqa: E402
+from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
+                               resolve_runs)  # noqa: E402
 from tools.plot_matrix import load_vectors, seriate  # noqa: E402
 
 NOISE = "-1"
@@ -136,7 +137,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     ap.add_argument("--embeddings", type=Path,
-                    default=Path("./data/embed/embeddings.jsonl"))
+                    default=None,
+                    help="the vectors to read. Default: whatever the run\n"
+                         "being analysed recorded as its source")
     ap.add_argument("--out", type=Path, default=None,
                     help="default: output/lightroom/jpg/<run>")
     ap.add_argument("--min-cluster", type=int, default=15,
@@ -152,7 +155,7 @@ def main():
     for run_dir in resolve_runs(args):
         rows = [r for r in read_rows(run_dir / "assignments.csv")
                 if r["cluster_id"] != NOISE]
-        X = load_vectors(args.embeddings, [r["key"] for r in rows])
+        X = load_vectors(embeddings_for(run_dir, args.embeddings), [r["key"] for r in rows])
         groups, n_tail = seriated_groups(rows, X, args.min_cluster)
 
         out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" / run_dir.name)
