@@ -634,6 +634,24 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    `.npy` beside it rather than changing the write format.
 3. `code/cluster/discover.py` / `stats.py` — HDBSCAN + cluster statistics. Not yet written.
 
+**Judging a change to the embedding** — `tools/audit_embed_quality.py` compares runs by
+leave-one-out **1-NN accuracy** against the pipeline's own species labels: for each image, is
+its nearest neighbour the same species? A property of the vectors alone, with no
+`min_cluster_size` in it — comparing clusterings instead would confound the embedding with
+HDBSCAN's parameters. Runs are intersected on `key` first, so the numbers are over one
+population. Three figures, because micro alone hides the tail: micro over everything, plus
+micro and macro over species with ≥20 images. The restriction matters — a single-image species
+scores zero by construction and 1,246 of the 2,820 species have exactly one image, so an
+all-species macro would mostly measure how long the tail is. **Baseline at 224px: 1-NN
+0.5207, macro≥20 0.5567, ≥20 0.6259** over 27,194 images.
+
+The report goes to a fixed path so it can be diffed in an editor between runs, and carries no
+timestamp for the same reason; `--snapshot [LABEL]` files a numbered copy alongside. Both land
+in **`local/reports/`** rather than `project/reports/`, because this repository is public and
+the report is computed from a private collection — `local/` is gitignored wholesale, which is
+a stronger guarantee than remembering to add a per-file rule. `--anonymise` replaces species
+names with a stable digest for a copy that is going to leave the machine.
+
 Environment: `./venv` takes stage arguments so a non-GPU box need not pull torch —
 `./venv base client test cluster`, and `./venv server` adds torch/transformers/fastapi.
 Tests run from within `test/` (`../.venv/bin/python -m pytest lib/`). `test/conftest.py`
