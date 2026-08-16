@@ -452,6 +452,17 @@ should work is software; a table of which of your trips are captive collections 
 When in doubt, ask whether the document would mean anything to a stranger with the code and
 no photographs.
 
+**A generated report is written into `local/` and only *copied* into `project/reports/`
+after it has been checked** — by eye, or by a program that can vouch for it. Settled
+2026-08-16, and it is a change of default rather than a new rule: a tool that writes
+straight into a tracked directory is safe only while someone remembers to add a
+`.gitignore` line for each new report, and the repository is public. Writing to `local/`,
+which is ignored wholesale, means the unsafe direction requires a deliberate act. The check
+is the act. `tools/audit_embed_quality.py` is the first to work this way; new report
+writers should default their output path the same. Reports that were already generated into
+`project/reports/` keep their per-file `.gitignore` entries — those entries are the record
+of which files are known to be data, and deleting them would quietly re-arm the problem.
+
 **`project/` is working material, not deliverable.** The intent has always been that on a
 release day its contents go; `docs/` is what survives. `project/messages/` went further and
 left the repository on 2026-08-12 — correspondence between the two of us is team
