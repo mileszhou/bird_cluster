@@ -62,6 +62,22 @@ Every wrapper must either forward `"$@"` or reject arguments it does not know;
 `test/tools/test_run_scripts.py` asserts it across all three prefixes, after
 `./run-vllm --years` silently relabelled the whole library.
 
+**The root is the front door, and stays short.** A wrapper there is one of the
+handful of operations you would name to describe what this project does. Anything
+else lives in `tools/` and is invoked as `python3 -m tools.$name` — that is the
+home for a script with real logic that is not a project-level operation, and it
+needs no wrapper to be usable. `tool-embed-server` existed for about an hour
+before being deleted on those grounds: asking a server what it has loaded is a
+diagnostic, not a stage, and every wrapper added for convenience makes `ls run-*
+tool-* server-*` a worse answer to "what can I run here?".
+
+Below that, **`local/` is a list of commands in order** — read, and often run a
+line at a time rather than as a batch. Defaults and control flow do not belong
+there: it is the one directory that is gitignored, untested and unshared, so a
+program living in it is a program nobody can review. A `local/` script still has
+to handle its own working directory (`cd "$(dirname "$0")/.."`), because it will
+be run from anywhere.
+
 The backend is a flag, not a script:
 `run-gpt` / `run-cpp` / `run-tf` were four wrappers differing only in
 `--approach`, which put a deployment detail in the command name and let

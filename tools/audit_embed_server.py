@@ -9,6 +9,12 @@ The flag you passed is a request; `/health` is the answer.
     python3 -m tools.audit_embed_server                 # what is it serving?
     python3 -m tools.audit_embed_server --expect 1024   # exit 1 unless it is
 
+No root wrapper, deliberately. The `run-` / `tool-` / `server-` scripts at the
+repository root are the project's front door -- the handful of operations you
+would name to describe what this project does. A diagnostic asking a server what
+it has loaded is not one of them, and every wrapper added for convenience makes
+that list a worse answer to "what can I run here?".
+
 `--expect` is what makes this useful in a sequence: run it before embedding and
 a mismatch stops you, rather than turning up as a directory named for a
 resolution it does not contain.
