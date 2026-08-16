@@ -553,13 +553,29 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    expose metadata publicly. On this box `~/.cache/huggingface/hub/.locks` is root-owned, so
    `server-embed` falls back to a private `HF_HUB_CACHE`; fix with
    `sudo chown -R "$USER" ~/.cache/huggingface/hub/.locks`.
+
+   **`--image-size` is the resolution the backbone actually sees, and it is not the size of
+   your JPEG.** `AutoImageProcessor` carries a resize in its own config and applies it
+   silently: for DINOv3 ViT-B/16 that is **224×224**, so a 1024px export arrives as a 14×14
+   grid — 201 tokens, 1 CLS + 4 registers + 196 patches — and `default_to_square` means it is
+   *squashed*, not cropped, so the aspect ratio goes too. The whole first embedding run went
+   through that way, and nothing recorded it. Pass `--image-size 1024` and the same image is
+   4101 tokens over a 64×64 grid, at ~37× the GPU time (measured: 0.0041 s/img at 224 against
+   0.1516 at 1024, ~1 min against ~1h10m for 27k birds, under 1 GB either way). One server
+   serves **one** resolution, like one backbone; restart to change it. Whether more pixels
+   actually help is an open question — position embeddings are interpolated far beyond the
+   training resolution — so it is a thing to measure, not assume.
 2. `code/embedding/embed.py` — non-GPU client; POSTs batches and appends to
    `output/embed/embeddings.jsonl`. `./run-embed`. Resumable (checkpoint is the set of `key`s
    already in the JSONL) and `--dry-run` does the whole scan/resolve with no network calls.
-   Deferred SIGINT, same as `bird_label.py`. Every row records the producing `model`, and the
-   client **refuses to append when the server serves a different one** — two backbones' vectors
-   are not in the same space and nothing downstream could detect the mixture. Use a fresh
-   `--output-dir` to switch models.
+   Deferred SIGINT, same as `bird_label.py`. Every row records the producing `model` **and
+   `image_size`**, and the client **refuses to append when the server serves a different
+   pair** — vectors from two backbones, or from one backbone at two resolutions, are not in
+   the same space and nothing downstream could detect the mixture. Use a fresh `--output-dir`
+   to change either. Rows written before `image_size` was recorded report `(unrecorded)` and
+   are treated as foreign, which is what the model check has always done with a row that has
+   no model; `data/embed/embeddings.jsonl`'s 27,194 rows are exactly that case, and they are
+   known to be 224 (the archive `output_008_image-size-224/` is named for it).
 
    **The CSV is the guide; nothing here reads a sidecar.** The label set comes from
    `--label-dir`'s `bird_identification_output.csv` (default `data/label/`), one row per

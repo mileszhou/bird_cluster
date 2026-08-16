@@ -9,7 +9,7 @@ import json
 import pytest
 
 from code.embedding.embed import (already_done, collect, effective_category,
-                                  effective_species)
+                                  effective_species, fingerprint)
 
 COLUMNS = ["jpg", "xmp", "filename", "category", "label", "label_cn", "confidence",
            "note", "prior_category", "prior_label", "applied", "run_label",
@@ -159,30 +159,58 @@ def test_already_done_empty(tmp_path):
     assert already_done(tmp_path / "nope.jsonl") == (set(), set())
 
 
-def test_already_done_reads_keys_and_models(tmp_path):
+def test_already_done_reads_keys_and_fingerprints(tmp_path):
     p = tmp_path / "e.jsonl"
     p.write_text(
-        json.dumps({"key": "a", "model": "m1"}) + "\n"
-        + json.dumps({"key": "b", "model": "m1"}) + "\n"
+        json.dumps({"key": "a", "model": "m1", "image_size": "224x224"}) + "\n"
+        + json.dumps({"key": "b", "model": "m1", "image_size": "224x224"}) + "\n"
     )
-    assert already_done(p) == ({"a", "b"}, {"m1"})
+    assert already_done(p) == ({"a", "b"}, {"m1@224x224"})
 
 
 def test_already_done_flags_mixed_and_unrecorded_models(tmp_path):
     """A row with no model predates the guard and must not pass as compatible."""
     p = tmp_path / "e.jsonl"
     p.write_text(
-        json.dumps({"key": "a", "model": "m1"}) + "\n"
+        json.dumps({"key": "a", "model": "m1", "image_size": "224x224"}) + "\n"
         + json.dumps({"key": "b"}) + "\n"
     )
-    keys, models = already_done(p)
+    keys, seen = already_done(p)
     assert keys == {"a", "b"}
-    assert models == {"m1", "(unrecorded)"}
+    assert seen == {"m1@224x224", "(unrecorded)@(unrecorded)"}
+
+
+def test_one_backbone_at_two_resolutions_is_two_fingerprints(tmp_path):
+    """224 and 1024 vectors are no more comparable than two backbones' are.
+
+    The first full run went through at the 224x224 baked into the processor
+    config while the exports were 1024px, and nothing recorded it -- so a later
+    re-embed could have appended incomparable vectors to the same file with the
+    model guard seeing nothing wrong.
+    """
+    p = tmp_path / "e.jsonl"
+    p.write_text(
+        json.dumps({"key": "a", "model": "m1", "image_size": "224x224"}) + "\n"
+        + json.dumps({"key": "b", "model": "m1", "image_size": "1024x1024"}) + "\n"
+    )
+    _, seen = already_done(p)
+    assert seen == {"m1@224x224", "m1@1024x1024"}
+    assert seen - {fingerprint("m1", "224x224")}      # a 224 server is refused
+
+
+def test_rows_written_before_image_size_was_recorded_are_foreign(tmp_path):
+    """data/embed's 27,194 rows are exactly this case: known 224, unrecorded."""
+    p = tmp_path / "e.jsonl"
+    p.write_text(json.dumps({"key": "a", "model": "m1"}) + "\n")
+    _, seen = already_done(p)
+    assert seen == {"m1@(unrecorded)"}
+    assert seen - {fingerprint("m1", "224x224")}
 
 
 def test_already_done_tolerates_partial_last_line(tmp_path):
     """A run killed mid-write leaves a truncated line; resumption must survive it."""
     p = tmp_path / "e.jsonl"
-    p.write_text(json.dumps({"key": "a", "model": "m1"}) + "\n" + '{"key": "b", "embed')
-    keys, models = already_done(p)
-    assert keys == {"a"} and models == {"m1"}
+    p.write_text(json.dumps({"key": "a", "model": "m1", "image_size": "224x224"}) + "\n"
+                 + '{"key": "b", "embed')
+    keys, seen = already_done(p)
+    assert keys == {"a"} and seen == {"m1@224x224"}

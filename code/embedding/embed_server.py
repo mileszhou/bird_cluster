@@ -6,9 +6,11 @@ and port default to `config.toml` `[servers.embed]`.
 
     ./run-server-embed                       # or:
     python3 -m code.embedding.embed_server --model facebook/dinov3-vitb16-pretrain-lvd1689m
+    python3 -m code.embedding.embed_server --image-size 1024
 
 Endpoints:
-    GET  /health -> {"status": "ok", "model": ..., "device": ..., "dim": ...}
+    GET  /health -> {"status": "ok", "model": ..., "device": ..., "dim": ...,
+                     "image_size": "224x224", ...}
     POST /embed  -> {"images": ["<base64 jpeg>", ...]} -> {"embeddings": [[...]], "dim": D}
 
 Embeddings are L2-normalised before being returned, so cosine distance equals
@@ -34,21 +36,61 @@ from code.lib.config import load_config
 
 DEFAULT_MODEL = "facebook/dinov3-vitb16-pretrain-lvd1689m"
 
+
+def size_label(processor) -> str:
+    """A short canonical name for the resolution the processor feeds the model.
+
+    This is provenance, not decoration. `AutoImageProcessor` carries a resize in
+    its own config and applies it silently -- for DINOv3 ViT-B/16 that is
+    224x224 -- so a 1024px JPEG reaches the backbone as 196 patches unless the
+    size is overridden. Vectors from two resolutions are no more comparable than
+    vectors from two backbones, and until this was recorded nothing in a run
+    could say which resolution produced it.
+
+    Both shapes the config uses are handled: an explicit height/width, and a
+    `shortest_edge` with a separate centre crop.
+    """
+    def hw(d):
+        if "height" in d and "width" in d:
+            return f"{d['height']}x{d['width']}"
+        if "shortest_edge" in d:
+            return f"se{d['shortest_edge']}"
+        return ""
+
+    size = dict(getattr(processor, "size", None) or {})
+    crop = dict(getattr(processor, "crop_size", None) or {})
+    shown, cropped = hw(size), hw(crop)
+    if cropped and cropped != shown:
+        return f"{shown}->crop{cropped}"
+    return shown or "unknown"
+
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("embed_server")
 
 app = FastAPI(title="bird_cluster embed server")
 STATE: dict = {"model": None, "processor": None, "model_id": None, "device": None,
                "dim": None, "revision": None, "dtype": None, "gpu": None,
-               "versions": None}
+               "versions": None, "image_size": None}
 
 
 class EmbedRequest(BaseModel):
     images: list[str]  # base64-encoded JPEG bytes
 
 
-def load_model(model_id: str, device: str = "auto"):
-    """Load the backbone onto `device`.
+def load_model(model_id: str, device: str = "auto", image_size: int | None = None):
+    """Load the backbone onto `device`, at `image_size` if one is asked for.
+
+    `image_size` overrides the resize baked into the processor's own config.
+    Left alone, DINOv3 ViT-B/16 resizes everything to 224x224 -- so a 1024px
+    export reaches the backbone as a 14x14 grid, 196 patches, and the detail
+    that separates two warblers is gone before the model sees it. The whole
+    first embedding run of this project went that way without recording it.
+
+    One server serves one resolution, deliberately, the same way it serves one
+    backbone: the resolution is a property of the vector set, so letting a
+    caller vary it per request would let one file hold vectors that cannot be
+    compared. To change it, restart the server.
 
     `auto` prefers CUDA. Naming a device explicitly matters because the GPU
     being *present* is not the same as it being *free*: a co-tenant inference
@@ -68,7 +110,13 @@ def load_model(model_id: str, device: str = "auto"):
     if device == "auto":
         device = "cuda" if torch.cuda.is_available() else "cpu"
     logger.info(f"loading {model_id} on {device}")
-    processor = AutoImageProcessor.from_pretrained(model_id)
+    override = {}
+    if image_size:
+        square = {"height": image_size, "width": image_size}
+        # crop_size too: a config that resizes the shortest edge and then centre
+        # crops would otherwise undo the resize we just asked for.
+        override = {"size": square, "crop_size": square}
+    processor = AutoImageProcessor.from_pretrained(model_id, **override)
     model = AutoModel.from_pretrained(model_id).to(device).eval()
     dim = getattr(model.config, "hidden_size", None)
 
@@ -77,7 +125,7 @@ def load_model(model_id: str, device: str = "auto"):
     revision = getattr(getattr(model, "config", None), "_commit_hash", None)
     STATE.update(
         model=model, processor=processor, model_id=model_id, device=device, dim=dim,
-        revision=revision,
+        revision=revision, image_size=size_label(processor),
         dtype=str(next(model.parameters()).dtype),
         gpu=(torch.cuda.get_device_name(0) if device == "cuda" else platform.processor()),
         versions={"torch": torch.__version__,
@@ -85,8 +133,8 @@ def load_model(model_id: str, device: str = "auto"):
                   "cuda": (torch.version.cuda if device == "cuda" else None),
                   "python": platform.python_version()},
     )
-    logger.info(f"loaded {model_id} (dim={dim}, dtype={STATE['dtype']}, "
-                f"revision={revision}) on {STATE['gpu']}")
+    logger.info(f"loaded {model_id} (dim={dim}, image_size={STATE['image_size']}, "
+                f"dtype={STATE['dtype']}, revision={revision}) on {STATE['gpu']}")
 
 
 @app.get("/health")
@@ -104,6 +152,7 @@ def health():
         raise HTTPException(status_code=503, detail="model not loaded")
     return {"status": "ok", "model": STATE["model_id"],
             "device": STATE["device"], "dim": STATE["dim"],
+            "image_size": STATE["image_size"],
             "revision": STATE["revision"], "dtype": STATE["dtype"],
             "gpu": STATE["gpu"], "versions": STATE["versions"]}
 
@@ -149,9 +198,13 @@ def main():
     ap.add_argument("--device", default="auto", choices=("auto", "cuda", "cpu"),
                     help="auto prefers CUDA. Use cpu when the GPU is present but "
                          "occupied -- ViT-B/16 runs fine there for small jobs")
+    ap.add_argument("--image-size", type=int, default=None,
+                    help="square resolution to feed the backbone. Default: whatever "
+                         "the processor config says, which for DINOv3 ViT-B/16 is 224. "
+                         "One server serves one resolution; restart to change it")
     args = ap.parse_args()
 
-    load_model(args.model, args.device)
+    load_model(args.model, args.device, args.image_size)
     uvicorn.run(app, host=args.host, port=args.port)
 
 
