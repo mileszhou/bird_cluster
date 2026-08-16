@@ -1,0 +1,16 @@
+#!/bin/bash
+# What the embed server is serving. Read-only.
+#
+#     ./tool-embed-server                 # model, resolution, device
+#     ./tool-embed-server --expect 1024   # exit non-zero unless it serves 1024
+#
+# The resolution is the one worth checking: AutoImageProcessor resizes to its
+# config's size unless told otherwise, so a server started without --image-size
+# serves 224 and never mentions it.
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
+[ -d .venv ] && source .venv/bin/activate
+python3 -m tools.audit_embed_server "$@"
