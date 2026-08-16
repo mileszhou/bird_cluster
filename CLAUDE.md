@@ -547,6 +547,25 @@ deleted. `data/label/` is the small, hand-picked subset promoted from one of tho
 serve as the next stage's input, and it is versioned in the submodule. The distinction is
 deliberate: archives are *everything a run produced*, `data/label/` is *what was chosen*.
 
+**A run worth keeping carries a `FINDINGS.md` at its root, written before `./clean`.** A run
+that cannot say what was learned from it is a pile of vectors: the parameters survive in
+`run.json`, but what they *bought* survives nowhere, and by the time anyone asks, the run it
+was compared against has itself been archived. So the findings travel with the artifacts they
+describe — what the run was, what it was measured against, the numbers, and what they mean.
+**Generate it from the artifacts rather than transcribing it**; a hand-copied figure is a
+figure that will eventually disagree with the file beside it. Identifying detail does not go
+in it — species names and the like stay in `local/`, which the document may point to. Check it
+with `python3 -m tools.audit_report_safety` first. `output_009_image-size-1024/FINDINGS.md` is
+the first, and the shape to copy.
+
+**A failed or throwaway run gets none of that** — just a bare `./clean` with no description,
+leaving `output_NNN/`, to be garbage-collected by hand later. The naming already carries the
+distinction and always has: `output_004_cluster-analysis-session` and
+`output_008_image-size-224` are named for what they are, while `output_005`, `006` and `007`
+are bare numbers holding 85, 85 and 7,488 vectors from runs that went nowhere. **A bare number
+means nothing was learned here**, which is exactly the signal you want when deciding what to
+delete six months later.
+
 **Sidecar deduplication** (`code/lib/sidecar_meta.py`, `tools/dedup_sidecars.py`,
 **`./tool-dedup`**) — operates on `data/xmp`. The same photo was imported into
 two trip folders in places, which is what made neighbouring trips look like frame-counter
