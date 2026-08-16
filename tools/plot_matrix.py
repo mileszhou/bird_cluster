@@ -61,7 +61,8 @@ sys.path.insert(0, os.environ.get("PROJECT_ROOT")
 
 from code.lib import csv_marks
 from code.lib.csv_marks import REGISTRY
-from code.lib.csv_post import add_arguments, read_rows, resolve_runs
+from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
+                               resolve_runs)
 
 NEEDS = REGISTRY["order_assignments"]
 NOISE = "-1"
@@ -348,7 +349,7 @@ def run(run_dir: Path, args) -> str:
             bounds.append((start, i))
             start, seen = i, (key(r) if r else None)
 
-    X = load_vectors(args.embeddings, [r["key"] for r in rows])
+    X = load_vectors(embeddings_for(run_dir, args.embeddings), [r["key"] for r in rows])
 
     if args.order == "fiedler":
         # A different picture from the others: no cluster blocks at all, just
@@ -428,7 +429,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     ap.add_argument("--embeddings", type=Path,
-                    default=Path("./data/embed/embeddings.jsonl"))
+                    default=None,
+                    help="the vectors to read. Default: whatever the run\n"
+                         "being analysed recorded as its source")
     ap.add_argument("--style", choices=("heat", "contour", "surface"), default="heat")
     ap.add_argument("--size", type=int, default=None,
                     help="target tiles per side; one tile averages ceil(n/size)^2 pairs. "
@@ -473,8 +476,6 @@ def main():
                                                 args.style != "surface" else 1)
     if args.dpi is None:
         args.dpi = 300 if args.focus else 140
-    if not args.embeddings.is_file():
-        raise SystemExit(f"error: {args.embeddings} not found")
     for r in resolve_runs(args):
         print(f"  {r.name}: {run(r, args)}")
 

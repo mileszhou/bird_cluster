@@ -65,7 +65,8 @@ from scipy.signal import find_peaks
 sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[1]))
 
-from code.lib.csv_post import add_arguments, read_rows, resolve_runs
+from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
+                               resolve_runs)
 from tools.plot_matrix import load_vectors
 
 NOISE = "-1"
@@ -145,7 +146,7 @@ def run(run_dir: Path, args) -> str:
     if not rows:
         return "no clustered rows"
 
-    X = load_vectors(args.embeddings, [r["key"] for r in rows])
+    X = load_vectors(embeddings_for(run_dir, args.embeddings), [r["key"] for r in rows])
     by = collections.defaultdict(list)
     species = collections.defaultdict(collections.Counter)
     for r, x in zip(rows, X):
@@ -196,14 +197,14 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     ap.add_argument("--embeddings", type=Path,
-                    default=Path("./data/embed/embeddings.jsonl"))
+                    default=None,
+                    help="the vectors to read. Default: whatever the run\n"
+                         "being analysed recorded as its source")
     ap.add_argument("--resample", type=int, default=25,
                     help="draws per cluster for the equal-n control (0 to skip)")
     ap.add_argument("--seed", type=int, default=0)
     args = ap.parse_args()
 
-    if not args.embeddings.is_file():
-        raise SystemExit(f"error: {args.embeddings} not found")
     for r in resolve_runs(args):
         print(f"  {r.name}: {run(r, args)}")
 

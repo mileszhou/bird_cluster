@@ -51,7 +51,8 @@ import numpy as np
 sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[1]))
 
-from code.lib.csv_post import add_arguments, read_rows, resolve_runs  # noqa: E402
+from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
+                               resolve_runs)  # noqa: E402
 from tools.plot_matrix import fiedler_order, load_vectors, seriate  # noqa: E402
 
 NOISE = "-1"
@@ -102,7 +103,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     ap.add_argument("--embeddings", type=Path,
-                    default=Path("./data/embed/embeddings.jsonl"))
+                    default=None,
+                    help="the vectors to read. Default: whatever the run\n"
+                         "being analysed recorded as its source")
     ap.add_argument("--order", choices=("cluster", "fiedler"), default="cluster",
                     help="'cluster' seriates the cluster centroids and sorts each "
                          "cluster's members by distance to it -- boundaries are few "
@@ -117,7 +120,7 @@ def main():
     for run_dir in resolve_runs(args):
         if args.all_images:
             keys, species, X = [], [], []
-            with open(args.embeddings, encoding="utf-8") as fh:
+            with open(embeddings_for(run_dir, args.embeddings), encoding="utf-8") as fh:
                 for line in fh:
                     d = json.loads(line)
                     keys.append(d["key"]); species.append(d.get("species", ""))
@@ -127,7 +130,8 @@ def main():
         else:
             rows = [r for r in read_rows(run_dir / "assignments.csv")
                     if r["cluster_id"] != NOISE]
-            X = load_vectors(args.embeddings, [r["key"] for r in rows])
+            X = load_vectors(embeddings_for(run_dir, args.embeddings),
+                             [r["key"] for r in rows])
             labels = [r["cluster_id"] for r in rows]
             keys = [r["key"] for r in rows]
             species = [r.get("species", "") for r in rows]

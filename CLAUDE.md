@@ -190,12 +190,28 @@ labelling        data/jpg         output/          data/label/
                  data/xmp
 embedding        data/jpg         output/embed/    data/embed/     (when it exists)
                  data/label/
-clustering       data/embed/      output/          —
+clustering       output/embed/    output/          —
+                 (data/embed/ by name)
 ```
 
 `data/xmp` and `data/jpg` arrived exactly this way — a manual Lightroom export, copied in.
 `data/label/` is the same act at the next boundary, so adding it does not weaken the rule; it
 shows the rule was about *who writes*, not about whether anything is ever added.
+
+**Clustering is the one stage that reads `output/` by default, and deliberately.** It used to
+default to `data/embed/`, from when there was only ever one embedding set. That made a fresh
+embedding run impossible to cluster without first curating it into `data/` — promoting a run
+in order to find out whether it deserved promoting, when the deciding *is* the curation. So
+`./run-cluster` looks at the live run and the curated set is a path you type. The rule it
+does not break is the one that matters: nothing here writes `data/`.
+
+The analysis tools go further and do not default to a path at all
+(`code/lib/csv_post.py`, `embeddings_for()`): each reads whatever the run it is describing
+recorded as its `source`, falling back to the `embed/` beside that run's own root when
+`./clean` has moved the archive and stranded the absolute path. A fixed default cannot
+promise that the vectors being read are the ones the clustering was computed from, and with
+runs at several resolutions the wrong ones produce a description that looks entirely
+reasonable.
 
 **Curation is deliberately manual, and there is no script for it.** Choosing which run
 graduates is the entire content of the step; automating it would make it routine, which is the

@@ -60,7 +60,8 @@ from sklearn.metrics import (adjusted_mutual_info_score as ami,
 sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[1]))
 
-from code.lib.csv_post import add_arguments, read_rows, resolve_runs
+from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
+                               resolve_runs)
 
 NOISE = "-1"
 
@@ -110,7 +111,7 @@ def run(run_dir: Path, args) -> str:
 
     keys = {r["key"] for r in rows}
     vec = {}
-    with open(args.embeddings, encoding="utf-8") as fh:
+    with open(embeddings_for(run_dir, args.embeddings), encoding="utf-8") as fh:
         for line in fh:
             d = json.loads(line)
             if d["key"] in keys:
@@ -179,7 +180,9 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     add_arguments(ap)
     ap.add_argument("--embeddings", type=Path,
-                    default=Path("./data/embed/embeddings.jsonl"))
+                    default=None,
+                    help="the vectors to read. Default: whatever the run\n"
+                         "being analysed recorded as its source")
     ap.add_argument("--focus", default=None, help="one cluster_id instead of all")
     ap.add_argument("--grid", type=int, nargs="+", default=[5, 10, 20],
                     help="min_cluster_size values to sweep")
@@ -187,8 +190,6 @@ def main():
                     help="HDBSCAN cluster_selection_method; eom is unstable here")
     args = ap.parse_args()
 
-    if not args.embeddings.is_file():
-        raise SystemExit(f"error: {args.embeddings} not found")
     for r in resolve_runs(args):
         run(r, args)
 

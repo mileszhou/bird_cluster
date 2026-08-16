@@ -46,7 +46,7 @@ from pathlib import Path
 
 import numpy as np
 
-from code.lib.config import data_dir
+from code.lib.config import PROJECT_ROOT, data_dir
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("discover")
@@ -290,7 +290,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--embeddings", type=Path, default=None,
-                    help="the curated vector set (default: data/embed/)")
+                    help="the vector set to cluster (default: output/embed/, "
+                         "the run just produced; pass data/embed/ for the curated one)")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/cluster"))
     ap.add_argument("--min-cluster-size", default="5,15,40",
                     help="comma-separated sweep; each value gets its own output directory")
@@ -305,10 +306,20 @@ def main():
                          "cluster is being decided")
     args = ap.parse_args()
     if args.embeddings is None:
-        args.embeddings = data_dir() / "embed" / "embeddings.jsonl"
+        # output/embed, not data/embed. Clustering the curated set by default
+        # dates from when there was only ever one embedding set; it means a
+        # fresh embedding run has to be *curated into data/* before it can be
+        # clustered at all -- promoting a run in order to find out whether it
+        # deserves promoting, which is exactly backwards. Curation is supposed
+        # to be the deciding, so the live run is what a bare ./run-cluster
+        # looks at, and the curated set is a path you type.
+        args.embeddings = PROJECT_ROOT / "output" / "embed" / "embeddings.jsonl"
 
     if not args.embeddings.is_file():
-        sys.exit(f"error: {args.embeddings} not found")
+        curated = data_dir() / "embed" / "embeddings.jsonl"
+        hint = (f"\n       The curated set is at {curated}; pass --embeddings to use it."
+                if curated.is_file() else "")
+        sys.exit(f"error: {args.embeddings} not found{hint}")
 
     logger.info(f"loading {args.embeddings} ...")
     X, rows = load(args.embeddings)

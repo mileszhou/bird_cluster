@@ -32,12 +32,57 @@ no column to detect it by.
 
 import csv
 import importlib
+import json
 import os
 import tempfile
 from pathlib import Path
 
-from code.lib.config import working_output
+from code.lib.config import PROJECT_ROOT, working_output
 from code.lib import csv_marks
+
+
+def embeddings_for(run_dir: Path, explicit: Path | None = None) -> Path:
+    """The vectors a cluster run was actually built from.
+
+    An analysis tool has to read the *same* vectors as the run it is describing,
+    and no fixed default can promise that. Every one of these tools used to
+    default to `data/embed`, which was right only while there was one embedding
+    set in the world; with runs at several resolutions it silently describes a
+    clustering using somebody else's vectors, and the numbers look perfectly
+    reasonable.
+
+    So the run says. `discover.py` records the absolute `source` it loaded, and
+    that is preferred when it still resolves. When it does not -- `./clean`
+    moves a whole run root, taking `output/embed` with it and stranding the
+    recorded path -- the sibling `embed/` under the same root is the same file
+    in its new home, which is why the structural fallback comes before any
+    global default rather than after it.
+    """
+    if explicit is not None:
+        return explicit
+
+    run_json = run_dir / "run.json"
+    if run_json.is_file():
+        try:
+            source = json.loads(run_json.read_text()).get("source")
+        except (json.JSONDecodeError, OSError):
+            source = None
+        if source and Path(source).is_file():
+            return Path(source)
+
+    # <root>/cluster/mcs15 -> <root>/embed/embeddings.jsonl
+    if len(run_dir.parents) >= 2:
+        sibling = run_dir.parents[1] / "embed" / "embeddings.jsonl"
+        if sibling.is_file():
+            return sibling
+
+    live = PROJECT_ROOT / "output" / "embed" / "embeddings.jsonl"
+    if live.is_file():
+        return live
+    raise SystemExit(
+        f"error: cannot tell which embeddings {run_dir} was built from.\n"
+        f"       Its run.json names none that still exist, there is no "
+        f"embed/ beside it, and {live} is absent. Pass --embeddings.")
 
 
 def add_arguments(ap, subdir: str = "cluster"):
