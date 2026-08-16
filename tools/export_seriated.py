@@ -59,7 +59,7 @@ original filenames untouched, and the capture time carries the ordering anyway
     python3 -m tools.export_seriated --run output/cluster/mcs15 --dry-run
 
 Writes to output/lightroom/jpg/<run>/ plus an index CSV. Never touches data/.
-The labels are written into the copies afterwards by tools/write_jpg_keywords.py
+The labels are written into the copies afterwards by tools/export_jpg_labels.py
 -- Lightroom reads a sidecar only for raw formats, so a JPEG's keyword has to be
 embedded in the file itself.
 """

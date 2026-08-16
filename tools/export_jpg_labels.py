@@ -73,9 +73,9 @@ the APP13 block changes length, so the packet cannot simply be overwritten in
 place -- but everything from the start-of-scan marker onward is copied through
 verbatim, and the result is checked against the source in `data/jpg`.
 
-    python3 tools/write_jpg_keywords.py --dry-run
-    python3 tools/write_jpg_keywords.py
-    python3 tools/write_jpg_keywords.py --export output/lightroom/jpg/mcs50
+    python3 tools/export_jpg_labels.py --dry-run
+    python3 tools/export_jpg_labels.py
+    python3 tools/export_jpg_labels.py --export output/lightroom/jpg/mcs50
 
 Lightroom reads embedded metadata **at import**. Run this before importing; on
 an already-imported folder use Metadata > Read Metadata from File.
@@ -105,6 +105,11 @@ PHOTOSHOP_SIG = b"Photoshop 3.0\x00"
 APP1, APP13, SOS, SOI, EOI = 0xE1, 0xED, 0xDA, 0xD8, 0xD9
 IPTC_RESOURCE = 0x0404          # 8BIM resource holding the IIM datasets
 KEYWORD_DS = (2, 25)            # IIM 2:25 Keywords, repeatable
+# 1:90 declares the coded character set; ESC % G is UTF-8. Without it a reader
+# is entitled to treat the bytes as its own default encoding, which would make
+# the Chinese in a label unreadable -- so it is ensured, never assumed.
+UTF8_MARKER = (1, 90, b"\x1b%G")
+IIM_VERSION = (2, 0, b"\x00\x04")
 DATE_DS = {(2, 55): "%Y%m%d", (2, 60): "%H%M%S",     # DateCreated / TimeCreated
            (2, 62): "%Y%m%d", (2, 63): "%H%M%S"}     # DigitalCreation date / time
 MAX_SEGMENT = 0xFFFF - 2
@@ -256,6 +261,8 @@ def sync_iim(datasets, keywords, when):
     if when:
         added += [(r, d, when.strftime(fmt).encode())
                   for (r, d), fmt in DATE_DS.items()]
+    present = {(d[0], d[1]) for d in kept}
+    added += [d for d in (UTF8_MARKER, IIM_VERSION) if (d[0], d[1]) not in present]
     return sorted(kept + added, key=lambda d: (d[0], d[1]))
 
 
@@ -330,7 +337,14 @@ def write_keywords(path: Path, label: str, when=None) -> str:
     resources = parse_irb(photoshop[1][len(PHOTOSHOP_SIG):])
     iptc = next((r for r in resources if r[0] == IPTC_RESOURCE), None)
     if iptc is None:
-        raise SegmentError("no IPTC resource to keep in step with the XMP")
+        # An APP13 block without an IIM resource: rare but real (1 of the 12,896
+        # in mcs5). Create it rather than failing, otherwise that file is the one
+        # left with a keyword Lightroom cannot see -- which is the whole bug this
+        # tool exists to fix. Resources are kept in id order, as Photoshop writes
+        # them; sync_iim() supplies the charset marker and record version.
+        iptc = [IPTC_RESOURCE, b"", b""]
+        resources.append(iptc)
+        resources.sort(key=lambda r: r[0])
     iptc[2] = build_iim(sync_iim(parse_iim(iptc[2]), subjects, when))
     photoshop[1] = PHOTOSHOP_SIG + build_irb(resources)
 
