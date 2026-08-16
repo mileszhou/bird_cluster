@@ -73,9 +73,9 @@ the APP13 block changes length, so the packet cannot simply be overwritten in
 place -- but everything from the start-of-scan marker onward is copied through
 verbatim, and the result is checked against the source in `data/jpg`.
 
-    python3 tools/export_jpg_labels.py --dry-run
-    python3 tools/export_jpg_labels.py
-    python3 tools/export_jpg_labels.py --export output/lightroom/jpg/mcs50
+    python3 -m tools.export_jpg_labels --dry-run
+    python3 -m tools.export_jpg_labels
+    python3 -m tools.export_jpg_labels --export output/lightroom/jpg/mcs5
 
 Lightroom reads embedded metadata **at import**. Run this before importing; on
 an already-imported folder use Metadata > Read Metadata from File.
