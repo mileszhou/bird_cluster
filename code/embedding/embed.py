@@ -215,16 +215,31 @@ def collect(data_dir: Path, label_csv: Path, min_confidence: float,
     return candidates, stats, per_year
 
 
-def already_done(path: Path) -> tuple[set[str], set[str]]:
-    """Keys already embedded, and the set of models that produced them.
+def fingerprint(model: str, image_size) -> str:
+    """What has to match for two vectors to belong in the same file.
 
-    The models matter: vectors from two different backbones live in unrelated
-    spaces, so appending one to a file of the other would silently poison every
-    distance the clustering step computes.
+    The backbone and the resolution it was fed, because both determine the space
+    the vector lives in and neither is recoverable from the numbers afterwards.
+    The resolution was the one that got away: the first full run went through at
+    224x224 -- the resize baked into `AutoImageProcessor`'s config -- while the
+    exports it read were 1024px, and nothing in the JSONL, the run.json or the
+    guard could say so. Rows written before this was recorded report
+    `(unrecorded)` and are treated as foreign, which is the same thing the model
+    check has always done with a row that has no model.
+    """
+    return f"{model}@{image_size or '(unrecorded)'}"
+
+
+def already_done(path: Path) -> tuple[set[str], set[str]]:
+    """Keys already embedded, and the fingerprints that produced them.
+
+    Vectors from two different backbones -- or from one backbone at two
+    resolutions -- live in unrelated spaces, so appending one to a file of the
+    other would silently poison every distance the clustering step computes.
     """
     if not path.is_file():
         return set(), set()
-    done, models = set(), set()
+    done, seen = set(), set()
     with open(path) as fh:
         for line in fh:
             line = line.strip()
@@ -235,8 +250,9 @@ def already_done(path: Path) -> tuple[set[str], set[str]]:
                 done.add(row["key"])
             except (json.JSONDecodeError, KeyError):
                 continue
-            models.add(row.get("model") or "(unrecorded)")
-    return done, models
+            seen.add(fingerprint(row.get("model") or "(unrecorded)",
+                                 row.get("image_size")))
+    return done, seen
 
 
 def encode(path: Path) -> str:
@@ -249,7 +265,7 @@ def probe(embed_url: str):
         r.raise_for_status()
         info = r.json()
         logger.info(f"embed server: model={info.get('model')} device={info.get('device')} "
-                    f"dim={info.get('dim')}")
+                    f"dim={info.get('dim')} image_size={info.get('image_size')}")
         return info
     except requests.RequestException as exc:
         sys.exit(f"error: embed server at {embed_url} unreachable ({exc})\n"
@@ -372,7 +388,7 @@ def main():
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
     out_path = args.output_dir / "embeddings.jsonl"
-    done, prior_models = already_done(out_path)
+    done, prior_runs = already_done(out_path)
     todo = [c for c in candidates if c.key not in done]
     if done:
         logger.info(f"resuming: {len(done)} already in {out_path}, {len(todo)} to go")
@@ -380,16 +396,20 @@ def main():
     embed_url = args.embed_url or server_url("embed")
     info = probe(embed_url)
     model = info.get("model") or "(unknown)"
+    image_size = info.get("image_size")
+    mine = fingerprint(model, image_size)
 
-    # Never append vectors from one backbone to a file written by another --
-    # they are not in the same space, and nothing downstream could detect it.
-    foreign = prior_models - {model}
+    # Never append vectors from one backbone -- or one resolution -- to a file
+    # written by another. They are not in the same space, and nothing downstream
+    # could detect it.
+    foreign = prior_runs - {mine}
     if foreign:
         sys.exit(
             f"error: {out_path} already holds embeddings from {sorted(foreign)}, but the "
-            f"server is serving {model!r}.\n"
-            f"       Mixing backbones would corrupt every distance downstream. Either point "
-            f"--output-dir at a new directory, or delete {out_path} to re-embed from scratch."
+            f"server is serving {mine!r}.\n"
+            f"       Mixing backbones or resolutions would corrupt every distance "
+            f"downstream. Either point --output-dir at a new directory, or delete "
+            f"{out_path} to re-embed from scratch."
         )
 
     if args.limit:
@@ -411,6 +431,7 @@ def main():
         **vars(args),
         "label_csv": str(label_csv),
         "embed_url": embed_url, "server": info, "model": model,
+        "image_size": image_size,
         "candidates": len(candidates),
         "git_commit": git_hash,
     }, indent=2, default=str))
@@ -436,7 +457,8 @@ def main():
                     "trip": cand.trip, "stem": cand.stem,
                     "jpg_path": str(cand.jpg), "xmp": cand.xmp,
                     "species": cand.species, "confidence": cand.confidence,
-                    "applied": cand.applied, "model": model, "embedding": vector,
+                    "applied": cand.applied, "model": model,
+                    "image_size": image_size, "embedding": vector,
                 }, ensure_ascii=False) + "\n")
             fh.flush()
             written += len(batch)
