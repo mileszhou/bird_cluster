@@ -72,11 +72,28 @@ diagnostic, not a stage, and every wrapper added for convenience makes `ls run-*
 tool-* server-*` a worse answer to "what can I run here?".
 
 Below that, **`local/` is a list of commands in order** — read, and often run a
-line at a time rather than as a batch. Defaults and control flow do not belong
-there: it is the one directory that is gitignored, untested and unshared, so a
-program living in it is a program nobody can review. A `local/` script still has
-to handle its own working directory (`cd "$(dirname "$0")/.."`), because it will
-be run from anywhere.
+line at a time rather than as a batch. Control flow does not belong there: it is
+the one directory that is gitignored, untested and unshared, so a program living
+in it is a program nobody can review.
+
+Two things that do belong. **The environment**, in full — `PROJECT_ROOT`, `cd`,
+`source .venv/bin/activate`, `.env` where a secret is needed — because there is
+no wrapper underneath doing it and the script will be run from anywhere. And
+**defaults, written as visible parameters**:
+
+```bash
+SIZE="${SIZE:-1024}"                    # square resolution to embed at
+MCS="${MCS:-3,5,8,15,40}"               # the cluster sweep
+```
+
+A default at the top is not logic; it is documentation of the knob. It says both
+what the script does today and exactly what to set for a run that differs —
+`SIZE=512 ./local/embed-resolutions` — which is the thing a bare command list
+cannot tell you.
+
+**Only the main parameters**, though. A variable for every argument turns the
+list back into a program and buries the one or two things actually worth
+changing. If it does not vary between runs, write it inline where it is used.
 
 The backend is a flag, not a script:
 `run-gpt` / `run-cpp` / `run-tf` were four wrappers differing only in
