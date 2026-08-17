@@ -12,6 +12,16 @@ writes to it writes through to the library -- which defeats the purpose. At
 161 KB mean this is about 1.4 GB for the mcs15 set; disk is cheaper than a
 damaged master.
 
+**The export is one-way. Nothing here is ever written back to the library.**
+Three of its fields are fabricated for browsing and are meaningless -- worse,
+actively destructive -- anywhere else: the **capture time** says the year 2000,
+the **colour label** encodes a tail boundary, and the **keyword** is this
+pipeline's guess. Overwriting a photo's real colour label here is therefore
+free, which is why the tail does it without asking; the same act against the
+master would lose work. If anything ever does flow back it will be a *review
+verdict*, extracted deliberately into its own file, and never a field copied
+wholesale from these copies.
+
 **The encoding.**
 
     day     one calendar date per cluster, in seriated order
