@@ -1,103 +1,37 @@
-#!/usr/bin/env python3
-"""Write each image's species label into the exported JPEG's own metadata.
+"""Write keywords and a colour label into a JPEG's own metadata.
 
 **Lightroom Classic reads `.xmp` sidecars only for proprietary raw formats.**
-For a JPEG it reads embedded metadata and ignores a sidecar sitting beside it.
-So the mechanism this project already has -- `xmp_write.set_keywords_in_xmp()`
-depositing into `output/label/raw/*.xmp` -- cannot carry a label into the
-seriated export. The keyword has to go *inside* the file.
-
-That is the whole reason this tool exists. `export_seriated.py` writes the
-*order* into the capture time, because Lightroom sorts by capture time and
-never by arbitrary metadata; this writes the *label* into the keywords, because
-that is the one place Lightroom will look for it on a JPEG.
+For a JPEG it reads embedded metadata and ignores a sidecar beside it, so
+`xmp_write.set_keywords_in_xmp()` -- which deposits into `output/label/raw/*.xmp`
+-- cannot carry a label into an export. It has to go inside the file. This
+module is the inside-the-file half of that; `code/lib/xmp_write.py` remains the
+sidecar half, and they share the keyword logic in `xmp_labels.py`.
 
 **A keyword lives in two places, and both must be written.** The first version
-of this tool set only XMP `dc:subject`, verified it, and produced 8,425 files
-that Lightroom showed as unlabelled. These JPEGs also carry a Photoshop image
-resource block (`APP13`) holding **legacy IPTC IIM** keywords, and that is what
-Lightroom actually displayed: photos with no IIM keyword showed nothing, photos
-with the user's own showed only those, and 822 showed a *stale* label from an
-earlier pipeline era. Which of the two a reader prefers is not something to
-have an opinion about -- Adobe's own rule turns on the caption digest in
-resource `0x0425` -- so the fix is to leave them no way to disagree. Both are
-written with the same list.
-
-The general lesson, since it has now cost a full pass over the library: a
-verification that reads back the field you just wrote proves the write, not the
-outcome. It cannot see a second copy of the same fact somewhere else in the file.
-
-**The capture time has the same two-places problem.** `piexif` rewrites the
-EXIF time; IIM `2:55`/`2:60` kept the *true* capture date in 8,421 of 8,425
-files, so the file contradicted itself about when the photo was taken. The sort
-happened to come from EXIF, but a metadata re-read could have reinstated the
-real dates and scrambled the seriation. The IIM dates are now written to match.
-
-**It edits the copies, never `data/`.** Same rule as everywhere else: the
-pipeline does not write the dataset. The targets are the copies under
-`output/lightroom/jpg/<run>/`, which are regenerable by re-running the export.
-
-The run name stays in the path, so sweeps sit side by side the way the cluster
-runs themselves do -- `mcs15` and `mcs50` are different resolutions of the same
-question, and comparing them is the point:
-
-    output/lightroom/jpg/mcs15/index.csv                seq, capture_time, cluster_id, species, key
-    output/lightroom/jpg/mcs15/<Photos-YY>/<trip>/      the tree `key` is relative to
-
-The manifest sits inside the folder handed to Lightroom rather than beside it,
-which keeps a run self-describing; Lightroom imports image formats and ignores
-the CSV.
-
-**Separate tool rather than a flag on the export.** The export is 1.0 GB of
-file copying; the keywords are a few hundred bytes each. Re-deciding the label
-form should not mean re-copying 8,425 images, and this is idempotent, so it can
-be run over an export that already exists -- which is the situation it was
-written for.
-
-**The label keeps its `(NN%)` suffix**, and not because the number is worth
-much. It is the marker that says a machine wrote this keyword and not a person:
-`split_keywords()` recognises this pipeline's output by that suffix and by
-nothing else, so a label written without it would be indistinguishable from a
-hand-typed one and the next run would refuse to touch it. Provenance, not
-precision.
-
-**The user's own keywords survive.** 4,528 of the export's JPEGs already carry
-keywords -- hand-written species (`cn-翠鸟-kingfisher`), places (`bhl-百花岭`),
-admin tags (`add=20231014`) -- alongside stale labels from an earlier pipeline
-era (`ho-海鸥-seagull(95%)`, `bird`). `split_keywords()` separates the two, and
-only this pipeline's own entries are replaced. Erring towards a stale keyword
-over a deleted one is the standing rule; see `code/lib/xmp_labels.py`.
+of this set only XMP `dc:subject`, verified it, and produced 8,425 files that
+Lightroom showed as unlabelled: these JPEGs also carry legacy **IPTC IIM**
+keywords in a Photoshop `APP13` resource, and that is what Lightroom displayed.
+Which one a reader prefers is not worth an opinion -- Adobe's rule turns on the
+caption digest in resource `0x0425` -- so both are written with the same list and
+left no way to disagree. The general lesson, since it cost a full pass over the
+library: **reading back the field you just wrote proves the write, not the
+outcome.** It cannot see a second copy of the same fact elsewhere in the file.
 
 **Pixels are never touched.** The file is rebuilt from its marker structure --
-the APP13 block changes length, so the packet cannot simply be overwritten in
-place -- but everything from the start-of-scan marker onward is copied through
-verbatim, and the result is checked against the source in `data/jpg`.
+APP13 changes length, so the packet cannot be overwritten in place -- with
+everything from the start-of-scan marker copied through verbatim.
 
-    python3 -m tools.export_jpg_labels --dry-run
-    python3 -m tools.export_jpg_labels
-    python3 -m tools.export_jpg_labels --export output/lightroom/jpg/mcs5
-
-Lightroom reads embedded metadata **at import**. Run this before importing; on
-an already-imported folder use Metadata > Read Metadata from File.
+It is a library rather than a tool because it does one small thing to an
+argument: `tools/export_seriated.py` is the command that uses it.
 """
 
-import argparse
-import csv
-import os
 import re
 import struct
-import sys
-from collections import Counter
-from datetime import datetime
 from pathlib import Path
 
-sys.path.insert(0, os.environ.get("PROJECT_ROOT")
-                or str(Path(__file__).resolve().parents[1]))
-
-from code.lib.config import PROJECT_ROOT  # noqa: E402
-from code.lib.label_generator import pinyin_initials  # noqa: E402
-from code.lib.xmp_labels import parse_label, split_keywords  # noqa: E402
-from code.lib.xmp_write import (XmpEditError, set_subject_keywords,  # noqa: E402
+from code.lib.label_generator import pinyin_initials
+from code.lib.xmp_labels import parse_label, split_keywords
+from code.lib.xmp_write import (XmpEditError, set_subject_keywords,
                                 verify_only_keywords_changed)
 
 XMP_SIG = b"http://ns.adobe.com/xap/1.0/\x00"
@@ -312,8 +246,46 @@ def effective_label(row) -> str | None:
     return f"{pinyin_initials(chinese)}-{chinese}-{english}({percent}%)"
 
 
-def write_keywords(path: Path, label: str, when=None) -> str:
-    """Set `label` as this JPEG's pipeline keyword, in XMP and IPTC alike."""
+LABEL_ATTR_RE = re.compile(r'(\bxmp:Label=")([^"]*)(")')
+LABEL_ELEM_RE = re.compile(r"(<xmp:Label>)(.*?)(</xmp:Label>)", re.S)
+DESCRIPTION_RE = re.compile(r"<rdf:Description\b")
+
+
+def set_color_label(text: str, colour: str) -> str:
+    """Return `text` with Lightroom's colour label set to `colour`.
+
+    Stored as `xmp:Label`, a plain string rather than a colour -- Lightroom's
+    label *sets* are user-defined, which is why this export's sources carry
+    values like `Safari` alongside `Red`. Writing one therefore overwrites
+    whatever the photographer had; acceptable on a derived export, and the
+    caller counts how often it happens.
+
+    Attribute form first because that is what Lightroom writes and what all
+    10,982 sampled files use; the element form is handled for completeness. When
+    neither is present the attribute is inserted on the first `rdf:Description`,
+    the same anchor `xmp_write._insert_subject` uses and for the same reason --
+    property order inside a Description carries no meaning in RDF.
+    """
+    if LABEL_ATTR_RE.search(text):
+        return LABEL_ATTR_RE.sub(lambda m: m.group(1) + colour + m.group(3), text, count=1)
+    if LABEL_ELEM_RE.search(text):
+        return LABEL_ELEM_RE.sub(lambda m: m.group(1) + colour + m.group(3), text, count=1)
+    match = DESCRIPTION_RE.search(text)
+    if not match:
+        raise XmpEditError("no rdf:Description to attach xmp:Label to")
+    at = match.end()
+    return text[:at] + f' xmp:Label="{colour}"' + text[at:]
+
+
+def write_keywords(path: Path, label: str, when=None, colour: str = "") -> str:
+    """Set `label` as this JPEG's pipeline keyword, in XMP and IPTC alike.
+
+    `colour`, when given, additionally sets the Lightroom colour label. It is a
+    separate edit applied after the keyword one has been verified, because
+    `verify_only_keywords_changed` asserts that *nothing* outside the keywords
+    moved and would rightly reject it. Its own check is stricter and simpler:
+    putting the old value back must reproduce the previous text byte for byte.
+    """
     original = path.read_bytes()
     segments, scan = parse_jpeg(original)
 
@@ -329,6 +301,17 @@ def write_keywords(path: Path, label: str, when=None) -> str:
     # mirror resurrects old keywords on import. Never create one.
     after = set_subject_keywords(before, subjects)
     verify_only_keywords_changed(before, after, subjects)
+
+    if colour:
+        was = LABEL_ATTR_RE.search(after) or LABEL_ELEM_RE.search(after)
+        previous = was.group(2) if was else None
+        tinted = set_color_label(after, colour)
+        restored = (set_color_label(tinted, previous) if previous is not None
+                    else tinted.replace(f' xmp:Label="{colour}"', "", 1))
+        if restored != after:
+            raise XmpEditError("setting xmp:Label changed something else")
+        after = tinted
+
     xmp_segment[1] = XMP_SIG + after.encode("utf-8")
 
     photoshop = find_segment(segments, APP13, PHOTOSHOP_SIG)
@@ -358,80 +341,3 @@ def write_keywords(path: Path, label: str, when=None) -> str:
     return "written"
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--export", type=Path,
-                    default=PROJECT_ROOT / "output" / "lightroom" / "jpg" / "mcs15",
-                    help="a seriated export directory containing index.csv")
-    ap.add_argument("--label-dir", type=Path,
-                    default=PROJECT_ROOT / "data" / "label",
-                    help="directory holding bird_identification_output.csv")
-    ap.add_argument("--keep-iptc-dates", action="store_true",
-                    help="leave IIM DateCreated alone; it then still holds the "
-                         "true capture date, contradicting the EXIF time the "
-                         "seriation sort depends on")
-    ap.add_argument("--dry-run", action="store_true",
-                    help="report what would be written, touching nothing")
-    args = ap.parse_args()
-
-    index = args.export / "index.csv"
-    if not index.exists():
-        sys.exit(f"no index.csv in {args.export} -- is that a seriated export?")
-
-    with open(args.label_dir / "bird_identification_output.csv",
-              encoding="utf-8-sig", newline="") as fh:
-        labels = {r["jpg"]: r for r in csv.DictReader(fh)}
-    with open(index, encoding="utf-8-sig", newline="") as fh:
-        rows = list(csv.DictReader(fh))
-
-    stat, failures, distinct = Counter(), [], set()
-    for n, row in enumerate(rows, 1):
-        key = row["key"]
-        source = labels.get(key)
-        if source is None:
-            stat["no label row"] += 1
-            failures.append((key, "no row in the label CSV"))
-            continue
-        label = effective_label(source)
-        if not label:
-            stat["no label"] += 1
-            failures.append((key, "row carries no usable label"))
-            continue
-        distinct.add(label)
-
-        when = None
-        if not args.keep_iptc_dates:
-            try:
-                when = datetime.strptime(row["capture_time"], "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                stat["unreadable capture time"] += 1
-                failures.append((key, f"capture_time {row['capture_time']!r}"))
-                continue
-
-        if args.dry_run:
-            stat["would write"] += 1
-            if n <= 3:
-                print(f"    {key}\n      -> {label}")
-            continue
-        try:
-            stat[write_keywords(args.export / key, label, when)] += 1
-        except (SegmentError, XmpEditError, OSError) as exc:
-            stat["failed"] += 1
-            failures.append((key, str(exc)))
-        if n % 1000 == 0:
-            print(f"    {n:,}/{len(rows):,}", flush=True)
-
-    print(f"  {args.export}: {len(rows):,} images, "
-          f"{len(distinct):,} distinct labels")
-    for what, count in sorted(stat.items()):
-        print(f"    {what}: {count:,}")
-    for key, why in failures[:10]:
-        print(f"    ! {key}: {why}")
-    if len(failures) > 10:
-        print(f"    ! ... and {len(failures) - 10} more")
-    return 1 if failures else 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -76,7 +76,8 @@ what wants a human eye.
 cluster_id, species, key.
 
 **The species label is embedded in each JPEG** as a `dc:subject` keyword
-(`jbly-极北柳莺-arctic warbler(98%)`), written by `tools/export_jpg_labels.py`.
+(`jbly-极北柳莺-arctic warbler(98%)`), written by `tools/export_seriated.py` via `code/lib/jpg_meta.py`
+(the two were separate tools until 2026-08-17).
 It has to be embedded rather than deposited in a sidecar: Lightroom Classic
 reads `.xmp` sidecars only for raw formats, so the mechanism the labeller uses
 cannot reach a JPEG. Hand-written keywords in the export (`bhl-百花岭`,
