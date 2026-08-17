@@ -44,11 +44,18 @@ The default is **15**, which at mcs15 pools nothing at all: no cluster is smalle
 than the `min_cluster_size` it was clustered with, so all 146 get a date and
 every boundary is visible.
 
-A pooled date holds **100 images, not 1,440**. The two halves are browsed
-differently: a kept cluster is *filtered to* -- pick its date and you have
-exactly that cluster, so its size is its own business -- while the tail is
+A pooled date holds **at most 100 images, not 1,440**. The two halves are
+browsed differently: a kept cluster is *filtered to* -- pick its date and you
+have exactly that cluster, so its size is its own business -- while the tail is
 *scrolled through*, and 1,440 thumbnails on one date is a scroll nobody
 finishes.
+
+**100 is a ceiling, not a quota**: a date takes whole clusters only, and closes
+early rather than splitting one. Packing to exactly 100 cuts a cluster across a
+date boundary, which is the one thing the tail must not do -- the alternating
+colour marks a boundary *within* a date, and half a cluster continuing onto the
+next has no boundary to mark. A cluster larger than 100 must be split, and
+starts on an empty date so the split falls inside it rather than between two.
 
 Pooled clusters also **alternate colour label, Red and Blue**, so a boundary
 inside a shared date is visible without reading anything. Two colours rather
@@ -183,16 +190,27 @@ def plan_dates(kept, tail, base):
                                           minutes=k % SLOTS_PER_DAY), ""))
         day += max(1, -(-len(members) // SLOTS_PER_DAY))
 
-    k = 0                                  # position in the pooled stream
+    used = 0                               # images already on the current date
     for n, (cid, members) in enumerate(tail):
         colour = TAIL_COLORS[n % len(TAIL_COLORS)]
-        for i in members:
+        # TAIL_SLOTS_PER_DAY is a ceiling, not a quota: start a fresh date rather
+        # than split a cluster across two. Packing dates exactly full would cut
+        # clusters in half, which is the one thing the tail must not do -- the
+        # alternating colour marks a boundary *within* a date, and a cluster
+        # continuing onto the next date has no boundary to mark.
+        if used and used + len(members) > TAIL_SLOTS_PER_DAY:
+            day, used = day + 1, 0
+        for j, i in enumerate(members):
             plan.append((cid, i,
-                         base + timedelta(days=day + k // TAIL_SLOTS_PER_DAY,
-                                          minutes=k % TAIL_SLOTS_PER_DAY), colour))
-            k += 1
-    if tail:
-        day += max(1, -(-k // TAIL_SLOTS_PER_DAY))
+                         base + timedelta(days=day + (used + j) // TAIL_SLOTS_PER_DAY,
+                                          minutes=(used + j) % TAIL_SLOTS_PER_DAY),
+                         colour))
+        used += len(members)
+        # A cluster bigger than a whole date has to be split regardless; it began
+        # on an empty date, so the split falls inside it rather than between two.
+        day, used = day + used // TAIL_SLOTS_PER_DAY, used % TAIL_SLOTS_PER_DAY
+    if tail and used:
+        day += 1
     return plan, day
 
 

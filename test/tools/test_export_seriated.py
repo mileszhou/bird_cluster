@@ -30,16 +30,48 @@ def test_a_kept_cluster_larger_than_a_day_spills_onto_the_next():
     assert len(set(dates(plan))) == 2
 
 
+def per_date(plan):
+    counts = {}
+    for _, _, when, _ in plan:
+        counts[when.date()] = counts.get(when.date(), 0) + 1
+    return counts
+
+
+def spans(plan):
+    """{cluster_id: number of distinct dates it appears on}"""
+    seen = {}
+    for cid, _, when, _ in plan:
+        seen.setdefault(cid, set()).add(when.date())
+    return {cid: len(d) for cid, d in seen.items()}
+
+
 def test_the_tail_is_capped_at_a_hundred_a_date():
     """A kept cluster is filtered to; the tail is scrolled through, and 1,440
     thumbnails on one date is a scroll nobody finishes."""
     tail = [(str(c), list(range(c * 30, c * 30 + 30))) for c in range(10)]  # 300
     plan, day = plan_dates([], tail, BASE)
-    counts = {}
-    for _, _, when, _ in plan:
-        counts[when.date()] = counts.get(when.date(), 0) + 1
-    assert max(counts.values()) == TAIL_SLOTS_PER_DAY
-    assert day == 3                                      # 300 / 100
+    assert max(per_date(plan).values()) <= TAIL_SLOTS_PER_DAY
+
+
+def test_the_cap_never_splits_a_cluster():
+    """The ceiling is not a quota. Packing dates exactly full would cut clusters
+    in half, and a cluster continuing onto the next date has no boundary for the
+    alternating colour to mark."""
+    tail = [(str(c), list(range(c * 30, c * 30 + 30))) for c in range(10)]
+    plan, _ = plan_dates([], tail, BASE)
+    assert set(spans(plan).values()) == {1}
+    # three 30s fit (90); a fourth would be 120, so dates hold 90 not 100
+    assert sorted(per_date(plan).values(), reverse=True)[0] == 90
+
+
+def test_a_cluster_too_big_for_one_date_starts_on_an_empty_one():
+    """It has to be split; the split should fall inside it, not between two."""
+    tail = [("big", list(range(250))), ("after", list(range(250, 280)))]
+    plan, _ = plan_dates([], tail, BASE)
+    assert spans(plan)["big"] == 3                       # 100 + 100 + 50
+    assert spans(plan)["after"] == 1
+    first_big = min(w for cid, _, w, _ in plan if cid == "big")
+    assert first_big.minute == 0                         # began a fresh date
 
 
 def test_pooled_clusters_alternate_colour():
