@@ -520,11 +520,21 @@ communication, not project content, and it reads as neither to anyone else. It l
 
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
 `status/` handoffs, `reports/` (analysis output — generated ones are gitignored, see
-above), `plans/`, `ideas/`. Correspondence is `local/messages/`, named
+above), `plans/`, `ideas/`, `findings/`. Correspondence is `local/messages/`, named
 `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave. `local/` is gitignored and holds everything local: period-specific run commands,
 `local/manifests/` for scope lists naming real trips, and working copies of generated
 reports. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
 the result rather than notes about building it.
+
+**`project/findings/` is measured; `ideas/` is not.** A finding is a result —
+what was measured, on what, and what it supports — and obliges nobody to act,
+which is what separates it from a plan. An idea that gets measured becomes a
+finding and moves; `ideas/04` did that within an afternoon and is now
+`findings/01`. Generate the numbers from the artifacts rather than transcribing
+them, and state the caveats as plainly as the result. A finding about *one run*
+belongs in that run's own `FINDINGS.md` instead, travelling with its artifacts;
+a finding about the *collection* is data research and belongs in `local/` or the
+private repository, not here.
 
 **`project/ideas/` is not `plans/`.** A plan is a commitment to an approach; an idea is a
 thought that surfaced while doing something else and would be lost by the time the project is

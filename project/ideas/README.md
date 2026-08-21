@@ -16,3 +16,9 @@ Numbered in the order they came up, like `status/`. Promote one to `plans/` if
 and when it becomes a commitment; leave it here otherwise. Ideas that turn out
 to be wrong are worth keeping too, with a note saying so — knowing a road was
 looked at and rejected is as useful as the roads taken.
+
+**An idea that gets measured becomes a finding**, and moves to
+`project/findings/`. `04` did exactly that within an afternoon and is now
+`findings/01`. The distinction is evidence, not importance: an entry here is a
+thought, an entry there is a result. Neither obliges anyone to act — that is
+what `plans/` is for.

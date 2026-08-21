@@ -1,8 +1,9 @@
-# 04 — Two-level clustering: find the taxonomy above the clusters
+# 01 — Two-level clustering: find the taxonomy above the clusters
 
 *Raised 2026-08-21 by Miles, while waiting for expert identification of the
 species clusters and out of the original scope of the project. Measured and
-refined the same day. **Promising, unrefined, not committed.***
+refined the same day. Filed as `ideas/04` until it outgrew that, which is what
+prompted this directory. **Measured, unrefined, not committed.***
 
 ## The idea
 
