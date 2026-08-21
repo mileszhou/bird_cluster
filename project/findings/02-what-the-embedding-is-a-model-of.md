@@ -44,6 +44,8 @@ this space are not semantic distances.
 
 ## 3. Language is countable, and a dense countable linear order is ℚ
 
+*Refined by §5a: dense is right, but only half of it.*
+
 > Language is represented by a string of alphabets of finite length without a
 > prescribed upper bound. This is a typical countably many infinite set. One
 > extremely interesting point is, between any two semantic elements, there is
@@ -79,7 +81,7 @@ analogue of Cantor's theorem is the Fraïssé limit of the finite partial orders
 the generic countable partial order. That, not ℚ, is what a countable dense
 partial semantic order would be isomorphic to.
 
-## 5. Negation is a cut, and the embedding is already the completion
+## 5. Negation is a cut; the space is dense *and* codense
 
 > A word 'not' digs a hole in the semantic space.
 
@@ -93,10 +95,49 @@ there is a third" is a claim about **nameable** meanings — a countable dense
 subset — while the space supplies the continuum around them. The embedding hands
 us the completion and 49,224 samples of the dense subset.
 
-The Cantor set was also raised as a candidate and is held more loosely here: its
-content would be that fully-determined meanings are nowhere dense yet
-uncountable within the space of partial descriptions, and no one has proposed a
-way to test that.
+### 5a. Dense *and* codense: the semantic space is co-formed
+
+The Cantor set was raised as a candidate for the same phenomenon, and refining
+it produced the sharpest statement in this document. Miles:
+
+> Any concept is not an open set; there is always some direction (dimension in a
+> linear model) in which two elements are widely separated.
+
+and, on why:
+
+> Semantics space is coformal. Any part of it is co-formed with other parts, no
+> matter how small or large the areas are (quite much like rational and real
+> numbers), since the language can be used in such a way.
+
+Two claims that look like rivals are one property. **Density** says something
+nearby *belongs*; **non-openness** says something nearby *does not*. ℚ in ℝ has
+both at once: between any two rationals there is a rational, and between any two
+rationals there is an irrational. Neither set contains an interval; each is
+dense in the other's gaps. The standard name is **dense and codense** — dense,
+with dense complement, equivalently dense with empty interior — and it holds at
+every scale, in every interval however short, which is exactly "no matter how
+small or large the areas are".
+
+The Cantor set is a good hint that **overshoots**. It captures non-openness, but
+buys it by giving up density and acquiring jumps: the endpoints of each removed
+interval are both in it with nothing of it between them. Nowhere dense is too
+strong. Dense-and-codense is the property wanted, and ℚ ⊂ ℝ is the faithful
+picture. (An earlier draft of this conversation argued the finite alphabet
+*forces* the Cantor set, via Σ^ℕ. It forces codensity; Cantor is one way to
+obtain it and not the right one.)
+
+**Why it holds is generativity, not geometry.** Whatever region you point at,
+the language can articulate a distinction inside it, so no region is homogeneous
+and therefore none is open. The same richness that always supplies another term
+also always supplies a dividing one — density and codensity have one source.
+
+A consequence that follows and is uncomfortable: Baire category separates the
+two sides even though both are dense. ℚ is **meagre**, the irrationals
+**comeagre**. Carried across, the nameable meanings are dense — every meaning is
+approximable by one you can say — and yet topologically negligible, while the
+meanings no word reaches are the generic case. Language is everywhere and almost
+nowhere at once. That is a stronger statement than the hole metaphor: the holes
+are not exceptional, they are almost all of it.
 
 ## 6. Whether a statement is quantitative is itself semantic
 
@@ -131,6 +172,34 @@ single difference-in-means direction, nothing trained, held out on half the data
 That direction carries **1.8% of the total variance**. So a feature is a
 direction, not a principal component — thin, nearly perfectly separating, and
 invisible to anything that ranks axes by variance.
+
+### 7a. Measured: closeness does not survive projection
+
+§5a predicts something checkable: pairs that are close *overall* should still be
+separated along the thin direction, because the aggregate metric averages over
+768 coordinates and hides a large difference in one. Ranking held-out images by
+how close they sit to the opposite class's centre, and scoring only the hardest:
+
+| subset | n | AUC of that one direction |
+|---|---:|---:|
+| all held out | 20,077 | 0.9959 |
+| the 50% closest to the other class | 10,038 | 0.9871 |
+| the 20% closest | 4,015 | 0.9540 |
+| the 5% closest — most confusable | 1,003 | 0.7966 |
+
+The mean cosine between a bird and a scenery image is **+0.019** — all but
+orthogonal — while the gap along the direction is **0.244**. The aggregate
+metric says "everything is unrelated to everything" and one thin direction
+carries the distinction.
+
+That near-orthogonality is the high-dimensional concentration phenomenon Miles
+pointed at, in its limit form: for `u, v` uniform on the sphere in `n`
+dimensions, `⟨u,v⟩` has mean 0 and variance `1/n`, with
+`P(|⟨u,v⟩| ≥ ε) ≤ 2e^{−nε²/2}`. Summable, so Borel–Cantelli gives almost-sure
+convergence to 0 along `n`. Worth stating as the limit rather than as a property
+of an infinite-dimensional object: a separable Hilbert space carries no uniform
+measure on its unit sphere, so "random unit vectors are a.s. orthogonal" is a
+statement about the sequence, not about a draw.
 
 ## 8. Measured: what the model does not encode
 
@@ -172,25 +241,58 @@ separation does not help. Miles, on rereading it here:
 > I thought I found something that totally ordered the semantics of the
 > similarity, but was soon proved wrong.
 
-The symptom and the cause are now both written down. Seriation seeks a
-permutation making the similarity matrix Robinson, which exists only if the
-structure is genuinely one-dimensional; a partial order has no linear extension
-preserving *nearness*. Section 7 puts a number on it: if semantics lived on one
-axis, that axis would dominate, and the separating direction carries 1.8% of the
-variance. There are many thin, roughly independent directions, and one
-permutation cannot lay them flat.
+The symptom and the cause are now both written down, and the cause is narrower
+than "it was impossible".
+
+Seriation seeks a permutation making the similarity matrix Robinson — entries
+decreasing away from the diagonal — which requires the structure to be
+one-dimensional in a metric sense. §7 puts a number on why it is not: the
+separating direction carries 1.8% of the variance, so there are many thin,
+roughly independent directions and no permutation lays them flat.
+
+But a **faithful linear arrangement does exist**, which is why the idea felt so
+nearly right. Every zero-dimensional compact metrizable space embeds in the
+Cantor set and hence in ℝ; with compactness, total disconnectedness gives
+zero-dimensionality, so a totally disconnected semantic space *does* fit on a
+line without losing a point. Miles's own image for it:
+
+> Cantor set also hints an incorrect one dimensional illusion, but a good hint
+> of it: Cantor set doesn't contain an open set.
+
+The Cantor set is the model of that situation: genuinely inside ℝ, genuinely
+totally ordered by it, and genuinely not one-dimensional — it is 2^ℕ wearing a
+line as a costume. So the correct epitaph is **not** that no linear
+representation exists. It is that the linear representations which exist are
+topologically faithful and **metrically unfaithful**, and seriation's premise is
+that adjacency means similarity, which is a metric claim.
 
 What survived was right. Seriation remains the **display** order for the
-Lightroom export, and the whole review workflow rests on it. A total order is a
-serviceable presentation of a structure that has none — it simply cannot be
+Lightroom export, and the whole review workflow rests on it. A line is a
+serviceable presentation of a structure that is not linear — it simply cannot be
 mistaken for the structure.
 
 ## What is not settled
 
-- Whether the semantic order is countable *and* dense *and* partial is assumed,
-  not shown. Only countability has an argument behind it.
-- The quantitativeness direction is untested, and untestable in this repository.
-- The Cantor-set analogy has no proposed test.
-- Every measurement above is against the pipeline's own labels, so it inherits
+- Whether the semantic order is countable *and* dense *and* codense *and*
+  partial is assumed, not shown. Only countability has an argument behind it —
+  from language being finite strings. Codensity has a *reason* (generativity,
+  §5a) but not a demonstration.
+- **The Baire asymmetry is a consequence nobody has examined.** If nameable
+  meanings are dense but meagre, most meanings are unreachable by any
+  expression, and it is not obvious what that predicts about a model trained
+  only on nameable things — or whether it predicts anything checkable at all.
+- The quantitativeness direction is untested, and untestable in this repository:
+  DINOv3 has no propositions. It wants a language model and minimal pairs.
+- §7a shows separation surviving to the 5% most confusable pairs at AUC 0.80,
+  which is consistent with codensity but does not establish it. Codensity is a
+  claim about *every* pair at *every* scale; a measurement can only ever report
+  the pairs it has.
+- Every measurement here is against the pipeline's own labels, so it inherits
   their noise. The four-way `category` is coarse, and `trip` is a proxy for
   "occasion" that conflates place, date and outing.
+
+A dropped question, recorded because it was wrong rather than because it was
+answered: an earlier turn of this conversation posed "between two meanings, is
+there always another, or always a hole?" as a fork between the ℚ picture and the
+Cantor picture. It is not a fork. §5a is the resolution — both, and that
+conjunction is the property.
