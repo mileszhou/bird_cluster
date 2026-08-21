@@ -3,6 +3,10 @@
 *Raised 2026-08-11 while looking for a picture of the embedding. Explored
 2026-08-11 to -14. **Rejected for discovery, kept for presentation.***
 
+*Why it could not have worked is in `findings/02` §9: the structure is a partial
+order, and a partial order has no linear extension preserving nearness. The
+symptom was found here in August; the reason was written down on 2026-08-21.*
+
 ## The idea
 
 Order the images so that similar ones are adjacent, and the clusters should
