@@ -61,8 +61,17 @@ sys.path.insert(0, os.environ.get("PROJECT_ROOT")
 from code.lib.config import PROJECT_ROOT, data_dir  # noqa: E402
 
 # A trip folder is `YYYY-MM-DD <place>`; the date alone is not interesting, the
-# date followed by a name is. Also catches the `2021-05-07~08 <place>` form.
-TRIP_RE = re.compile(r"\b(?:19|20)\d{2}-\d{2}-\d{2}(?:[~-]\d{2})?\s+\S+")
+# date followed by a *name* is. Also catches the `2021-05-07~08 <place>` form.
+#
+# The token after the date must look like a place -- capitalised, or CJK -- and
+# not like English prose. Every document in this repository dates its own
+# paragraphs ("Raised 2026-08-21 by Miles", "Settled 2026-08-12, after..."), and
+# matching those made the check fire on all of them, which is how a checker
+# stops being read. A lowercase place name would now be missed; that is the
+# accepted cost of the tool being trusted at all, and CJK names are caught by
+# their own pattern regardless.
+TRIP_RE = re.compile(r"\b(?:19|20)\d{2}-\d{2}-\d{2}(?:[~-]\d{2})?\s+"
+                     r"(?=[A-Z\u4e00-\u9fff])\S+")
 KEY_RE = re.compile(r"\bPhotos-\d{2}\b|\b\w[\w-]*\.(?:jpg|jpeg|xmp|nef|arw|cr3|dng)\b",
                     re.IGNORECASE)
 # Lightroom's degrees + decimal-minutes, and a plain decimal pair.
