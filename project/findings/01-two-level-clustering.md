@@ -5,6 +5,8 @@ species clusters and out of the original scope of the project. Measured and
 refined the same day. Filed as `ideas/04` until it outgrew that, which is what
 prompted this directory. **Measured, unrefined, not committed.***
 
+Companion to `findings/02`, which sets out what the embedding is a model of and why a taxonomy is the right thing to look for above the clusters.
+
 ## The idea
 
 Take a fine clustering — HDBSCAN at `min_cluster_size=3` — reduce each cluster
