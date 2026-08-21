@@ -2,7 +2,10 @@
 
 *Arrived 2026-08-21, in conversation while the species clusters waited for expert
 identification. Miles's argument throughout; the measurements were run against
-the whole-library embedding to check it. **Interpretive, with evidence. Not a
+the whole-library embedding to check it. §10 leaves this project's own subject
+matter and is about learning in general — kept here because it is the same
+argument continued, and because it is where the framework first predicted
+something instead of describing it. **Interpretive, with evidence. Not a
 plan, and nothing here obliges anyone to build anything.***
 
 This is the conceptual residue of the project so far — the things understood
@@ -271,16 +274,92 @@ Lightroom export, and the whole review workflow rests on it. A line is a
 serviceable presentation of a structure that is not linear — it simply cannot be
 mistaken for the structure.
 
+## 10. Codensity is the formal shape of overfitting
+
+> An LLM implements a function. A theorem says that any continuous function can
+> be approximated by a neural network. This gave us confidence that neural
+> networks can do any reasoning: a reasoning is a function of what is given as
+> the premises or input. This is exactly the coformality of semantics: a finer
+> structure always exists to make the language reach any concept one is to
+> represent without a prescribed upper bound.
+
+The parallel is exact rather than figurative. **Universal approximation is
+literally a density theorem** — Cybenko (1989), Hornik (1991): finite networks
+are dense in `C(K)` under the sup norm. And the second half of §5a applies as
+well: they are also **meagre** in it. Dense and codense in function space, the
+same ℚ-in-ℝ structure one level up. Always closer, never arrived.
+
+That is the setting for overfitting, and the two claims are the same claim.
+**If a finer distinction always exists, then for any finite labelled set there
+is a hypothesis separating it** — which is shattering, hence infinite VC
+dimension, hence no distribution-free generalisation guarantee. So codensity,
+read as a property of a hypothesis class, is exactly overfittability.
+
+Which is why the theorem never explained the success it was credited with:
+
+> However, LLM's success lays the other side: generativity. It captures the
+> meaning in our daily reasoning in a reasonable way.
+
+Capacity arguments say why fitting *anything* is possible and are silent about
+why the fitted thing generalises. Richness is the permission, not the reason.
+The universal approximation theorem, used as an account of why neural networks
+work, is an argument that they should overfit.
+
+### 10a. Why topology hands over to probability
+
+> Semantics as a topology object is more in a theoretical modeling; in practice,
+> probabilistic description is more a useful description.
+
+There is a sharper reason than "topology is qualitative". Topological
+genericity and probabilistic typicality are different notions that **routinely
+point in opposite directions**. The Liouville numbers are comeagre — a dense
+G_δ, topologically almost all of ℝ — and have Lebesgue measure zero. Comeagre
+and almost sure are not approximations of each other.
+
+This qualifies §5a's uncomfortable consequence. The nameable meanings being
+dense but meagre may carry no practical weight at all, because the meanings that
+actually occur are drawn from a distribution rather than sampled by Baire
+category. The asymmetry can be topologically true and probabilistically
+irrelevant, and nothing here decides which.
+
+### 10b. What the order picture buys: freedom in the parts that do not matter
+
+> The topological nature of order relation renders us freedom in choosing the
+> activation functions and potentially many other parameters, and quite a lot of
+> tolerance to our quantization.
+
+Both halves have precise backing.
+
+**Activations.** Leshno, Lin, Pinkus and Schocken (1993) sharpened universal
+approximation to an iff: a network with continuous activation is dense in `C(K)`
+**exactly when the activation is not a polynomial.** The freedom is not merely
+wide, it is characterised — everything but polynomials — which is why the choice
+has always felt unimportant in practice.
+
+**Quantization follows from §2 rather than illustrating it.** If what carries
+meaning is order, then any monotone map preserves it, and quantization is a
+monotone step function: order survives, magnitude degrades. So "semantics wants
+order while the model supplies a metric" *predicts* that most of the metric
+precision is surplus and can be thrown away — which int8 and int4 quantization
+show empirically — and it predicts the failure mode too, since tasks needing
+fine magnitude discrimination should degrade first.
+
+That is the one place so far where this framework predicted something before
+being told it, which is the only kind of evidence an interpretive document like
+this can offer for itself.
+
 ## What is not settled
 
 - Whether the semantic order is countable *and* dense *and* codense *and*
   partial is assumed, not shown. Only countability has an argument behind it —
   from language being finite strings. Codensity has a *reason* (generativity,
   §5a) but not a demonstration.
-- **The Baire asymmetry is a consequence nobody has examined.** If nameable
-  meanings are dense but meagre, most meanings are unreachable by any
-  expression, and it is not obvious what that predicts about a model trained
-  only on nameable things — or whether it predicts anything checkable at all.
+- **The Baire asymmetry is a consequence nobody has examined, and §10a casts
+  doubt on whether it is examinable.** If nameable meanings are dense but
+  meagre, most meanings are unreachable by any expression — but comeagre and
+  almost sure diverge routinely (the Liouville numbers are comeagre and null),
+  so the asymmetry may be topologically true and probabilistically irrelevant.
+  Nothing here decides which, and the question may not have an empirical form.
 - The quantitativeness direction is untested, and untestable in this repository:
   DINOv3 has no propositions. It wants a language model and minimal pairs.
 - §7a shows separation surviving to the 5% most confusable pairs at AUC 0.80,
