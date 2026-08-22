@@ -307,6 +307,9 @@ work, is an argument that they should overfit.
 
 ### 10a. Why topology hands over to probability
 
+*Read with §11: "hands over to probability" is about the **description**, not the
+object. Nothing here says semantics is vague or non-deterministic.*
+
 > Semantics as a topology object is more in a theoretical modeling; in practice,
 > probabilistic description is more a useful description.
 
@@ -348,6 +351,100 @@ That is the one place so far where this framework predicted something before
 being told it, which is the only kind of evidence an interpretive document like
 this can offer for itself.
 
+## 11. What kind of thing the probability is
+
+This is the summary of why the account moves from topology to probability, and
+it corrects a reading the earlier sections invite.
+
+> Saying that semantics is more on probability is not saying that semantics is
+> non deterministic or in any sense vague. It could be vague, but using
+> probability is not about its possibly vagueness; vagueness is how people take
+> it as. By placing a sentence in a fine enough context, the meaning is
+> fine-enoughly defined. What probability plays in semantics description is
+> highly formal.
+
+**The probability is a measure on the observer, not on the object.** That is the
+whole of it, and it is why probability can sit on top of a fully determinate
+semantics without making it fuzzy.
+
+The model for this is cryptographic, and the correspondence is an identification
+rather than an analogy — the term of art is literally **semantic security**
+(Goldwasser and Micali, 1984): a ciphertext is secure iff whatever an adversary
+can compute about the plaintext given it, they could compute nearly as well
+without it. Nothing in that definition suggests the plaintext is vague. The
+message is perfectly determinate; the probability measures *access* to it. The
+formal object is **advantage** — `Pr[success | resource] − Pr[success | baseline]`.
+
+> The security of a crypto protocol is how little the cypher message's gain in
+> probability towards a successful decrypting the message. Similarly, knowledge
+> is the probability gain towards a correct response to a question in the
+> domain. Similarly, capability is interpreted, or formulated in a similar way:
+> the gain to do the thing right (for a micro task of one bit complexity), or
+> better (for a complex task).
+
+| | resource | success |
+|---|---|---|
+| security | the ciphertext | recovering a function of the message |
+| knowledge | the model, or the text | a correct response over a question distribution |
+| capability | the same | doing the task right, or better |
+
+One form, three baselines. And it dissolves the apparent tension with §1: the
+object of study is the model, and what is measured is what the model gives
+access to.
+
+### 11a. The one-bit case is where it is clean, and that is not incidental
+
+At one bit, success is binary, the baseline is ½, and advantage is well defined
+with no scale on outcomes at all. "Or better, for a complex task" quietly needs
+more: comparing outcomes requires at least an **ordinal** scale, and taking
+expectations requires an **interval** one.
+
+So §6's measurement ladder governs how far this formulation can be pushed.
+Advantage is a ratio-scale quantity resting on a nominal success predicate, and
+it degrades the moment success stops being binary — which is a real limit on
+"capability" as a number, and plausibly why capability benchmarks are so much
+shakier than security proofs.
+
+### 11b. The missing third: semantics itself
+
+Knowledge and capability have the form. Semantics does not yet, and this is
+recorded as unfinished rather than filled in. Miles:
+
+> I stated knowledge and capability, but didn't give a counterpart of semantics,
+> because it has not yet fully formalized in my mind, with the direction,
+> formation and relationship in mind. The probability space might be the way
+> people take a sentence as their own meaning (huge space).
+
+So the direction is: the probability space is over **uptakes** — how a sentence
+is taken — and it is large.
+
+The pattern of the other two *suggests* a shape, offered here as a candidate and
+not as his position: meaning as the advantage an utterance confers toward the
+intended interpretation, i.e. how far it moves a listener's distribution over
+uptakes from prior to posterior. That is the same `Pr[· | resource] − Pr[· | baseline]`
+form, with the utterance as resource and the interpretation as success. Whether
+that is the right object is exactly what is not settled, and his three words name
+the gaps: **direction** (whose probability — speaker's, listener's, or a
+convention over both), **formation** (how the space of uptakes is constituted at
+all), **relationship** (how it stands to knowledge and capability, which are
+defined against it).
+
+### 11c. Vagueness is uptake, and codensity licenses the repair
+
+"Vagueness is how people take it as" places the indeterminacy in the uptake
+rather than in the meaning, and "a fine enough context" is the repair. Codensity
+is what makes the repair always available: the generativity that always supplies
+a dividing term (§5a) also always supplies a finer context.
+
+But then determinacy is a **limit** property — reached in the refinement, held
+by no actual finite utterance. That is the third appearance of a structure that
+keeps recurring here: always finer available, never a final one.
+
+A caution against over-reading that recurrence. In §5a and §10 it is a precise
+mathematical statement — dense and codense, dense and meagre. For contexts and
+for uptakes it is so far an analogy, and the resemblance may be doing less work
+than it appears to.
+
 ## What is not settled
 
 - Whether the semantic order is countable *and* dense *and* codense *and*
@@ -366,6 +463,13 @@ this can offer for itself.
   which is consistent with codensity but does not establish it. Codensity is a
   claim about *every* pair at *every* scale; a measurement can only ever report
   the pairs it has.
+- **The semantics counterpart of §11 does not exist.** Knowledge and capability
+  have the advantage form; semantics does not, and the candidate offered in §11b
+  is the pattern's suggestion rather than anyone's position. Its three gaps are
+  named there: direction, formation, relationship.
+- **§11a bounds the whole probabilistic account.** Advantage is clean at one bit
+  and needs an ordinal scale on outcomes beyond it, so "capability" as a number
+  is only as well founded as the outcome scale it rests on.
 - Every measurement here is against the pipeline's own labels, so it inherits
   their noise. The four-way `category` is coarse, and `trip` is a proxy for
   "occasion" that conflates place, date and outing.
