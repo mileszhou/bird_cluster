@@ -3,7 +3,8 @@
 *Raised 2026-08-21 by Miles, while waiting for expert identification of the
 species clusters and out of the original scope of the project. Measured and
 refined the same day. Filed as `ideas/04` until it outgrew that, which is what
-prompted this directory. **Measured, unrefined, not committed.***
+prompted this directory. **Measured, then looked at — see the update at the
+end, which qualifies the taxonomy claim. Not committed.***
 
 Companion to `findings/02`, which sets out what the embedding is a model of and why a taxonomy is the right thing to look for above the clusters.
 
@@ -132,7 +133,7 @@ class.
    count, so fewer groups score better on a four-class target by construction.
    The composition is the stronger evidence — two groups at 97% and 100% bird
    are not an artefact — but the peak's *location* is not trustworthy on this
-   metric alone.
+   metric alone. **Answered below, in the direction of caution.**
 2. **The two bird groups need explaining.** They do not merge with each other at
    k=2; one joins the non-bird mass first. Whatever separates them is larger
    than what separates birds from scenery, which is either an artefact or
@@ -140,11 +141,12 @@ class.
 3. **The result has to survive a sharper target.** `category` is four classes
    against hundreds of groups, so every AMI here is comparative only. Species on
    the bird subset would test whether the finer levels are semantically real or
-   merely separating birds from people.
+   merely separating birds from people. **Done below: species and a genus-ish
+   target both scored on the bird subset, and they separate the two levels.**
 4. **Someone has to look at the groups.** As everywhere else in this project,
    agreement with the pipeline's own labels measures agreement with the noise as
    much as anything, and the only evaluation that finally counts is a person
-   opening a group.
+   opening a group. **Done; see the update at the end.**
 
 ## What it would cost
 
@@ -159,3 +161,83 @@ linkage tree as an artifact** rather than any single cut — the tree is the
 result, and a cut is a view of it. That belongs in `discover.py`, which already
 consumes and produces exactly these things. Nothing has been designed, and
 nothing should be until the questions above have answers.
+
+## Measured again, on the export — and looked at
+
+*2026-08-24. This is what questions 1 and 4 above were waiting for: a person
+opened the groups. The structure is real and it is coarser than species; what
+it is coarser **by** is still open, and the honest answer is probably
+appearance rather than descent.*
+
+**A different population from the tables above**, so the numbers are not
+comparable to them. This is the bird-set clustering at mcs3 — 1,194 leaves
+over 16,889 images — grouped by `cluster2.py` into 70 branches, with
+the adaptive cut at 27 leaves. The earlier tables are the whole-library
+embedding, 2,477 clusters.
+
+### The two levels are shaped like two different ranks
+
+Agreement with four targets, scored for the leaves and again for the branches.
+The *head noun* of a species name — the last word — is a rough stand-in for
+genus or family, and is the row that matters.
+
+| target | classes | AMI leaf | AMI branch |
+|---|---:|---:|---:|
+| species | 2,066 | 0.6850 | 0.5777 |
+| head noun (genus-ish) | 479 | 0.6448 | 0.6285 |
+| trip (place and date) | 526 | 0.5852 | 0.4682 |
+| library (year) | 10 | 0.3162 | 0.1775 |
+
+There is a clean crossover. Leaves agree better with **species** than with the
+head noun (0.6850 against 0.6448); branches agree better with the **head
+noun** than with species (0.6285 against 0.5777). Level 2 is not simply a
+blurrier level 1 — it is aligned to a coarser rank than the one below it, which
+is what a taxonomy would predict.
+
+And the grouping is emphatically not arbitrary. Leaves in a branch share that
+branch's dominant head noun **0.4208** of the time, against **0.1125** when the
+leaves are shuffled between branches at the same branch sizes (200 draws, sd
+0.0041) — **76 sigma**. Branches also track that structure
+more closely than they track place: 0.6285 against 0.4682
+for the trip, so they are not mainly sorting by background or by season.
+
+### Why this does not settle it
+
+**The head noun is folk taxonomy, not taxonomy.** English bird names group by
+appearance at least as much as by descent, and two unrelated birds that look
+alike often share a head noun. So "branches agree with head nouns" is what
+*both* hypotheses predict, and the vocabulary being scored against has the
+confound built into it. What the numbers establish is that the level-2 grouping
+is real and coarser than species. What they cannot say is whether the thing it
+is coarser by is descent or resemblance.
+
+**Looking settled that, as far as looking can.** Reviewing the export: branches
+do pull near-identical leaves together, and sometimes gather one species that
+level 1 had split — which is the useful case. But they mostly do not read as a
+rank above species. What brings leaves into a branch is that they *look alike*,
+and that is not the same relation as sharing an ancestor.
+
+### What that changes
+
+1. **Question 1 is answered in the direction of caution.** The composition
+   argument stands — the structure is 70 sigma from chance and rank-shaped — but
+   the taxonomy reading does not survive being looked at, and no metric here
+   would have caught that, because every available target is appearance-tinged.
+2. **Question 4 is answered.** Someone looked, and the answer changed the claim.
+3. **The value is as a labelling aid, and that does not depend on the answer.** A
+   branch that gathers visually similar leaves is reviewable in one pass, which
+   is what makes it useful; it is useful *because* it is resemblance. Reading the
+   hierarchy as a statement about the birds is the part to drop.
+4. **It is a case for `findings/02` rather than against it.** Appearance-not-
+   descent is what that document argues the embedding is a model of. A level-2
+   grouping that is coarse, real, and not taxonomic is the predicted result, not
+   a disappointment.
+
+### The test that would settle it
+
+Map each species to its real family from a checklist, then look only where
+appearance and descent **disagree** — the convergent look-alikes that sit in
+different families. If branches follow appearance those land together; if they
+follow descent they separate. Everything else is confounded. The same checklist
+is what `findings/03` needs to turn its consistency bound into an accuracy one,
+so it buys two answers.
