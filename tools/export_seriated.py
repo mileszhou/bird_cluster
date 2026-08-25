@@ -123,7 +123,8 @@ sys.path.insert(0, os.environ.get("PROJECT_ROOT")
 
 from code.lib.config import PROJECT_ROOT, data_dir  # noqa: E402
 from code.lib.jpg_meta import (SegmentError, XmpEditError,  # noqa: E402
-                               effective_label, write_keywords)
+                               effective_english, effective_label,
+                               write_keywords)
 from code.lib.csv_post import (add_arguments, embeddings_for, read_rows,
                                resolve_runs)  # noqa: E402
 from tools.plot_matrix import load_vectors, seriate  # noqa: E402
@@ -310,10 +311,21 @@ def main():
                     except (SegmentError, XmpEditError, OSError) as exc:
                         stat["failed"] += 1
                         failures.append((r["key"], str(exc)))
+                # The species comes from --label-dir, the same CSV the keyword
+                # above was written from, and *not* from `r["species"]` -- that
+                # column is whatever labelling was current when the clustering
+                # ran, frozen into assignments.csv. Exporting a second labeller
+                # against an existing clustering therefore produced JPEGs saying
+                # one species and an index.csv beside them saying another, on
+                # 70% of rows. Fall back to the assignments value only when the
+                # row has no usable label, the same case that leaves the JPEG
+                # without a keyword.
+                species = (effective_english(source) if source else None) \
+                    or r.get("species", "")
                 # r's own cluster_id, not the group label: a pooled row would
                 # otherwise be recorded as `tail` and lose its identity.
                 w.writerow([seq, when.strftime("%Y-%m-%d %H:%M:%S"),
-                            r["cluster_id"], r.get("species", ""), colour, r["key"]])
+                            r["cluster_id"], species, colour, r["key"]])
                 if seq % 2000 == 0:
                     print(f"    {seq:,}/{len(plan):,}", flush=True)
         # Renamed last, so a consumer never reads a half-written index: the file

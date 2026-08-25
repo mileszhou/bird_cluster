@@ -213,6 +213,25 @@ def current_subjects(text: str) -> list[str]:
     return [i.strip() for i in LI_RE.findall(match.group("body"))]
 
 
+def effective_english(row) -> str | None:
+    """The plain English species for a label CSV row, resolving never-demote.
+
+    Sibling of `effective_label`, which composes the `py-cn-en(NN%)` keyword.
+    **Do not recover this by parsing that keyword back.** `LABEL_RE` splits on
+    `-`, and `label_cn` is not guaranteed to be free of hyphens or Latin text --
+    one 49k run has 184 rows whose Chinese field reads `蓝 fairy-bluebird`, and
+    parsing those returns `azure-winged magpie-azure-winged magpie`. The row is
+    the source; the keyword is a rendering of it.
+    """
+    if row.get("applied") == "kept-existing" and row.get("prior_category"):
+        for part in (row.get("prior_label") or "").split(";"):
+            label = parse_label(part.strip())
+            if label:
+                return label.english
+        return None
+    return (row.get("label") or "").strip().lower() or None
+
+
 def effective_label(row) -> str | None:
     """The `py-cn-en(NN%)` keyword for a label CSV row, resolving never-demote.
 
