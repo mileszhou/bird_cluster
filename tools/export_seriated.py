@@ -109,6 +109,7 @@ Writes to output/lightroom/jpg/<run>/ plus an index CSV. Never touches data/.
 
 import argparse
 import csv
+import json
 import os
 import shutil
 import sys
@@ -262,12 +263,55 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
     return source
 
 
-def export_index(args, labels):
+def load_labels(label_dir: Path):
+    with open(label_dir / "bird_identification_output.csv",
+              encoding="utf-8-sig", newline="") as fh:
+        return {r["jpg"]: r for r in csv.DictReader(fh)}
+
+
+def index_label_dir(index: Path, requested: Path | None) -> Path:
+    """The label CSV a cluster2 index was built from -- not the caller's guess.
+
+    The index's `species` column was resolved by `cluster2` from one label CSV.
+    Writing keywords here from a *different* one puts the two back out of step,
+    which is the exact failure the species column was fixed for: the JPEG says
+    one bird and the index beside it says another. So the run records the
+    directory it used and this reads it back, the same way `embeddings_for`
+    refuses to guess which vectors a clustering was built from.
+
+    A caller may still pass `--label-dir`, but only to say the same thing.
+    Disagreement is an error, because the alternative is to silently prefer one
+    of two answers that were meant to be the same.
+    """
+    meta = index.parent / "run.json"
+    recorded = None
+    if meta.is_file():
+        value = json.loads(meta.read_text(encoding="utf-8")).get("label_dir")
+        recorded = Path(value) if value else None
+    if requested and recorded and requested.resolve() != recorded.resolve():
+        raise SystemExit(
+            f"error: {index} was built from {recorded}\n"
+            f"       but --label-dir says {requested}\n"
+            f"       The index's species column came from the first. Rendering "
+            f"keywords from the second\n       would make the JPEGs and the index "
+            f"disagree. Re-run cluster2 with the label\n       directory you want, "
+            f"or drop --label-dir.")
+    if recorded:
+        return recorded
+    if requested:
+        return requested
+    raise SystemExit(f"error: {meta} does not record a label_dir; pass --label-dir")
+
+
+def export_index(args):
     """Render a `cluster2` index: it already holds the times, so nothing is planned.
 
     The index is the second-level clustering's output and this is a view of it,
     so the only decisions left are which bytes to copy and where.
     """
+    label_dir = index_label_dir(args.index, args.label_dir)
+    labels = load_labels(label_dir)
+    print(f"  labels from {label_dir} (recorded by the cluster2 run)")
     rows = read_rows(args.index)
     if not rows:
         raise SystemExit(f"error: {args.index} is empty")
@@ -318,9 +362,10 @@ def main():
                          "(default 15: at mcs15 nothing is pooled)")
     ap.add_argument("--base-date", default="2000-01-01",
                     help="date of the first cluster; a year far from real photos")
-    ap.add_argument("--label-dir", type=Path,
-                    default=PROJECT_ROOT / "data" / "label",
-                    help="directory holding bird_identification_output.csv")
+    ap.add_argument("--label-dir", type=Path, default=None,
+                    help="directory holding bird_identification_output.csv. Default: "
+                         "data/label; with --index, whatever the cluster2 run recorded, "
+                         "and passing a different one is an error rather than an override")
     ap.add_argument("--index", type=Path, default=None,
                     help="render a cluster2 index instead of planning a flat "
                          "seriation; the index already carries the times")
@@ -332,13 +377,10 @@ def main():
                     help="report the layout and stop, copying nothing")
     args = ap.parse_args()
 
-    with open(args.label_dir / "bird_identification_output.csv",
-              encoding="utf-8-sig", newline="") as fh:
-        labels = {r["jpg"]: r for r in csv.DictReader(fh)}
-
     if args.index:
-        export_index(args, labels)
+        export_index(args)
         return
+    labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
 
     base = datetime.strptime(args.base_date, "%Y-%m-%d")
     for run_dir in resolve_runs(args):
