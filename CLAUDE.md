@@ -518,6 +518,11 @@ left the repository on 2026-08-12 — correspondence between the two of us is te
 communication, not project content, and it reads as neither to anyone else. It lives in
 `local/messages/` now.
 
+**`docs/glossary.md`** defines the abbreviations, the project's own vocabulary — `key`,
+`leaf`, `branch`, `medoid`, `applied`, `noise` — and the measures. Written for someone
+arriving without the conversation around the code, which is also the test for whether
+anything else belongs in `docs/`.
+
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
 `status/` handoffs, `reports/` (analysis output — generated ones are gitignored, see
 above), `plans/`, `ideas/`, `findings/`. Correspondence is `local/messages/`, named
