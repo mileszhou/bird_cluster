@@ -770,6 +770,15 @@ the report is computed from a private collection — `local/` is gitignored whol
 a stronger guarantee than remembering to add a per-file rule. `--anonymise` replaces species
 names with a stable digest for a copy that is going to leave the machine.
 
+**The same measure runs the other way round, and the labeller wins by more.** Hold the
+vectors fixed and swap the *labels*, and 1-NN scores the labelling instead of the
+embedding — the referee is legitimate in both directions because the embedding is
+self-supervised and saw neither. 224px→512px was worth 0.0156 of 1-NN; swapping
+`Qwen3-VL-32B` for `gemma-4-31B` costs 0.09. Anything reading the species column is far
+more exposed to which model wrote it than to how the pixels were fed in. The tool cannot
+do this as it stands — it takes species from the JSONL, so a second labelling has to be
+joined on `key` from its CSV.
+
 Environment: `./venv` takes stage arguments so a non-GPU box need not pull torch —
 `./venv base client test cluster`, and `./venv server` adds torch/transformers/fastapi.
 Tests run from within `test/` (`../.venv/bin/python -m pytest lib/`). `test/conftest.py`
@@ -839,6 +848,42 @@ first one labelled and every row carries both verdicts side by side — `categor
 arbitration baked in. `prior_labels()` reads from `PRISTINE_XMP_DIR`, so pointing a run's
 `--data-dir` at a tree curated from a previous run's `raw/` is what sets the first model up as
 the "existing" one.
+
+**It has been used once, and the useful output was not a winner.**
+`google/gemma-4-31B-it` relabelled the whole library on 2026-08-24, against
+`data/label/`'s `Qwen3-VL-32B-Instruct`. The two agree on the **category** (0.9626 over
+49,224 images) and disagree on the **species** — 0.288 exact agreement on the 26,520
+images both call birds, 0.380 after matching the two vocabularies optimally, so nine
+points of the gap is wording and sixty-two is not.
+
+**The new labelling lost.** Judged against the 512px DINOv3 embedding — which neither
+labeller went into, so it is a referee neither authored — leave-one-out 1-NN is 0.5371
+against 0.4455 (McNemar p ≈ 5.6e-127), and the old labelling also wins on AMI against the
+cluster partition at all five `min_cluster_size` values and on per-cluster purity. The
+mechanism is **self-consistency, not granularity**: same vocabulary size, same label
+length, but on images whose nearest neighbour is a cosine of 0.99 away the old run repeats
+its own name 0.94 of the time and the new one 0.72.
+
+**What the pair bought is a bound on the winner's error, which no single run can give.**
+Two routes sharing no assumption: the two labellings' irreducible disagreement puts the
+better one at ~33.6% species error, and `1 - purity` at the finest clustering — read as a
+measure of the labels, once the clusters are confirmed single-species by eye — puts it at
+36.6%. The `confidence` column averages 0.968, implying 3.2%. It is not an error estimate,
+and one run could never have shown that. Method in **`project/findings/03`**; numbers in
+that run's own `FINDINGS.md`; per-species detail, which names birds, in
+`local/reports/label_vs_cluster_report.md`.
+
+**So a second labelling is worth running even when it loses** — the losing comparison is
+what carries the bound — and for calibration the useful second model is the most
+*decorrelated* one, not the best one, since shared errors inflate agreement and inflated
+agreement bounds less. Promoting the winner was never the point, and this run should not
+be promoted into `data/label/`.
+
+Two things this does *not* settle. The referee is **appearance, not taxonomy**: a labeller
+that is confidently and consistently wrong scores well on both routes, which is exactly the
+shape of the inherited over-calls already known to be in the old set — only a reference
+checklist or an expert closes that. And the comparison runs inside a bird set **selected by
+the old labels**, so the category boundary is only tested where they overlap.
 
 `applied` is now only `written`, `csv-only` or `failed`. **`kept-existing` is still produced by
 nothing but understood by everything** — `data/label` and every archived run carry 3,693 such
