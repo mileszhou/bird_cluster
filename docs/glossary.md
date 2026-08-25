@@ -1,10 +1,18 @@
 # Glossary
 
 Terms and abbreviations used across this repository, with what they mean *here*
-rather than in general. Three sections: **abbreviations**, **the project's own
-vocabulary** — ordinary words used in a narrow sense — and **the measures**,
-which are the easiest thing to misread because most of them are unitless
-numbers between 0 and 1.
+rather than in general. Three sections: **abbreviations**, **vocabulary** —
+ordinary-looking words used in a narrow sense — and **the measures**, which are
+the easiest thing to misread because most of them are unitless numbers between
+0 and 1.
+
+**Borrowed terms are marked, and the distinction matters.** Some of this
+vocabulary the project coined and it means nothing elsewhere — `key`, `leaf`,
+`branch`, `claim`, `applied`, `orphan`, `never-demote`. The rest is standard
+terminology taken intact from clustering, statistics or archaeology — `Ward`,
+`medoid`, `centroid`, `seriation`, `dendrogram`, `noise` — and those are worth
+looking up, because the literature on them is real and this document is only a
+gloss. Entries below say which is which.
 
 ## Abbreviations
 
@@ -65,7 +73,7 @@ sidecar a JPEG belongs to.
 | **LR** | Lightroom Classic. |
 | **jpg / xmp** | Used as *key spaces*, not just formats: a `jpg` key is a path relative to `data/jpg`, an `xmp` key relative to `data/xmp`. See **key** below. |
 
-## The project's own vocabulary
+## Vocabulary
 
 **key** — a string that locates an item, and the only notion of identity here.
 A path relative to an agreed-upon root, `data/jpg` everywhere downstream of
@@ -109,18 +117,39 @@ cluster of images; a **branch** is a level-2 Ward group of leaves. Both are
 named by a **medoid** key, so the name survives a re-run — HDBSCAN's integer
 ids do not.
 
-**medoid / centroid / density peak** — three ways to say "the middle" of a
+**medoid / centroid / density peak** *(borrowed)* — three ways to say "the middle" of a
 cluster. The **medoid** is an actual member closest to the centre and is what
 this project names clusters by; the **centroid** is the mean vector, which is
 shortened by internal disagreement; the **density peak** is the member in the
 densest neighbourhood.
 
-**noise** — HDBSCAN's label for a point in no cluster. Not an error and not a
+**noise** *(borrowed)* — HDBSCAN's label for a point in no cluster. Not an error and not a
 bad photograph: it means the point had no dense neighbourhood at that
 `min_cluster_size`. Raising the parameter makes *more* noise, not less.
 
-**seriation** — ordering clusters so that neighbours in the order are similar.
-Used for presentation only; it was tried for discovery and rejected.
+**seriation** *(borrowed)* — ordering things so that neighbours in the order are
+similar. Not a coinage: it is the archaeologists' term for arranging artefacts
+into a sequence by similarity in order to date them relatively, and the same
+word is used in combinatorial data analysis for reordering the rows and columns
+of a matrix to bring structure onto the diagonal. Both senses are the one used
+here. In this project it is presentation only — it was tried as a way to
+*discover* clusters and rejected, because an ordering is one-dimensional and
+the structure is not.
+
+**Ward** *(borrowed)* — Ward's method, a way of building a hierarchy of
+clusters, and an eponym rather than an acronym: Joe H. Ward Jr., 1963. It is
+**agglomerative** — start with every item its own cluster and repeatedly merge
+the pair whose merger increases the total within-cluster variance the least,
+until one cluster remains. Three properties are why level 2 uses it instead of
+HDBSCAN again: it has **no parameter**, it produces **every level at once** as a
+tree rather than one partition, and it has **no noise class**, so nothing is
+left out — which a taxonomy cannot tolerate.
+
+**linkage / dendrogram** *(borrowed)* — the two artifacts Ward produces. The
+**linkage** is the merge history: which pair joined, and at what cost. The
+**dendrogram** is that history drawn as a tree. Cutting it at a given height
+yields a partition, so a dendrogram is not *a* clustering but all of them, and
+choosing a cut is a separate decision from building the tree.
 
 **layout vs index** — `layout.csv` is the second-level clustering's output:
 structure and time, no labels. `index.csv` is written by the *export* beside the
