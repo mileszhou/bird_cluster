@@ -51,7 +51,7 @@ def embeddings_for(run_dir: Path, explicit: Path | None = None) -> Path:
     clustering using somebody else's vectors, and the numbers look perfectly
     reasonable.
 
-    So the run says. `discover.py` records the absolute `source` it loaded, and
+    So the run says. `cluster.py` records the absolute `source` it loaded, and
     that is preferred when it still resolves. When it does not -- `./clean`
     moves a whole run root, taking `output/embed` with it and stranding the
     recorded path -- the sibling `embed/` under the same root is the same file

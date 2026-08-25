@@ -1,7 +1,7 @@
 """Step 2 of the semantic-clustering pipeline: HDBSCAN over frozen embeddings.
 
     ./run-cluster                                  # the default sweep
-    python3 -m code.cluster.discover --min-cluster-size 5,15,40
+    python3 -m code.cluster.cluster --min-cluster-size 5,15,40
 
 **A run is an experiment, not a build step.** Each `--min-cluster-size` gets its
 own output directory and nothing overwrites anything, because how the structure
@@ -49,7 +49,7 @@ import numpy as np
 from code.lib.config import PROJECT_ROOT, data_dir
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
-logger = logging.getLogger("discover")
+logger = logging.getLogger("cluster")
 
 
 def load(path: Path):

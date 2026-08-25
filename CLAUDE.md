@@ -161,7 +161,7 @@ produced it.
 
 And the learning is the deliverable. `stats.py` is not a report tacked onto the end; if the
 point is what the clusters teach, the cluster statistics and the condensed tree *are* the
-result, and `discover.py` exists to feed them.
+result, and `cluster.py` exists to feed them.
 
 This is also why the labels are not ground truth here (see `project/ideas/01`): the premise is
 that a vector carries more than a label does, so clusters are used to *study* the labelling
@@ -721,7 +721,10 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    768 dims, against ~85 MB as float32 — the price of being appendable and inspectable, which is
    what makes resumption and the single-model check cheap. If load time hurts, cache a derived
    `.npy` beside it rather than changing the write format.
-3. `code/cluster/discover.py` / `stats.py` — HDBSCAN + cluster statistics. Not yet written.
+3. `code/cluster/cluster.py` — HDBSCAN over the frozen vectors, one directory per
+   `min_cluster_size`. Named for what it does: it was `discover.py`, which described
+   an intention rather than an operation, and the intention is the whole pipeline's,
+   not this stage's. `stats.py` is still unwritten.
 
 **Judging a change to the embedding** — `tools/audit_embed_quality.py` compares runs by
 leave-one-out **1-NN accuracy** against the pipeline's own species labels: for each image, is
