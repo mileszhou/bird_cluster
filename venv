@@ -49,6 +49,7 @@ has_stage() {
 }
 
 python3 -m venv .venv
+printf '\n%s="%s"\n' "export PROJECT_ROOT" "$(pwd)" | tee -a .venv/bin/activate
 source .venv/bin/activate
 
 # Easiest way to set the path
