@@ -1,0 +1,25 @@
+#!/usr/bin/bash
+# Step 2b: cluster the clusters. Ward over the level-1 medoids, grouping leaves
+# into branches, and the month/date layout that lets Lightroom browse both.
+#
+#     ./run-cluster2 --run output/cluster/mcs3
+#     ./run-cluster2 --run output/cluster/mcs3 --max-leaves 20
+#     ./run-cluster2 --run output/cluster/mcs3 --dry-run
+#
+# Its output is output/cluster2/<run>/index.csv -- the layout, not the pixels.
+# Rendering it into browsable JPEGs is a separate step, deliberately:
+#
+#     python3 -m tools.export_seriated --index output/cluster2/mcs3/index.csv
+#
+# It takes --run rather than sweeping, because a level-2 grouping is *of* one
+# level-1 run and there is no sensible default across a sweep: branches computed
+# over mcs3's leaves say nothing about mcs15's.
+set -euo pipefail
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
+[ -d .venv ] && source .venv/bin/activate
+
+python3 -m code.cluster.cluster2 "$@"

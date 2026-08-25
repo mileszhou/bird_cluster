@@ -235,6 +235,74 @@ def set_capture_time(src: Path, dst: Path, when: datetime):
     piexif.insert(piexif.dump(exif), str(dst))
 
 
+def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
+              stat, failures):
+    """Copy one image and write its metadata. Returns its label CSV row, if any.
+
+    Shared by the two planners: the flat seriation below, and a layout read from
+    a `cluster2` index. Neither decides anything here -- this function is the
+    representation layer, and it is deliberately ignorant of which level of
+    clustering chose the time it is given.
+    """
+    dst = out / key
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if not labels_only:
+        set_capture_time(jpg_root / key, dst, when)
+    source = labels.get(key)
+    label = effective_label(source) if source else None
+    if not label:
+        stat["no label"] += 1
+        failures.append((key, "no usable label in the label CSV"))
+        return source
+    try:
+        stat[write_keywords(dst, label, when, colour)] += 1
+    except (SegmentError, XmpEditError, OSError) as exc:
+        stat["failed"] += 1
+        failures.append((key, str(exc)))
+    return source
+
+
+def export_index(args, labels):
+    """Render a `cluster2` index: it already holds the times, so nothing is planned.
+
+    The index is the second-level clustering's output and this is a view of it,
+    so the only decisions left are which bytes to copy and where.
+    """
+    rows = read_rows(args.index)
+    if not rows:
+        raise SystemExit(f"error: {args.index} is empty")
+    out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
+                       f"{args.index.parent.parent.name}-{args.index.parent.name}")
+    jpg_root = data_dir() / "jpg"
+    span = (rows[0]["capture_time"][:10], rows[-1]["capture_time"][:10])
+    branches = len({r["branch"] for r in rows})
+    leaves = len({r["leaf"] for r in rows})
+    print(f"  {args.index}: {len(rows):,} images, {branches} branches, "
+          f"{leaves:,} leaves ({span[0]} .. {span[1]})")
+    if args.dry_run:
+        return
+
+    out.mkdir(parents=True, exist_ok=True)
+    stat, failures, recoloured = Counter(), [], 0
+    for seq, r in enumerate(rows, 1):
+        when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
+        colour = r.get("color", "")
+        apply_row(r["key"], when, colour, out, jpg_root, labels,
+                  args.labels_only, stat, failures)
+        recoloured += bool(colour)
+        if seq % 2000 == 0:
+            print(f"    {seq:,}/{len(rows):,}", flush=True)
+    print(f"    -> {out}  ({len(rows):,} files; the index stays at {args.index})")
+    for what, count in sorted(stat.items()):
+        print(f"       {what}: {count:,}")
+    if recoloured:
+        print(f"       colour label set on {recoloured:,} pooled images")
+    for key, why in failures[:5]:
+        print(f"       ! {key}: {why}")
+    if len(failures) > 5:
+        print(f"       ! ... and {len(failures) - 5} more")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -253,6 +321,9 @@ def main():
     ap.add_argument("--label-dir", type=Path,
                     default=PROJECT_ROOT / "data" / "label",
                     help="directory holding bird_identification_output.csv")
+    ap.add_argument("--index", type=Path, default=None,
+                    help="render a cluster2 index instead of planning a flat "
+                         "seriation; the index already carries the times")
     ap.add_argument("--labels-only", action="store_true",
                     help="rewrite metadata in an existing export without copying "
                          "the images again -- for changing the label form or the "
@@ -264,6 +335,10 @@ def main():
     with open(args.label_dir / "bird_identification_output.csv",
               encoding="utf-8-sig", newline="") as fh:
         labels = {r["jpg"]: r for r in csv.DictReader(fh)}
+
+    if args.index:
+        export_index(args, labels)
+        return
 
     base = datetime.strptime(args.base_date, "%Y-%m-%d")
     for run_dir in resolve_runs(args):
@@ -295,22 +370,9 @@ def main():
             w.writerow(["seq", "capture_time", "cluster_id", "species", "color", "key"])
             for seq, (cid, i, when, colour) in enumerate(plan, 1):
                 r = rows[i]
-                dst = out / r["key"]          # mirror data/jpg's tree
-                dst.parent.mkdir(parents=True, exist_ok=True)
-                if not args.labels_only:
-                    set_capture_time(jpg_root / r["key"], dst, when)
-                source = labels.get(r["key"])
-                label = effective_label(source) if source else None
-                if not label:
-                    stat["no label"] += 1
-                    failures.append((r["key"], "no usable label in the label CSV"))
-                else:
-                    try:
-                        stat[write_keywords(dst, label, when, colour)] += 1
-                        recoloured += bool(colour)
-                    except (SegmentError, XmpEditError, OSError) as exc:
-                        stat["failed"] += 1
-                        failures.append((r["key"], str(exc)))
+                source = apply_row(r["key"], when, colour, out, jpg_root, labels,
+                                   args.labels_only, stat, failures)
+                recoloured += bool(colour)
                 # The species comes from --label-dir, the same CSV the keyword
                 # above was written from, and *not* from `r["species"]` -- that
                 # column is whatever labelling was current when the clustering

@@ -725,6 +725,32 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    `min_cluster_size`. Named for what it does: it was `discover.py`, which described
    an intention rather than an operation, and the intention is the whole pipeline's,
    not this stage's. `stats.py` is still unwritten.
+4. `code/cluster/cluster2.py` — the second level: Ward over the level-1 **medoids**,
+   grouping *clusters* rather than images. The vocabulary is **leaf** for a level-1
+   cluster and **branch** for a group of them. Ward rather than HDBSCAN again, and
+   medoids rather than centroids, both on the evidence in `project/findings/01`; the
+   cut is adaptive — descend until no branch holds more than `--max-leaves` leaves —
+   because the constraint that matters is a display one and a fixed `k` cannot promise
+   it. **`./run-cluster2`**, which takes `--run` rather than sweeping: a level-2
+   grouping is *of* one level-1 run, and branches over mcs3's leaves say nothing about
+   mcs15's, so there is no sensible default across a sweep.
+
+   **`index.csv` is this stage's output, and the JPEG export is a representation of
+   it.** The layout is the artifact worth keeping — a few hundred KB that can be read
+   and diffed — while the export is 2.7 GB of copied pixels that decides nothing.
+   `export_seriated --index <path>` renders one. That re-splits the "one command, not
+   two" that `export_seriated`'s docstring argues for, and safely: the old trap was
+   `index.csv` being written *during* the copy so a reader could catch it half-done,
+   whereas here it is complete and renamed into place before the copy starts.
+
+   **Two levels of time carry two levels of structure.** Month per branch, date per
+   leaf, minute per image within a leaf, second left free. Lightroom sorts by capture
+   time and filters by date, so picking a month gives a branch and picking a day gives
+   a leaf. 28 days are used in every month — `--max-leaves` 27 plus a pool date — so
+   February needs no special case, and at the default cut the pool never fills. A leaf
+   larger than the 1,440 minutes in a day is a hard error, not an overflow: the next
+   date belongs to the next leaf, so spilling would corrupt the encoding rather than
+   crowd it.
 
 **Judging a change to the embedding** — `tools/audit_embed_quality.py` compares runs by
 leave-one-out **1-NN accuracy** against the pipeline's own species labels: for each image, is
