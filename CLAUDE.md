@@ -735,13 +735,27 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    grouping is *of* one level-1 run, and branches over mcs3's leaves say nothing about
    mcs15's, so there is no sensible default across a sweep.
 
-   **`index.csv` is this stage's output, and the JPEG export is a representation of
-   it.** The layout is the artifact worth keeping — a few hundred KB that can be read
-   and diffed — while the export is 2.7 GB of copied pixels that decides nothing.
-   `export_seriated --index <path>` renders one. That re-splits the "one command, not
-   two" that `export_seriated`'s docstring argues for, and safely: the old trap was
-   `index.csv` being written *during* the copy so a reader could catch it half-done,
-   whereas here it is complete and renamed into place before the copy starts.
+   **`layout.csv` is this stage's output, and it carries no labels.** Which leaf each
+   image is in, which branch each leaf is in, and the time encoding both — a few
+   hundred KB that can be read and diffed, against 2.7 GB of copied pixels that
+   decides nothing structural. `export_seriated --layout <path>` renders it and
+   writes its own `index.csv` beside the JPEGs: the layout it was given, plus the
+   species it captioned with.
+
+   **The label is chosen by the render, and by nothing earlier.** Clustering does not
+   read a labelling, because it does not depend on one — the vectors are
+   self-supervised and the grouping is geometry. A species column copied into a
+   clustering artifact is a second copy of a fact owned elsewhere, and it goes stale
+   the moment a different labeller runs: that is exactly what `assignments.csv`'s
+   frozen `species` did, putting one bird in a JPEG and another in the index beside it
+   across 70% of an export. One owner per fact, so there is nothing to disagree. A
+   guard was tried first and then deleted — a guard exists because two things *can*
+   disagree, and the better fix is that only one of them holds the fact.
+
+   This re-splits the "one command, not two" that `export_seriated`'s docstring
+   argues for, and safely: the old trap was `index.csv` being written *during* the
+   copy so a reader could catch it half-done, whereas the layout is complete and
+   renamed into place before any copying starts. `local/exp-jpg2` runs the pair.
 
    **Two levels of time carry two levels of structure.** Month per branch, date per
    leaf, minute per image within a leaf, second left free. Lightroom sorts by capture

@@ -26,13 +26,23 @@ limit into the only parameter, and it is one with a meaning you can check by
 looking. A fixed k cannot promise it -- at k=12 every group overflows, and the
 overflow is not the tail but the bulk.
 
-## The index is this stage's output
+## The layout is this stage's output, and it carries no labels
 
-`index.csv` is what the second-level clustering *produces*. The JPEG export is a
-**representation** of it: it copies pixels and writes metadata, and decides
-nothing. That ordering matters beyond tidiness -- the layout is the interesting
-artifact, it is a few hundred KB, and it can be read, diffed and argued about
-without touching 3.7 GB of image.
+`layout.csv` is what the second-level clustering *produces*: which leaf each
+image is in, which branch each leaf is in, and the time that encodes both. The
+JPEG export is a **representation** of it -- it copies pixels and writes
+metadata, and decides nothing structural. The layout is the interesting
+artifact, a few hundred KB, readable and diffable without touching 3.7 GB of
+image.
+
+**No species column, deliberately.** Nothing here reads a label, because
+nothing here depends on one: the vectors are self-supervised and the grouping
+is geometry. A labelling copied into a clustering artifact is a second copy of
+a fact owned elsewhere, and it goes stale the moment a different labeller is
+run -- which is not hypothetical, it is what `assignments.csv`'s frozen
+`species` column did, putting one bird in a JPEG and another in the index
+beside it across 70% of an export. The label belongs to the step that renders
+for a human, and it is read fresh there from the label CSV.
 
 It also un-merges `export_seriated`'s "one command, not two", and safely. That
 merge happened because `index.csv` used to be written *during* the copy, so a
@@ -85,9 +95,8 @@ from scipy.cluster.hierarchy import linkage, leaves_list
 sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[2]))
 
-from code.lib.config import PROJECT_ROOT, working_output          # noqa: E402
+from code.lib.config import working_output                       # noqa: E402
 from code.lib.csv_post import embeddings_for, read_rows           # noqa: E402
-from code.lib.jpg_meta import effective_english                   # noqa: E402
 from tools.plot_matrix import load_vectors                        # noqa: E402
 
 logger = logging.getLogger("cluster2")
@@ -173,9 +182,6 @@ def main():
                     help="default: <working output>/cluster2/<run name>")
     ap.add_argument("--embeddings", type=Path, default=None,
                     help="default: the vectors the level-1 run recorded")
-    ap.add_argument("--label-dir", type=Path,
-                    default=PROJECT_ROOT / "data" / "label",
-                    help="directory holding bird_identification_output.csv")
     ap.add_argument("--max-leaves", type=int, default=27,
                     help="leaves per branch before the rest go to the pool date (default 27)")
     ap.add_argument("--base-year", type=int, default=2000)
@@ -208,15 +214,6 @@ def main():
     for rows in members.values():
         rows.sort(key=lambda r: int(r["seq"]))
 
-    labels = {}
-    label_csv = args.label_dir / "bird_identification_output.csv"
-    if label_csv.is_file():
-        csv.field_size_limit(10 ** 9)
-        with open(label_csv, newline="", encoding="utf-8") as fh:
-            labels = {r["jpg"]: r for r in csv.DictReader(fh)}
-    else:
-        logger.warning("no label CSV at %s -- species left empty", label_csv)
-
     rows, seq, stat = [], 0, Counter()
     for bi, (medoid_leaf, leaf_idx) in enumerate(branches):
         branch_name = centres[medoid_leaf]["medoid"]
@@ -237,7 +234,6 @@ def main():
             for when, r in zip(capture_times(bi, slot, len(imgs),
                                              args.base_year, args.max_leaves), imgs):
                 seq += 1
-                src = labels.get(r["key"])
                 rows.append({
                     "seq": seq,
                     "capture_time": when.strftime("%Y-%m-%d %H:%M:%S"),
@@ -246,7 +242,6 @@ def main():
                     "leaf": cid,
                     "leaf_size": len(imgs),
                     "leaf_name": centres[li]["medoid"],
-                    "species": (effective_english(src) if src else "") or "",
                     "color": colour,
                     "key": r["key"],
                 })
@@ -258,16 +253,15 @@ def main():
 
     out = args.out or (working_output() / "cluster2" / args.run.name)
     out.mkdir(parents=True, exist_ok=True)
-    tmp = out / "index.csv.tmp"
+    tmp = out / "layout.csv.tmp"
     with open(tmp, "w", newline="", encoding="utf-8-sig") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0]))
         w.writeheader()
         w.writerows(rows)
-    tmp.replace(out / "index.csv")          # atomic: never half-visible
+    tmp.replace(out / "layout.csv")         # atomic: never half-visible
     (out / "run.json").write_text(json.dumps({
         "level1_run": str(args.run.resolve()),
         "source": str(vec_path),
-        "label_dir": str(args.label_dir.resolve()),
         "max_leaves": args.max_leaves,
         "base_year": args.base_year,
         "leaves": len(centres),
@@ -277,7 +271,7 @@ def main():
         "leaves_per_branch_median": int(np.median(sizes)),
         "leaves_per_branch_max": max(sizes),
     }, indent=2) + "\n", encoding="utf-8")
-    logger.info("-> %s", out / "index.csv")
+    logger.info("-> %s", out / "layout.csv")
 
 
 if __name__ == "__main__":

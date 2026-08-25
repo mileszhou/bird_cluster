@@ -103,6 +103,7 @@ JPEG's keyword has to be embedded in the file itself, and it has to go into
     python3 -m tools.export_seriated --run output/cluster/mcs3 --min-cluster 3
     python3 -m tools.export_seriated --run output/cluster/mcs15 --dry-run
     python3 -m tools.export_seriated --run output/cluster/mcs15 --labels-only
+    python3 -m tools.export_seriated --layout output/cluster2/mcs3/layout.csv
 
 Writes to output/lightroom/jpg/<run>/ plus an index CSV. Never touches data/.
 """
@@ -269,74 +270,56 @@ def load_labels(label_dir: Path):
         return {r["jpg"]: r for r in csv.DictReader(fh)}
 
 
-def index_label_dir(index: Path, requested: Path | None) -> Path:
-    """The label CSV a cluster2 index was built from -- not the caller's guess.
-
-    The index's `species` column was resolved by `cluster2` from one label CSV.
-    Writing keywords here from a *different* one puts the two back out of step,
-    which is the exact failure the species column was fixed for: the JPEG says
-    one bird and the index beside it says another. So the run records the
-    directory it used and this reads it back, the same way `embeddings_for`
-    refuses to guess which vectors a clustering was built from.
-
-    A caller may still pass `--label-dir`, but only to say the same thing.
-    Disagreement is an error, because the alternative is to silently prefer one
-    of two answers that were meant to be the same.
-    """
-    meta = index.parent / "run.json"
-    recorded = None
-    if meta.is_file():
-        value = json.loads(meta.read_text(encoding="utf-8")).get("label_dir")
-        recorded = Path(value) if value else None
-    if requested and recorded and requested.resolve() != recorded.resolve():
-        raise SystemExit(
-            f"error: {index} was built from {recorded}\n"
-            f"       but --label-dir says {requested}\n"
-            f"       The index's species column came from the first. Rendering "
-            f"keywords from the second\n       would make the JPEGs and the index "
-            f"disagree. Re-run cluster2 with the label\n       directory you want, "
-            f"or drop --label-dir.")
-    if recorded:
-        return recorded
-    if requested:
-        return requested
-    raise SystemExit(f"error: {meta} does not record a label_dir; pass --label-dir")
-
-
 def export_index(args):
-    """Render a `cluster2` index: it already holds the times, so nothing is planned.
+    """Render a `cluster2` layout: it already holds the times, so nothing is planned.
 
-    The index is the second-level clustering's output and this is a view of it,
-    so the only decisions left are which bytes to copy and where.
+    The layout is the second-level clustering's output and this is a view of it,
+    so the only decisions left are which bytes to copy, where, and which label to
+    caption them with. **The label is decided here and nowhere earlier** -- the
+    layout is pure structure, so the two cannot fall out of step, and re-running
+    with a different `--label-dir` re-captions an export without touching the
+    clustering that produced it.
     """
-    label_dir = index_label_dir(args.index, args.label_dir)
-    labels = load_labels(label_dir)
-    print(f"  labels from {label_dir} (recorded by the cluster2 run)")
-    rows = read_rows(args.index)
+    labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
+    # utf-8-sig, not utf-8: layout.csv carries a BOM so Excel reads its Chinese
+    # trip names, and a plain read would leave it glued to the first field name
+    # -- which then gets written back out behind a second BOM.
+    with open(args.layout, newline="", encoding="utf-8-sig") as fh:
+        rows = list(csv.DictReader(fh))
     if not rows:
-        raise SystemExit(f"error: {args.index} is empty")
+        raise SystemExit(f"error: {args.layout} is empty")
     out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
-                       f"{args.index.parent.parent.name}-{args.index.parent.name}")
+                       f"{args.layout.parent.parent.name}-{args.layout.parent.name}")
     jpg_root = data_dir() / "jpg"
     span = (rows[0]["capture_time"][:10], rows[-1]["capture_time"][:10])
     branches = len({r["branch"] for r in rows})
     leaves = len({r["leaf"] for r in rows})
-    print(f"  {args.index}: {len(rows):,} images, {branches} branches, "
+    print(f"  {args.layout}: {len(rows):,} images, {branches} branches, "
           f"{leaves:,} leaves ({span[0]} .. {span[1]})")
     if args.dry_run:
         return
 
     out.mkdir(parents=True, exist_ok=True)
     stat, failures, recoloured = Counter(), [], 0
-    for seq, r in enumerate(rows, 1):
-        when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
-        colour = r.get("color", "")
-        apply_row(r["key"], when, colour, out, jpg_root, labels,
-                  args.labels_only, stat, failures)
-        recoloured += bool(colour)
-        if seq % 2000 == 0:
-            print(f"    {seq:,}/{len(rows):,}", flush=True)
-    print(f"    -> {out}  ({len(rows):,} files; the index stays at {args.index})")
+    index = out / "index.csv.tmp"
+    with open(index, "w", newline="", encoding="utf-8-sig") as fh:
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]) + ["species"])
+        w.writeheader()
+        for seq, r in enumerate(rows, 1):
+            when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
+            colour = r.get("color", "")
+            source = apply_row(r["key"], when, colour, out, jpg_root, labels,
+                               args.labels_only, stat, failures)
+            recoloured += bool(colour)
+            # The export's own index: the layout it was given, plus the caption
+            # it chose. The layout has no species column -- that is the point --
+            # so this file is the only record of which labelling was rendered,
+            # and it is written by the step that did the rendering.
+            w.writerow({**r, "species": (effective_english(source) if source else "") or ""})
+            if seq % 2000 == 0:
+                print(f"    {seq:,}/{len(rows):,}", flush=True)
+    index.replace(out / "index.csv")
+    print(f"    -> {out}  ({len(rows):,} files + index.csv)")
     for what, count in sorted(stat.items()):
         print(f"       {what}: {count:,}")
     if recoloured:
@@ -366,9 +349,9 @@ def main():
                     help="directory holding bird_identification_output.csv. Default: "
                          "data/label; with --index, whatever the cluster2 run recorded, "
                          "and passing a different one is an error rather than an override")
-    ap.add_argument("--index", type=Path, default=None,
-                    help="render a cluster2 index instead of planning a flat "
-                         "seriation; the index already carries the times")
+    ap.add_argument("--layout", type=Path, default=None,
+                    help="render a cluster2 layout.csv instead of planning a flat "
+                         "seriation; the layout already carries the times")
     ap.add_argument("--labels-only", action="store_true",
                     help="rewrite metadata in an existing export without copying "
                          "the images again -- for changing the label form or the "
@@ -377,7 +360,7 @@ def main():
                     help="report the layout and stop, copying nothing")
     args = ap.parse_args()
 
-    if args.index:
+    if args.layout:
         export_index(args)
         return
     labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")

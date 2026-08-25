@@ -6,10 +6,13 @@
 #     ./run-cluster2 --run output/cluster/mcs3 --max-leaves 20
 #     ./run-cluster2 --run output/cluster/mcs3 --dry-run
 #
-# Its output is output/cluster2/<run>/index.csv -- the layout, not the pixels.
-# Rendering it into browsable JPEGs is a separate step, deliberately:
+# Its output is output/cluster2/<run>/layout.csv -- structure, not pixels, and
+# no species column: the label is chosen by the render, which is a separate step
+# deliberately, so a clustering artifact never carries a stale labelling.
 #
-#     python3 -m tools.export_seriated --index output/cluster2/mcs3/index.csv
+#     python3 -m tools.export_seriated --layout output/cluster2/mcs3/layout.csv
+#
+# local/exp-jpg2 runs the pair.
 #
 # It takes --run rather than sweeping, because a level-2 grouping is *of* one
 # level-1 run and there is no sensible default across a sweep: branches computed
