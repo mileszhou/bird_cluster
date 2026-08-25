@@ -201,6 +201,34 @@ leaves are shuffled between branches at the same branch sizes (200 draws, sd
 more closely than they track place: 0.6285 against 0.4682
 for the trip, so they are not mainly sorting by background or by season.
 
+### What only the numbers could say
+
+Three things the table establishes that no amount of scrolling would, and they
+are the ones that make the branches worth having at all.
+
+**Whether 0.4208 is impressive.** Leaves in a branch sharing their branch's
+dominant head noun means nothing on its own -- it could be what any grouping of
+this many leaves gives. The shuffled null says 0.1125. An eye cannot estimate a
+null distribution, so without it there is no way to tell structure from the base
+rate of a skewed species mix.
+
+**That level 2 is a level rather than a blur.** The crossover is four numbers
+across two levels and two targets, and it is the strongest positive evidence
+here: the branching is aligned to a coarser *rank*, not merely a noisier version
+of the level below. Nobody holds that comparison in their head across a thousand
+groups.
+
+**That it is not place.** This is the one most worth recording. Looking at a
+visually coherent branch, you cannot tell whether the coherence is "same bird"
+or "same afternoon, same water, same light" -- those are indistinguishable in a
+grid, and the second is the obvious failure mode for an appearance embedding.
+Branch against trip is 0.4682, against head noun 0.6285. That rules it out,
+and looking never could.
+
+So the two are not in competition; they answered different questions. The
+numbers say the branches are real, ranked, and not artefacts of place. Looking
+says what the rank is made of.
+
 ### Why this does not settle it
 
 **The head noun is folk taxonomy, not taxonomy.** English bird names group by
@@ -217,12 +245,22 @@ level 1 had split — which is the useful case. But they mostly do not read as a
 rank above species. What brings leaves into a branch is that they *look alike*,
 and that is not the same relation as sharing an ancestor.
 
+**And the reviewer is not a bird taxonomist**, which cuts against his own
+conclusion rather than for it. What was seen is *different species in one
+branch*; whether those species are close relatives is exactly the fact an
+expert would supply and a photographer need not know. A branch holding four
+congeners looks like "several species mixed together" and is in fact a genus.
+So the negative verdict is as provisional as the positive one it replaced, and
+both are waiting on the same missing artifact.
+
 ### What that changes
 
 1. **Question 1 is answered in the direction of caution.** The composition
    argument stands — the structure is 70 sigma from chance and rank-shaped — but
-   the taxonomy reading does not survive being looked at, and no metric here
-   would have caught that, because every available target is appearance-tinged.
+   the taxonomy reading did not survive being looked at. Caution, not refutation:
+   the metrics cannot separate descent from resemblance because every available
+   target is appearance-tinged, and the eye that found the counter-evidence was
+   not equipped to tell a mixed branch from a genus.
 2. **Question 4 is answered.** Someone looked, and the answer changed the claim.
 3. **The value is as a labelling aid, and that does not depend on the answer.** A
    branch that gathers visually similar leaves is reviewable in one pass, which
