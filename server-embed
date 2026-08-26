@@ -1,6 +1,15 @@
 #!/bin/bash
-# DINOv3 embedding server. Runs on the GPU host; host/port from config.toml
-# [servers.embed]. Needs HF_TOKEN with the DINOv3 licence accepted (from .env).
+# Embedding server. Runs on the GPU host; host/port from config.toml
+# [servers.embed]. DINOv3 needs HF_TOKEN with its licence accepted (from .env);
+# BioCLIP is MIT and ungated.
+#
+# The backbone is the one thing worth varying between runs, so it is a visible
+# parameter rather than an argument to remember:
+#
+#   ./server-embed                                            # DINOv3, 512
+#   MODEL=hf-hub:imageomics/bioclip-2.5-vith14 ./server-embed  # BioCLIP 2.5
+#
+# One server serves one backbone at one resolution -- restart to change either.
 # Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
 # own location if the caller has not already set it, and exported so python and
 # any child process see the same answer.
@@ -20,6 +29,8 @@ if [ -z "${HF_HUB_CACHE:-}" ] && [ -e "$LOCKS" ] && [ ! -w "$LOCKS" ]; then
     echo "note: $LOCKS not writable; using HF_HUB_CACHE=$HF_HUB_CACHE"
 fi
 
+MODEL="${MODEL:-facebook/dinov3-vitb16-pretrain-lvd1689m}"   # which backbone
+
 python3 -m code.embedding.embed_server \
-   --model facebook/dinov3-vitb16-pretrain-lvd1689m \
+   --model "$MODEL" \
    "$@"

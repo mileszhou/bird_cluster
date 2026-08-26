@@ -99,6 +99,7 @@ if has_stage server; then
     echo "== server (large; GPU host only) =="
     pip install torch transformers datasets
     pip install torchvision      # transformers' AutoImageProcessor requires it
+    pip install open_clip_torch  # BioCLIP; not reachable through AutoModel
     pip install fastapi uvicorn  # embed_server.py HTTP surface
 fi
 
