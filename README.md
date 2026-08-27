@@ -50,6 +50,18 @@ demo:
 `--no-setup` reports what is missing without fixing anything. Results land in
 `output/`, one subdirectory per stage.
 
+## Beyond the demo
+
+`run-all` proves the install works; it is not how the pipeline is used. Real
+work is staged and run by hand, because the parameters are the experiment rather
+than settings to get right once — how the structure changes between
+`min_cluster_size` 3, 15 and 40 is itself the result.
+
+**`docs/running-a-study.md`** is that loop end to end: the `local/` convention
+for your own command lists, embedding and judging vectors before clustering
+them, the level-1 sweep and the level-2 grouping, getting the result into a
+photo manager to look at, and which of it is yours to curate by hand.
+
 On a DGX Spark this is genuinely all of it: `config.toml` already points at
 `localhost` for both servers. Other hosts need the compose file adjusted —
 `docker.compose/docker-compose.spark.yaml` pins an ARM/GB10 image — and their
