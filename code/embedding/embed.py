@@ -268,8 +268,20 @@ def probe(embed_url: str):
                     f"dim={info.get('dim')} image_size={info.get('image_size')}")
         return info
     except requests.RequestException as exc:
+        # Name the URL and where it came from. A refusal here reads as "the
+        # server is down" when the usual cause is that this process is asking
+        # the wrong machine: `config.local.toml` is gitignored, so a fresh
+        # clone -- or a container with its own checkout -- falls back to
+        # `config.toml`'s localhost, and inside a container localhost is the
+        # container rather than the box holding the GPU.
         sys.exit(f"error: embed server at {embed_url} unreachable ({exc})\n"
-                 f"       start it with ./run-server-embed on the GPU host")
+                 f"       If it is running, this is pointing at the wrong host.\n"
+                 f"       The host comes from config.toml [servers.embed], overridden\n"
+                 f"       by the gitignored config.local.toml -- so a fresh clone or a\n"
+                 f"       container defaults to localhost:\n"
+                 f"           cp _config.local.toml config.local.toml   # then set the host\n"
+                 f"       Or for one run:  --embed-url http://<host>:9100\n"
+                 f"       To start it:     ./server-embed   (on the GPU host)")
 
 
 def embed_batch(embed_url: str, batch, workers: int, retries: int = 3):

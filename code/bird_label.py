@@ -375,7 +375,14 @@ def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
         sys.exit(f"error: could not probe models at {base_url}/v1 ({e}).\n"
                  f"       The run would proceed without knowing which model serves it, and "
                  f"record '{requested_model}' as the provenance of every row.\n"
-                 f"       Start the server (see run-server-vllm) and re-run.")
+                 f"       If the server is running, this is asking the wrong host: the\n"
+                 f"       host comes from config.toml [servers.vllm], overridden by the\n"
+                 f"       gitignored config.local.toml, so a fresh clone or a container\n"
+                 f"       defaults to localhost -- which inside a container is the\n"
+                 f"       container, not the box with the GPU.\n"
+                 f"           cp _config.local.toml config.local.toml   # then set the host\n"
+                 f"       Or for one run:  --vllm-url http://<host>:8000\n"
+                 f"       To start it:     ./server-vllm")
 
     available_models = [m['id'] for m in models_data.get('data', [])]
     if not available_models:
