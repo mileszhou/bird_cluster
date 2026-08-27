@@ -16,6 +16,7 @@
 #   cluster   embed/cluster/stats numeric stack (no GPU needed)
 #   server    torch + transformers for embed_server.py -- GPU host only, large
 #   notebook  Jupyter kernel
+#   freeze    regenerate requirements.txt from what is installed (not a default)
 #
 # SYSTEM PREREQUISITE, `cluster` stage only:
 #
@@ -39,6 +40,9 @@ set -u
 
 STAGES=("$@")
 if [ ${#STAGES[@]} -eq 0 ]; then
+    # `freeze` is deliberately not here: it writes a tracked file, and doing
+    # that as a side effect of "set my environment up" is how the last
+    # requirements.txt came to describe somebody's conda environment.
     STAGES=(base client test cluster server notebook)
 fi
 
@@ -90,9 +94,18 @@ if has_stage cluster; then
     fi
     pip install numpy
     pip install hdbscan         # step 2 clustering; its condensed tree feeds step 3
+    pip install scipy           # cluster2.py's Ward linkage -- see the note below
     pip install pandas          # condensed_tree_.to_pandas() dump
     pip install matplotlib      # tools/plot_matrix.py renders the ordered matrix
     pip install piexif          # export_seriated rewrites EXIF without re-encoding
+    pip install huggingface_hub # predict_taxa fetches the checklist -- note below
+
+    # scipy and huggingface_hub are named here even though something else always
+    # drags them in on a full install: scipy arrives with hdbscan, and
+    # huggingface_hub with transformers. Both of those are stages a GPU-less box
+    # deliberately skips, and then `./run-cluster2` and `python3 -m
+    # tools.predict_taxa` fail on an import nothing ever asked for. A dependency
+    # that works by luck is a dependency that breaks on the first lean install.
 fi
 
 if has_stage server; then
@@ -106,6 +119,46 @@ fi
 if has_stage notebook; then
     echo "== notebook =="
     pip install ipykernel       # for Jupyter notebook support
+fi
+
+if has_stage freeze; then
+    echo "== freeze =="
+    # This file is the ground truth for what gets installed; requirements.txt is
+    # a snapshot of what that produced, kept as a compatibility guard for the
+    # day a major version jump breaks the environment and a known-good set is
+    # wanted. So it is generated *from* here rather than maintained beside it,
+    # and regenerating is a deliberate act with a commit behind it.
+    #
+    # The nvidia-* and triton wheels are dropped: they are transitive CUDA
+    # dependencies that torch resolves for itself against whatever CUDA is
+    # present, and pinning them makes the file installable only on a box with
+    # this exact toolkit -- the opposite of a rescue.
+    {
+        echo "# Pinned snapshot of a known-good environment. NOT the install path."
+        echo "#"
+        echo "#     ./venv                       <- the install path, and the ground truth"
+        echo "#     pip install -r requirements.txt   <- only when versions have drifted"
+        echo "#                                          far enough to break something"
+        echo "#"
+        echo "# Regenerate with \`./venv freeze\` after a deliberate upgrade, never as a"
+        echo "# side effect. \`./venv\` decides what is installed; this records what that"
+        echo "# produced, so the two can disagree only until someone re-freezes."
+        echo "#"
+        echo "# Frozen on $(uname -s)/$(uname -m), $(python3 -V 2>&1), $(date +%Y-%m-%d)."
+        echo "# Portable on purpose. pip freeze reports torch by version alone, without"
+        echo "# the +cuNNN local tag it was built with, so these pins resolve against"
+        echo "# plain PyPI and each machine gets the build matching its own platform."
+        echo "# Transitive nvidia-*/triton wheels are dropped for the same reason: torch"
+        echo "# pulls the right ones for the CUDA it finds, and pinning the set from"
+        echo "# this box would make the file installable only on a box exactly like it."
+        echo "#"
+        echo "# This is what is *installed*, which is a superset of what ./venv installs"
+        echo "# if anything was ever pip-installed by hand. Check a diff before"
+        echo "# committing a re-freeze, the same as any other generated file."
+        echo "#"
+        pip freeze | grep -viE '^(nvidia-|triton)'
+    } > requirements.txt
+    echo "wrote requirements.txt ($(grep -cv '^#' requirements.txt) pins)"
 fi
 
 # pip install -e ~/projects/vllm
