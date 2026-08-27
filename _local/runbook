@@ -1,0 +1,185 @@
+# Runbook: vectors -> taxonomy -> two-level clustering -> a photo manager.
+#
+# TEMPLATE. Copy it before editing -- `local/` is gitignored, this is not:
+#
+#     cp -r _local local
+#     $EDITOR local/runbook
+#
+# The defaults below are the project's, so it runs as-is; the point is that you
+# change them. Each run's real parameters then live in your copy, which is where
+# a record of what you actually did belongs.
+#
+# Written as one script and meant to be run a line at a time. Not executable on
+# purpose: every step has something worth reading before the next one starts,
+# and a runbook you can accidentally execute whole is a runbook that will be.
+# It is internally consistent, so `bash local/runbook` would work if you ever
+# wanted it to -- step 0 fails fast rather than embedding against the wrong
+# backbone.
+#
+# Assumes ./server-embed is already up somewhere, serving $MODEL. Starting a GPU
+# process is a decision about a machine, not a step in a runbook.
+
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+cd "$PROJECT_ROOT"
+[ -d .venv ] && source .venv/bin/activate
+
+# BioCLIP by default because this runbook ends in taxonomy, and step 3 needs a
+# CLIP-style backbone with a text tower. With DINOv3 -- self-supervised, no text
+# tower -- everything works except step 3, which will refuse rather than guess.
+MODEL="${MODEL:-hf-hub:imageomics/bioclip-2.5-vith14}"  # the backbone in use
+EMBED="${EMBED:-output/embed}"                          # its vectors
+CLUSTER="${CLUSTER:-output/cluster}"                      # its clusters
+MCS="${MCS:-3,5,8,15,40}"                               # the level-1 sweep
+PICK="${PICK:-mcs15}"                                   # the size taken to level 2
+MAX_LEAVES="${MAX_LEAVES:-27}"                          # leaves per branch
+CLASS="${CLASS:-Aves}"                                  # checklist restriction
+LABELS="${LABELS:-data/label}"                          # whose names caption the JPEGs
+RUN_NAME="${RUN_NAME:-}"                                # what to call the archive at the end
+
+
+# ---- 0. Preflight -----------------------------------------------------------
+# The server is one backbone at one resolution. Embedding against the wrong one
+# is not detectable afterwards from the numbers, so check before, not after.
+
+python3 - <<PY
+import sys, requests
+from code.lib.config import server_url
+
+url = server_url('embed')
+print(f"  asking {url}")            # first, so a failure says what it tried
+try:
+    h = requests.get(f"{url}/health", timeout=30).json()
+except requests.exceptions.ConnectionError:
+    sys.exit(
+        f"  STOP: nothing answering at {url}\n"
+        f"        The host comes from config.toml [servers.embed], overridden by\n"
+        f"        config.local.toml. That file is gitignored, so a fresh clone or a\n"
+        f"        container without it falls back to localhost -- and inside a\n"
+        f"        container localhost is the container, not the machine running the\n"
+        f"        GPU. Fix it for good:\n"
+        f"            cp _config.local.toml config.local.toml\n"
+        f"            # [servers.embed] / host = \"<the GPU box>\"\n"
+        f"        or once:  --embed-url http://<host>:9100")
+print(f"  serving {h['model']} @ {h['image_size']}")
+print(f"  on {h['gpu']} via {h['backend']}, dim {h['dim']}, weights {h['revision']}")
+if h['model'] != "$MODEL":
+    sys.exit(f"  STOP: serving {h['model']}, expected $MODEL")
+PY
+
+
+# ---- 1. Embed ---------------------------------------------------------------
+# Dry run prints the population and writes nothing. Check the count and the
+# per-year spread against what you expected; an empty selection is an error.
+
+./run-embed --output-dir "$EMBED" --dry-run
+./run-embed --output-dir "$EMBED"
+
+# Resumable, and it refuses to append to a JSONL written by a different model or
+# resolution. If that refusal fires, you wanted a fresh --output-dir.
+
+
+# ---- 2. Judge the vectors ---------------------------------------------------
+# Before clustering anything. Read the difference against the other run, not the
+# absolute value -- and if two very different backbones land within noise of
+# each other, the measure has hit the label ceiling and is telling you about the
+# labels rather than the vectors.
+
+# With only one embedding run, this reports it alone; the measure is a
+# comparison instrument, so it earns its keep from the second run onwards.
+python3 -m tools.audit_embed_quality --run "$EMBED"
+
+
+# ---- 3. Taxonomy ------------------------------------------------------------
+# No pass over pixels: the stored vectors are already the classifier's input, so
+# a different --taxon-class is a different question asked of the same vectors.
+# Needs the BioCLIP server up, for the text tower only.
+
+python3 -m tools.predict_taxa --run "$EMBED" --taxon-class "$CLASS"
+
+# Give the *labelling* a taxonomy too, so a cluster can be described by family
+# rather than by a list of species strings. Read the by-method line: `vote` means
+# BioCLIP resolved it from pixels, `string` means the checklist named it.
+python3 -m tools.map_label_taxa --embeddings "$EMBED/embeddings.jsonl"
+
+
+# ---- 4. Cluster, as a sweep -------------------------------------------------
+# Sizes are the caller's business. Each writes only its own mcs<N>/, so these
+# could be split across terminals; the same size twice at once is a user error.
+
+./run-cluster --embeddings "$EMBED/embeddings.jsonl" \
+              --output-dir "$CLUSTER" --min-cluster-size "$MCS"
+
+
+# ---- 5. Which rank did they land at? ----------------------------------------
+# Read this before picking $PICK. Purity rises with coarseness for free, so what
+# carries information is the null and the gain from species to family: a cluster
+# already species-pure gains nothing by coarsening; one that is family-pure and
+# species-mixed gains a lot.
+
+python3 -m tools.audit_rank_alignment --cluster-dir "$CLUSTER"
+
+
+# ---- 6. Level 2 -------------------------------------------------------------
+# Ward over the leaf medoids, cut until no branch holds more than $MAX_LEAVES.
+# One run, not a sweep: branches over mcs3's leaves say nothing about mcs15's.
+
+./run-cluster2 --run "$CLUSTER/$PICK" --max-leaves "$MAX_LEAVES"
+
+python3 -m tools.audit_rank_alignment --cluster-dir "$CLUSTER" \
+        --layout "output/cluster2/$PICK/layout.csv"
+
+# Compare the branch rows against the leaf rows. Branches much purer at family
+# than at species is the signature of a rank above species.
+
+
+# ---- 7. Render for the eye --------------------------------------------------
+# layout.csv is structure and carries no labels; the render chooses the caption
+# and owns it. --dry-run reports the layout and copies nothing.
+
+python3 -m tools.export_seriated --layout "output/cluster2/$PICK/layout.csv" \
+        --label-dir "$LABELS" --dry-run
+python3 -m tools.export_seriated --layout "output/cluster2/$PICK/layout.csv" \
+        --label-dir "$LABELS"
+
+# Lands in output/lightroom/jpg/$PICK/ with an index.csv beside it.
+
+
+# ---- 8. Into Lightroom ------------------------------------------------------
+# Import output/lightroom/jpg/$PICK/ as a new folder. Lightroom ignores XMP
+# sidecars for JPEGs, so the keywords are written into the files themselves.
+#
+# Sort by capture time. The two levels are encoded in it:
+#   month  -> branch      pick a month to see one branch
+#   date   -> leaf        pick a day to see one leaf
+#   minute -> position within the leaf
+#
+# What to look for, since this is the half the metrics cannot do: are the
+# species inside one branch actually related, or do they merely look alike?
+# A branch of four congeners reads as a mixture and is a genus.
+#
+# index.csv joins back on the original key, and output/taxa/label_taxonomy.csv
+# gives every image its order/family/genus if you want to check a hunch:
+#
+#   python3 -c "
+# import csv
+# tax = {r['jpg']: r for r in csv.DictReader(open('output/taxa/label_taxonomy.csv', encoding='utf-8-sig'))}
+# import collections
+# idx = list(csv.DictReader(open('output/lightroom/jpg/$PICK/index.csv', encoding='utf-8-sig')))
+# by = collections.defaultdict(collections.Counter)
+# for r in idx:
+#     t = tax.get(r['key'])
+#     if t: by[r['branch']][t['family']] += 1
+# for b, c in sorted(by.items())[:10]:
+#     print(b, c.most_common(3))
+# "
+
+
+# ---- 9. Afterwards ----------------------------------------------------------
+# Write a FINDINGS.md at the run root first -- what the run was, what it was
+# measured against, the numbers, what they mean -- generated from the artifacts
+# rather than transcribed. Then archive, with a description: a bare output_NNN
+# means nothing was learned there, and that is the signal you want in six
+# months when deciding what to delete.
+
+python3 -m tools.audit_report_safety output/FINDINGS.md
+./clean "$RUN_NAME"      # name it. A bare output_NNN means nothing was learned

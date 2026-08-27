@@ -16,6 +16,10 @@ a dataset that resolves, and the embed server reachable.
 
 ## `local/` is your side of the repository
 
+Start by copying the template, which carries a runbook of the whole pass below:
+
+    cp -r _local local
+
 `local/` is gitignored wholesale and is where your working material lives:
 command lists for whatever you are trying this week, `local/manifests/` for scope
 lists, and copies of generated reports. Nothing in it is published, and nothing
@@ -56,8 +60,10 @@ worth changing; if it does not vary, write it inline where it is used.
 
 ## The loop
 
-Copy this into `local/`, rename it for what you are studying, and edit the
-defaults. Each step says what to look at before starting the next.
+`local/runbook` (from the template above) is this sequence as one file, meant to
+be walked a line at a time rather than executed — it is deliberately not
+executable. What follows is why each step is there; the runbook is the steps
+themselves, so edit that rather than copying commands out of here.
 
 ### 0. Know your dataset
 
@@ -228,6 +234,14 @@ interface.
 
 ## Things that will bite
 
+- **A fresh clone points at `localhost`, and a container makes that a trap.**
+  Server hosts come from `config.toml`, overridden by `config.local.toml` —
+  which is gitignored, so a new checkout has none and falls back to the tracked
+  `localhost`. On one machine that is right and invisible. From a container it
+  is wrong in a way that reads as "the server is down", because `localhost`
+  inside a container is the container. `cp _config.local.toml config.local.toml`
+  is a setup step worth doing before the first run rather than after the first
+  confusing refusal.
 - **A stage that selects nothing exits non-zero.** By design. A stale scope that
   quietly embedded a seventh of a library and reported success is why.
 - **Never key anything by filename.** Stems repeat across folders as camera
