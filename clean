@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Start a fresh output/ by archiving the current one -- nothing is deleted.
 #
 # This used to be `rm -rf output/`, which threw away the only record of what a
@@ -16,6 +16,27 @@
 # `output*/` is gitignored, so every archive is ignored too.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# The argument is a *description*, never an option -- so a borrowed or mistyped
+# flag would quietly become an archive name. `./clean --help` archived a live
+# run to output_012_help/ and left an empty output/ behind: recoverable, since
+# nothing here deletes, but indistinguishable from a deliberate archive
+# afterwards. Same shape as `./run-vllm --years` relabelling the library, which
+# is what test/tools/test_run_scripts.py exists to prevent for the wrappers;
+# this script is not a wrapper, so it needs its own refusal.
+for arg in "$@"; do
+    case "$arg" in
+        -h|--help)
+            awk '/^#!/ {next} /^#/ {sub(/^# ?/, ""); print; next} {exit}' "$0"
+            exit 0 ;;
+        -*)
+            echo "error: '$arg' looks like an option, and ./clean takes a" >&2
+            echo "       description of the run being archived, not flags." >&2
+            echo "       Try: ./clean bioclip-taxa      (-> output_NNN_bioclip-taxa/)" >&2
+            echo "       See: ./clean --help" >&2
+            exit 2 ;;
+    esac
+done
 
 # Highest NNN among output_NNN..., zero or nothing if there are none.
 highest_index() {

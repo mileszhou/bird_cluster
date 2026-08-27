@@ -40,3 +40,68 @@ def test_wrapper_does_not_silently_discard_arguments(script):
     assert forwards or rejects, (
         f"{script.name} neither forwards \"$@\" nor rejects unknown arguments, "
         f"so a flag passed to it is silently discarded")
+
+
+# --- ./clean is not a wrapper, and needs its own refusal ---------------------
+
+CLEAN = ROOT / "clean"
+
+
+def _clean_sandbox(tmp_path):
+    """A copy of ./clean in a scratch directory, with an output/ to archive.
+
+    The script does `cd "$(dirname "$0")"`, so it always acts on the directory it
+    sits in. Testing the real one would archive the live run -- which is exactly
+    the accident being guarded against -- so the copy is the point, not a
+    convenience: if the guard ever regresses, this test fails instead of moving
+    somebody's vectors.
+    """
+    import shutil
+
+    script = tmp_path / "clean"
+    shutil.copy2(CLEAN, script)
+    (tmp_path / "output").mkdir()
+    (tmp_path / "output" / "marker.txt").write_text("live run\n")
+    return script
+
+
+def _run(script, *args):
+    import subprocess
+
+    return subprocess.run([str(script), *args], capture_output=True, text=True)
+
+
+def test_clean_refuses_an_option_as_a_description(tmp_path):
+    """A flag must not become an archive name.
+
+    `./clean --help` archived a live run to output_012_help/ and left an empty
+    output/ behind. Nothing was lost -- clean archives and never deletes -- but
+    afterwards it is indistinguishable from a deliberate archive. Same shape as
+    `./run-vllm --years` relabelling the library, which the test above exists to
+    prevent for the wrappers; clean forwards nothing, so it needs its own.
+    """
+    script = _clean_sandbox(tmp_path)
+    done = _run(script, "--force")
+    assert done.returncode == 2, done.stdout + done.stderr
+    assert not list(tmp_path.glob("output_*")), "an option was archived as a name"
+    assert (tmp_path / "output" / "marker.txt").is_file(), "the live run moved"
+
+
+def test_clean_help_archives_nothing(tmp_path):
+    script = _clean_sandbox(tmp_path)
+    done = _run(script, "--help")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "archiving" in done.stdout, done.stdout
+    assert not list(tmp_path.glob("output_*")), "--help archived the run"
+    assert (tmp_path / "output" / "marker.txt").is_file()
+
+
+def test_clean_still_archives_a_description(tmp_path):
+    """The guard must not have broken the thing the script is for."""
+    script = _clean_sandbox(tmp_path)
+    done = _run(script, "bioclip-taxa")
+    assert done.returncode == 0, done.stdout + done.stderr
+    archives = list(tmp_path.glob("output_*"))
+    assert [p.name for p in archives] == ["output_001_bioclip-taxa"], archives
+    assert (archives[0] / "marker.txt").is_file(), "the run was not carried over"
+    assert (tmp_path / "output").is_dir() and not list((tmp_path / "output").iterdir())
