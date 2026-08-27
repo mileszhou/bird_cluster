@@ -407,6 +407,13 @@ itself a question that can only be asked against a stored run.
 Trip folders match verbatim between the two photo trees, so resolving a JPEG is a lookup inside
 one folder. Nothing is hardcoded per year — any dataset in this shape works.
 
+**`_local/` is the tracked template for it** — `cp -r _local local`, the same shape as `_env`
+→ `.env`. It carries `runbook`, a full pass written as one coherent script and deliberately
+**not executable**: every step has something worth reading before the next starts, and a
+runbook that can be executed whole is one that will be. Its defaults are the project's, so it
+runs as shipped and the point is that you change them. `docs/running-a-study.md` explains why
+each step is there; the runbook is the steps, and neither repeats the other.
+
 **`local/` is everything local, and gitignored.** Added 2026-08-12: ad-hoc run
 commands for whatever is being tried this week, `local/manifests/` for scope
 lists that name real trips, and working copies of the generated reports. None of
@@ -640,13 +647,40 @@ repeated frames, will otherwise distort local density. Duplicate sidecars someti
 species for identical pixels, which is a useful direct measure of VLM label noise.
 
 **Steps:**
-1. `code/embedding/embed_server.py` — DINOv3 on the GPU host, `POST /embed` (base64 JPEGs →
-   L2-normalised vectors, so cosine distance == euclidean downstream). `./server-embed`;
+1. `code/embedding/embed_server.py` — the backbone on the GPU host, `POST /embed` (base64
+   JPEGs → L2-normalised vectors, so cosine distance == euclidean downstream). `./server-embed`;
+   `MODEL=` picks the backbone, one per server like one resolution;
    needs `HF_TOKEN` with the gated DINOv3 licence **accepted for the account** — a valid token
    alone gives a 403 on file fetches, and `model_info()` succeeds regardless since gated repos
    expose metadata publicly. On this box `~/.cache/huggingface/hub/.locks` is root-owned, so
    `server-embed` falls back to a private `HF_HUB_CACHE`; fix with
    `sudo chown -R "$USER" ~/.cache/huggingface/hub/.locks`.
+
+   **Two backbones, and they are two instruments rather than two candidates.**
+   `facebook/dinov3-vitb16-pretrain-lvd1689m` is **self-supervised** — it never saw a species
+   name, which is the whole reason it can referee a comparison between two *labellings*
+   (`findings/03`). Nothing else here can do that job. `hf-hub:imageomics/bioclip-2.5-vith14`
+   is **supervised on Linnaean names** over TreeOfLife-200M, ViT-H/14, 1024-dim, MIT and
+   ungated; it is the only one with a **text tower**, which is what makes a taxonomy
+   obtainable at all (see below). For the same reason it cannot referee a labelling: it has a
+   stake in the answer. Backend follows from the model id — `hf-hub:` or a name containing
+   `clip` needs open_clip, everything else transformers — and `--backend` overrides.
+
+   **Accuracy at species is not what separates them.** Over the same 27,194 images DINOv3 at
+   512 scores 1-NN 0.5363 and BioCLIP at 224 scores 0.5334, a difference that is **not
+   significant** (McNemar p=0.21), while the two are wrong *together* on 39.6%. Choose on
+   kind, not score.
+
+   **`--resize-mode {crop,squash}`, open_clip only.** open_clip's own transform resizes the
+   shortest edge and centre-crops, so a 3:2 frame loses its outer thirds; DINOv3's processor
+   squashes the whole frame instead. Recorded in the `image_size` string (`224x224/crop`) so
+   two runs cannot be confused. Measured flat — both score 0.5334 despite moving the vectors
+   substantially (mean cosine 0.9602 between the two encodings of one image) — so take the
+   default and do not spend a run on it again.
+
+   **`POST /embed_text`** embeds label text into the same space, for zero-shot use. It refuses
+   on the transformers backend rather than inventing a vector: DINOv3 is vision-only, and a
+   plausible nonsense vector would be undetectable downstream.
 
    **`--image-size` is the resolution the backbone actually sees, and it is not the size of
    your JPEG.** `AutoImageProcessor` carries a resize in its own config and applies it
@@ -771,6 +805,56 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    date belongs to the next leaf, so spilling would corrupt the encoding rather than
    crowd it.
 
+### Taxonomy, from the vectors already on disk
+
+**The checklist arrived, and it was the top of the open list.** `project/status/08` records two
+findings blocked on one artifact; TreeOfLife-200M's taxon list supplies it — **11,131 Aves
+taxa**, 283 families, 43 orders, 98% carrying a common name, filtered from 867,455 by class.
+It is the vocabulary BioCLIP was *trained* against, which is the right label space for
+zero-shot: a name the text tower never saw is a name it cannot rank fairly. Restricting to one
+class is the single largest accuracy lever and costs nothing.
+
+- `tools/predict_taxa.py` — image vector · text vector, so **no pass over pixels**: the stored
+  vectors are already `encode_image` output and the whole set classifies in under two minutes.
+  A different checklist is a different question asked of the same vectors, not another GPU
+  hour. Writes `output/taxa/taxa_predictions.csv`, keyed by `jpg`. One guard, the one that
+  matters: the vectors must come from the model the server serves, since image and text
+  vectors from two models share no space and the result would look fine and mean nothing.
+  Both knobs were measured and neither matters — four text forms agree within 0.002, and
+  prompt ensembling over the 80 OpenAI templates makes it slightly *worse*, since BioCLIP was
+  fine-tuned on taxonomic strings. **Measure on a random sample if this is revisited**: the
+  JSONL is written in path order, so the head of the file is one or two years and reads ~0.45
+  where the true figure is 0.29.
+- `tools/map_label_taxa.py` — gives the *existing labelling* a taxonomy, so a cluster can be
+  described by family rather than by a list of species strings. Two routes, blind in opposite
+  directions: the checklist name (precise, blind to a life stage the checklist does not carry
+  — `<bird> duckling` — and to a spelling it lists differently)
+  and BioCLIP's modal call over the images carrying that label (sees pixels, not words, lands
+  somewhere for everything including the junk). Where both fire they agree on family for
+  **85.8% of images** though only 63.4% of labels; disagreement falls from 53.6% on one-image
+  labels to 10.0% at 20+, so `agrees=no` on a large label is a lead. 99.6% of images end with
+  a family. Writes `vocabulary_taxa.csv` and `label_taxonomy.csv`.
+- `tools/audit_rank_alignment.py` — size-weighted modal purity of clusters against each rank,
+  with a shuffled null. **Read the shape, not the level**: purity rises with coarseness for
+  free, so what carries information is the null and the *gain* from species to family.
+  `--source checklist` (the default) drops the ~20% of images whose taxonomy came from
+  BioCLIP's vote, so no embedding marks its own homework.
+
+**What it answered.** `findings/01` asked whether a level-2 branch is a rank above species or a
+bag of look-alikes. Over checklist-named labels only — no per-image model call anywhere in the
+taxonomy — leaves are 0.6914 species-pure and branches are **0.6066 family-pure against a
+shuffled null of 0.0857, but only 0.2998 species-pure**. A branch cannot be named with a
+species and can be named with a family. That is a rank above species, and it partly overturns
+the visual verdict in the direction that finding's own caveat predicted: a branch of four
+congeners looks like a mixture and is a genus. The sweep says the same thing from the other
+side — species purity falls from 0.6914 at mcs3 to 0.5008 at mcs40 while family purity barely
+moves, so larger clusters are not getting worse, they are drifting up a rank.
+
+**`margin` is a calibrated confidence, which this project has never had.** Top-1 minus
+runner-up cosine, rising monotonically across all ten deciles from 0.0758 to 0.6776 agreement
+with the existing labels. Set that against the VLM's own `confidence` column, which averages
+0.968 against a measured ~35% error. It is the triage order for a review.
+
 **Judging a change to the embedding** — `tools/audit_embed_quality.py` compares runs by
 leave-one-out **1-NN accuracy** against the pipeline's own species labels: for each image, is
 its nearest neighbour the same species? A property of the vectors alone, with no
@@ -781,6 +865,26 @@ micro and macro over species with ≥20 images. The restriction matters — a si
 scores zero by construction and 1,246 of the 2,820 species have exactly one image, so an
 all-species macro would mostly measure how long the tail is. **Baseline at 224px: 1-NN
 0.5207, macro≥20 0.5567, ≥20 0.6259** over 27,194 images.
+
+**This measure has since saturated, and that is a result rather than a defect.** Three arms —
+DINOv3 ViT-B/16 at 512 (86M params, self-supervised, squashed), BioCLIP ViT-H/14 at 224 (632M,
+taxonomy-supervised, cropped) and the same BioCLIP squashed — land within 0.003 of each other
+at ~0.535, and the one gap testable formally is insignificant. Meanwhile all three are wrong on
+roughly 39.6% of images *simultaneously*, which sits on top of `findings/03`'s independently
+derived 33.6–36.6% species error. Two backbones sharing no architecture, no training data and
+no supervision regime cannot agree that closely by accident: above ~0.53 the number is
+describing the **labels**, not the vectors. The instrument is not blind — 224→512 was worth
++0.0156 and was detectable — it has simply run out of headroom against a ~35%-wrong reference.
+
+Two things follow. Reading a small 1-NN difference as "this embedding is better" is now a
+mistake. And the label-free comparison is the one with room left: asked whether two embeddings
+pick the *same nearest neighbour*, DINOv3 and BioCLIP agree 42.5% of the time against a chance
+rate of 0.0037%, which is 84% of the agreement between one model with itself under a
+preprocessing change. On the images the labels call wrong for both, they still agree with each
+other 46.2% of the time — 89% of the rate when the labels call them right. Genuine model
+failure would not look like that. A caveat that colours the whole measure: **78.5% of nearest
+neighbours come from the same trip**, so for four images in five 1-NN is scoring within-session
+label consistency rather than species discrimination.
 
 The report goes to a fixed path so it can be diffed in an editor between runs, and carries no
 timestamp for the same reason; `--snapshot [LABEL]` files a numbered copy alongside. Both land
@@ -798,8 +902,24 @@ more exposed to which model wrote it than to how the pixels were fed in. The too
 do this as it stands — it takes species from the JSONL, so a second labelling has to be
 joined on `key` from its CSV.
 
-Environment: `./venv` takes stage arguments so a non-GPU box need not pull torch —
-`./venv base client test cluster`, and `./venv server` adds torch/transformers/fastapi.
+Environment: **`./venv` is the ground truth for what gets installed**, and takes stage
+arguments so a non-GPU box need not pull torch — `./venv base client test cluster`, and
+`./venv server` adds torch/transformers/fastapi/open_clip_torch.
+
+**`requirements.txt` is a compatibility guard, not the install path**: a pinned snapshot for
+the day a major version jump breaks something and a known-good set is wanted. `./venv freeze`
+regenerates it, deliberately absent from the default stage list — writing a tracked file as a
+side effect of "set my environment up" is how the previous one came to describe somebody's
+conda environment, pinning 343 `file:///private/var/folders/...` paths and installing nowhere,
+including here. The freeze drops `nvidia-*`/`triton` (transitive CUDA wheels torch resolves
+for itself; pinning this box's set would make the file installable only on a box exactly like
+it) and records what is *installed*, a superset of what `./venv` installs — so read the diff
+before committing a re-freeze.
+
+**Declare what arrives by luck.** `scipy` (cluster2's Ward linkage) and `huggingface_hub`
+(predict_taxa's checklist) are imported directly but used to arrive only as hdbscan's and
+transformers' dependencies. A GPU-less box skips `server`, may skip hdbscan since it is the one
+package that compiles, and then both fail on an import nothing asked for.
 Tests run from within `test/` (`../.venv/bin/python -m pytest lib/`). `test/conftest.py`
 exists because the project package is named `code`, which shadows the stdlib module of the
 same name once pytest preloads it.

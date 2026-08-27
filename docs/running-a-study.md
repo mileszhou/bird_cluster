@@ -91,6 +91,29 @@ MODEL=hf-hub:imageomics/bioclip-2.5-vith14 ./server-embed   # BioCLIP, taxonomy-
 ./server-embed --image-size 512                            # DINOv3 at a resolution it likes
 ```
 
+**Which backbone is not a free choice, and not a ranking.** The two here differ
+in kind rather than quality, and the defaults encode what has been measured:
+
+*DINOv3* is self-supervised — it never saw a species name. That is what makes it
+a legitimate referee for judging a *labelling*, since it cannot be accused of
+having authored either side. Nothing else here can do that job. It wants 512:
+224→512 was worth +0.0156 of 1-NN, measured.
+
+*BioCLIP* is supervised on Linnaean names, and its text tower is what turns
+stored vectors into a taxonomy for the cost of one matmul — the step that makes
+rank questions askable at all. For the same reason it cannot referee a
+labelling: it has a stake. It is native at 224, and how the frame is fitted to
+that square (`--resize-mode crop` or `squash`) measured flat, so take the
+default.
+
+What is *not* a reason to choose between them is accuracy at species. Over 27k
+images they score 0.5363 and 0.5334 on 1-NN, a difference that is not
+significant (McNemar p=0.21), while being wrong together on 39.6% of images —
+which is roughly the independently-derived error rate of the labels themselves.
+Two backbones sharing no architecture and no supervision agreeing that closely
+is the measure telling you it has stopped describing the vectors. Pick the one
+whose *kind* suits the question.
+
 `--image-size` matters more than it looks. The image processor carries a resize
 in its own config and applies it silently — for DINOv3 ViT-B/16 that is 224×224,
 so a 1024px export reaches the backbone as a 14×14 grid and the detail

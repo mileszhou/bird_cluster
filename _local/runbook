@@ -24,8 +24,11 @@ cd "$PROJECT_ROOT"
 [ -d .venv ] && source .venv/bin/activate
 
 # BioCLIP by default because this runbook ends in taxonomy, and step 3 needs a
-# CLIP-style backbone with a text tower. With DINOv3 -- self-supervised, no text
-# tower -- everything works except step 3, which will refuse rather than guess.
+# text tower. Swap in DINOv3 and everything works except step 3, which refuses
+# rather than guesses. Not a ranking: the two score the same at species and
+# differ in kind -- DINOv3 is the only one that can referee a labelling, BioCLIP
+# the only one that can name a rank. docs/running-a-study.md, "Start a backbone",
+# has the numbers behind that.
 MODEL="${MODEL:-hf-hub:imageomics/bioclip-2.5-vith14}"  # the backbone in use
 EMBED="${EMBED:-output/embed}"                          # its vectors
 CLUSTER="${CLUSTER:-output/cluster}"                      # its clusters
