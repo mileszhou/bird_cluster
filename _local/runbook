@@ -138,6 +138,11 @@ python3 -m tools.audit_rank_alignment --cluster-dir "$CLUSTER" \
 # ---- 7. Render for the eye --------------------------------------------------
 # layout.csv is structure and carries no labels; the render chooses the caption
 # and owns it. --dry-run reports the layout and copies nothing.
+#
+# The taxonomy is picked up automatically from output/taxa/label_taxonomy.csv
+# and written as extra keywords -- ord:/fam:/gen: -- so the photo manager's
+# keyword list becomes a rank filter. That is what makes "is this branch one
+# family?" answerable by clicking rather than by eye.
 
 python3 -m tools.export_seriated --layout "output/cluster2/$PICK/layout.csv" \
         --label-dir "$LABELS" --dry-run

@@ -197,6 +197,12 @@ render chooses the caption and owns it — a species column copied into a
 clustering artifact is a second copy of a fact owned elsewhere, and goes stale
 the moment a different labelling runs.
 
+The export also carries the taxonomy, when one exists: `ord:`/`fam:`/`gen:`
+keywords beside the species, picked up from `output/taxa/label_taxonomy.csv`
+without being asked. A rank as its own keyword is filterable, which a rank
+folded into a caption is not — and "is this branch one family?" is the question
+the review exists to ask.
+
 **Two levels of time carry the two levels of structure** into a photo manager:
 month per branch, date per leaf, minute per image, second left free. Import the
 exported JPEGs and sort by capture time — picking a month gives you a branch,

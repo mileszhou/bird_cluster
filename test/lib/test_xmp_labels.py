@@ -153,3 +153,46 @@ def test_ordering_is_preserved(tmp_path):
 
 def test_empty_is_empty(tmp_path):
     assert split_keywords([]) == ((), ())
+
+
+# --- the browsing export's rank keywords ------------------------------------
+#
+# Added after `--labels-only` was found to double them. `ord:`/`fam:`/`gen:` are
+# a fourth generation of pipeline keyword, and a generation split_keywords does
+# not recognise is preserved as the user's and then written again, so every
+# re-caption grows the list. The failure is silent and only visible in a photo
+# manager's keyword panel.
+
+def test_rank_keywords_are_ours():
+    ours, theirs = split_keywords(
+        ["ord:Passeriformes", "fam:Monarchidae", "gen:Terpsiphone",
+         "gen:Terpsiphone paradisi"])
+    assert theirs == ()
+    assert len(ours) == 4
+
+
+def test_rank_rule_does_not_claim_the_users_keywords():
+    """Narrow on purpose: a prefix, then one capitalised Linnaean name.
+
+    A user keyword that merely contains a colon must survive. These are the
+    shapes that would be lost if the pattern were loosened to "has a colon".
+    """
+    subjects = ["notes: my own thing", "genus: whatever", "my:tag", "Family",
+                "fam:", "ord:lowercase", "xs-小隼-Kestrel"]
+    ours, theirs = split_keywords(subjects)
+    assert ours == ()
+    assert set(theirs) == set(subjects)
+
+
+def test_recaptioning_is_idempotent_for_ranks():
+    """What the doubling bug actually looked like, as a partition.
+
+    Re-writing keywords replaces `ours` and keeps `theirs`, so a rank keyword
+    landing in `theirs` is one that comes back beside its own replacement.
+    """
+    written = ["hzww-黑枕王鹟-black-naped monarch(98%)",
+               "ord:Passeriformes", "fam:Monarchidae", "gen:Terpsiphone"]
+    hand = "sd-寿带-Asian Paradise-flycatcher"
+    ours, theirs = split_keywords([hand] + written)
+    assert theirs == (hand,), "a hand-written keyword must never be claimed"
+    assert set(ours) == set(written), "every pipeline keyword must be replaced"

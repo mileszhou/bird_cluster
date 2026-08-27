@@ -296,8 +296,13 @@ def set_color_label(text: str, colour: str) -> str:
     return text[:at] + f' xmp:Label="{colour}"' + text[at:]
 
 
-def write_keywords(path: Path, label: str, when=None, colour: str = "") -> str:
-    """Set `label` as this JPEG's pipeline keyword, in XMP and IPTC alike.
+def write_keywords(path: Path, label, when=None, colour: str = "") -> str:
+    """Set `label` as this JPEG's pipeline keyword(s), in XMP and IPTC alike.
+
+    `label` is one keyword or several. Several exist for the browsing export,
+    where a taxonomic rank rides alongside the species so a photo manager's
+    keyword list becomes a filter -- "show me this family" is the question a
+    cluster review asks, and one composed string cannot answer it.
 
     `colour`, when given, additionally sets the Lightroom colour label. It is a
     separate edit applied after the keyword one has been verified, because
@@ -314,7 +319,8 @@ def write_keywords(path: Path, label: str, when=None, colour: str = "") -> str:
     before = xmp_segment[1][len(XMP_SIG):].decode("utf-8")
 
     ours, theirs = split_keywords(current_subjects(before))
-    subjects = list(theirs) + [label]
+    labels = [label] if isinstance(label, str) else [x for x in label if x]
+    subjects = list(theirs) + labels
 
     # hierarchical=None: no export carries lr:hierarchicalSubject, and a stale
     # mirror resurrects old keywords on import. Never create one.

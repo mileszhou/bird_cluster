@@ -98,6 +98,12 @@ class SidecarLabels(NamedTuple):
         return self.label.english if self.label else None
 
 
+# The browsing export's rank keywords: `ord:Passeriformes`, `fam:Monarchidae`,
+# `gen:Terpsiphone`. Anchored and narrow -- a prefix, then a single Linnaean
+# name -- so a user keyword that merely contains a colon is not claimed.
+RANK_KEYWORD_RE = re.compile(r"^(?:ord|fam|gen):[A-Z][A-Za-z-]+(?: [a-z-]+)?$")
+
+
 def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Partition a sidecar's keywords into (ours, theirs).
 
@@ -125,6 +131,16 @@ def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:
     exists nowhere else. The `HAND_WRITTEN_RE` exemption matters most *after* a
     full re-label, when every sidecar carries a category and the rule would
     otherwise claim any species keyword added afterwards.
+
+    A fourth generation was added later and is the easiest of the four: the
+    browsing export's `ord:`/`fam:`/`gen:` rank keywords. They were given a
+    prefix so a photo manager's keyword list would group them, and that prefix
+    doubles as the marker here. It has to: a rank keyword not recognised as ours
+    is preserved as the user's and then written again, so every `--labels-only`
+    pass doubles it. This rule is the one place the "err towards leaving a stale
+    keyword" asymmetry does not apply, because nothing but this pipeline writes
+    `fam:Monarchidae`, and the cost of being wrong is an accumulating duplicate
+    rather than a lost keyword.
     """
     subjects = tuple(subjects)
     has_category = any(s in CATEGORIES or s in EARLY_CATEGORIES for s in subjects)
@@ -136,6 +152,7 @@ def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:
                 or text in EARLY_CATEGORIES
                 or text == NO_BIRD_MARKER
                 or CONFIDENCE_SUFFIX_RE.match(text) is not None
+                or RANK_KEYWORD_RE.match(text) is not None
                 or (has_category and descriptive))
         (ours if mine else theirs).append(keyword)
     return tuple(ours), tuple(theirs)

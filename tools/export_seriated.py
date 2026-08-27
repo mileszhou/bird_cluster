@@ -238,7 +238,7 @@ def set_capture_time(src: Path, dst: Path, when: datetime):
 
 
 def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
-              stat, failures):
+              stat, failures, taxa=None):
     """Copy one image and write its metadata. Returns its label CSV row, if any.
 
     Shared by the two planners: the flat seriation below, and a layout read from
@@ -256,12 +256,52 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
         stat["no label"] += 1
         failures.append((key, "no usable label in the label CSV"))
         return source
+    keywords = [label] + taxa_keywords((taxa or {}).get(key))
     try:
-        stat[write_keywords(dst, label, when, colour)] += 1
+        stat[write_keywords(dst, keywords, when, colour)] += 1
     except (SegmentError, XmpEditError, OSError) as exc:
         stat["failed"] += 1
         failures.append((key, str(exc)))
     return source
+
+
+TAXA_DEFAULT = Path("output") / "taxa" / "label_taxonomy.csv"
+TAXA_RANKS = (("ord", "order"), ("fam", "family"), ("gen", "genus"))
+
+
+def load_taxa(path: Path | None, required: bool):
+    """Per-image ranks from `tools.map_label_taxa`, or nothing.
+
+    Optional on purpose: the export predates the taxonomy and still works
+    without one, and a checklist is a thing a study may not have. Named
+    explicitly it must exist -- a silent fallback to no taxonomy would produce a
+    complete-looking export missing the whole point of asking for it.
+
+    The ranks become their own keywords rather than being folded into the
+    species string. A cluster review asks "is this branch one family?", which a
+    keyword list can answer by filtering and a composed caption cannot. Prefixed
+    so they sort together in the keyword panel and are unmistakably ours.
+    """
+    if path is None and TAXA_DEFAULT.is_file():
+        path = TAXA_DEFAULT
+    if path is None:
+        if required:
+            raise SystemExit("error: --taxonomy named no file and none found at "
+                             f"{TAXA_DEFAULT}. Build one with "
+                             "`python3 -m tools.map_label_taxa`.")
+        return {}
+    if not Path(path).is_file():
+        raise SystemExit(f"error: no taxonomy at {path}. Build one with "
+                         "`python3 -m tools.map_label_taxa`.")
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        taxa = {r["jpg"]: r for r in csv.DictReader(fh)}
+    print(f"  taxonomy: {len(taxa):,} images from {path}")
+    return taxa
+
+
+def taxa_keywords(row) -> list[str]:
+    return [f"{prefix}:{row[rank]}" for prefix, rank in TAXA_RANKS
+            if row and row.get(rank)]
 
 
 def load_labels(label_dir: Path):
@@ -281,6 +321,7 @@ def export_index(args):
     clustering that produced it.
     """
     labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
+    taxa = load_taxa(args.taxonomy, required=args.taxonomy is not None)
     # utf-8-sig, not utf-8: layout.csv carries a BOM so Excel reads its Chinese
     # trip names, and a plain read would leave it glued to the first field name
     # -- which then gets written back out behind a second BOM.
@@ -303,19 +344,22 @@ def export_index(args):
     stat, failures, recoloured = Counter(), [], 0
     index = out / "index.csv.tmp"
     with open(index, "w", newline="", encoding="utf-8-sig") as fh:
-        w = csv.DictWriter(fh, fieldnames=list(rows[0]) + ["species"])
+        ranks = [rank for _, rank in TAXA_RANKS] if taxa else []
+        w = csv.DictWriter(fh, fieldnames=list(rows[0]) + ["species"] + ranks)
         w.writeheader()
         for seq, r in enumerate(rows, 1):
             when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
             colour = r.get("color", "")
             source = apply_row(r["key"], when, colour, out, jpg_root, labels,
-                               args.labels_only, stat, failures)
+                               args.labels_only, stat, failures, taxa)
             recoloured += bool(colour)
             # The export's own index: the layout it was given, plus the caption
             # it chose. The layout has no species column -- that is the point --
             # so this file is the only record of which labelling was rendered,
             # and it is written by the step that did the rendering.
-            w.writerow({**r, "species": (effective_english(source) if source else "") or ""})
+            t = taxa.get(r["key"]) or {}
+            w.writerow({**r, "species": (effective_english(source) if source else "") or "",
+                        **{rank: t.get(rank, "") for rank in ranks}})
             if seq % 2000 == 0:
                 print(f"    {seq:,}/{len(rows):,}", flush=True)
     index.replace(out / "index.csv")
@@ -349,6 +393,11 @@ def main():
                     help="directory holding bird_identification_output.csv. Default: "
                          "data/label; with --index, whatever the cluster2 run recorded, "
                          "and passing a different one is an error rather than an override")
+    ap.add_argument("--taxonomy", type=Path, default=None,
+                    help="per-image ranks from tools.map_label_taxa, written as "
+                         "extra keywords (ord:/fam:/gen:) so a photo manager can "
+                         f"filter by rank. Default: {TAXA_DEFAULT} if it exists, "
+                         "otherwise none; naming one that is absent is an error")
     ap.add_argument("--layout", type=Path, default=None,
                     help="render a cluster2 layout.csv instead of planning a flat "
                          "seriation; the layout already carries the times")
@@ -364,6 +413,7 @@ def main():
         export_index(args)
         return
     labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
+    taxa = load_taxa(args.taxonomy, required=args.taxonomy is not None)
 
     base = datetime.strptime(args.base_date, "%Y-%m-%d")
     for run_dir in resolve_runs(args):
@@ -396,7 +446,7 @@ def main():
             for seq, (cid, i, when, colour) in enumerate(plan, 1):
                 r = rows[i]
                 source = apply_row(r["key"], when, colour, out, jpg_root, labels,
-                                   args.labels_only, stat, failures)
+                                   args.labels_only, stat, failures, taxa)
                 recoloured += bool(colour)
                 # The species comes from --label-dir, the same CSV the keyword
                 # above was written from, and *not* from `r["species"]` -- that
