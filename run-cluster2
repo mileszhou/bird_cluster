@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 # Step 2b: cluster the clusters. Ward over the level-1 medoids, grouping leaves
 # into branches, and the month/date layout that lets Lightroom browse both.
 #

@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 # Start the vLLM server on this box, in docker.
 set -euo pipefail
 # Every path in this project hangs off $PROJECT_ROOT. Set here from the script's

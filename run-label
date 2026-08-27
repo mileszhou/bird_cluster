@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 # Every path in this project hangs off $PROJECT_ROOT. Set here from the script's

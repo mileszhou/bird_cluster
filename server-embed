@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Embedding server. Runs on the GPU host; host/port from config.toml
 # [servers.embed]. DINOv3 needs HF_TOKEN with its licence accepted (from .env);
 # BioCLIP is MIT and ungated.

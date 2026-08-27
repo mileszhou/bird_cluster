@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Copy *.xmp to ./data/xmp0     # for analysis
 rsync -avu \

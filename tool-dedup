@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Find sidecars describing the same photo across the unsplit XMP library.
 # Read-only; writes the report and CSVs into project/reports/.
 # Every path in this project hangs off $PROJECT_ROOT. Set here from the script's

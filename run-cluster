@@ -1,4 +1,4 @@
-#!/usr/bin/bash
+#!/usr/bin/env bash
 # Step 2: HDBSCAN over the curated embeddings. One invocation, one run.
 #
 #     ./run-cluster                          # cluster.py's default sweep

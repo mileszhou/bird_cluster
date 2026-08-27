@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Audit the dataset: sidecars <-> JPEG exports <-> result CSVs. Read-only.
 # Writes the report and the manual-repair worklists into project/reports/.
 # Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
