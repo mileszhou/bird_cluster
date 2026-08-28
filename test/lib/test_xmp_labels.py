@@ -196,3 +196,25 @@ def test_recaptioning_is_idempotent_for_ranks():
     ours, theirs = split_keywords([hand] + written)
     assert theirs == (hand,), "a hand-written keyword must never be claimed"
     assert set(ours) == set(written), "every pipeline keyword must be replaced"
+
+
+def test_prediction_keywords_are_ours():
+    """`bc:` is BioCLIP's own call, written beside the label-derived ranks.
+
+    Every prefix the pipeline writes must be claimed here. One that is missing
+    is preserved as the user's and then written again, so each re-caption
+    doubles it -- the bug the rank rule above was added for, which recurs for
+    each new prefix unless the rule grows with it.
+    """
+    written = ["bc-ord:Passeriformes", "bc-fam:Monarchidae", "bc-gen:Terpsiphone",
+               "bc:Indian paradise flycatcher", "bc-conf:low"]
+    ours, theirs = split_keywords(written)
+    assert theirs == ()
+    assert len(ours) == len(written)
+
+
+def test_prediction_rule_spares_lookalike_user_keywords():
+    subjects = ["bc:", "bc-conf:whatever", "abc:something", "my:tag"]
+    ours, theirs = split_keywords(subjects)
+    assert ours == ()
+    assert set(theirs) == set(subjects)

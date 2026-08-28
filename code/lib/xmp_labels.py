@@ -101,7 +101,15 @@ class SidecarLabels(NamedTuple):
 # The browsing export's rank keywords: `ord:Passeriformes`, `fam:Monarchidae`,
 # `gen:Terpsiphone`. Anchored and narrow -- a prefix, then a single Linnaean
 # name -- so a user keyword that merely contains a colon is not claimed.
-RANK_KEYWORD_RE = re.compile(r"^(?:ord|fam|gen):[A-Z][A-Za-z-]+(?: [a-z-]+)?$")
+# `ord:Passeriformes`, `fam:Monarchidae`, `gen:Terpsiphone` -- the ranks looked
+# up from the species label -- plus the `bc-` family of the same, and `bc:` and
+# `bc-conf:` for BioCLIP's own per-image call and its confidence bucket. Every
+# prefix this pipeline writes has to be listed: one that is missing is preserved
+# as the user's and then written again, so each --labels-only pass doubles it.
+RANK_KEYWORD_RE = re.compile(
+    r"^(?:(?:bc-)?(?:ord|fam|gen):[A-Z][A-Za-z-]+(?: [a-z-]+)?"
+    r"|bc:[A-Za-z][\w '-]*"
+    r"|bc-conf:(?:high|mid|low))$")
 
 
 def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:

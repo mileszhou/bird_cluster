@@ -238,7 +238,7 @@ def set_capture_time(src: Path, dst: Path, when: datetime):
 
 
 def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
-              stat, failures, taxa=None):
+              stat, failures, taxa=None, pred=None):
     """Copy one image and write its metadata. Returns its label CSV row, if any.
 
     Shared by the two planners: the flat seriation below, and a layout read from
@@ -256,7 +256,8 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
         stat["no label"] += 1
         failures.append((key, "no usable label in the label CSV"))
         return source
-    keywords = [label] + taxa_keywords((taxa or {}).get(key))
+    keywords = ([label] + taxa_keywords((taxa or {}).get(key))
+                + prediction_keywords((pred or {}).get(key)))
     try:
         stat[write_keywords(dst, keywords, when, colour)] += 1
     except (SegmentError, XmpEditError, OSError) as exc:
@@ -271,6 +272,70 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
 # rank keywords quietly absent.
 TAXA_DEFAULT = PROJECT_ROOT / "output" / "taxa" / "label_taxonomy.csv"
 TAXA_RANKS = (("ord", "order"), ("fam", "family"), ("gen", "genus"))
+PRED_DEFAULT = PROJECT_ROOT / "output" / "taxa" / "taxa_predictions.csv"
+# Buckets over `margin` (top-1 minus runner-up cosine), which rises monotonically
+# across its deciles from 0.08 to 0.68 agreement with the existing labels. It is
+# the only calibrated confidence this project has -- the VLM's own averages 0.968
+# against a measured ~35% error -- so it is the right thing to sort a review by.
+MARGIN_BUCKETS = ((0.15, "high"), (0.07, "mid"), (0.0, "low"))
+
+
+def margin_bucket(margin: str) -> str:
+    try:
+        m = float(margin)
+    except (TypeError, ValueError):
+        return ""
+    for floor, name in MARGIN_BUCKETS:
+        if m >= floor:
+            return name
+    return "low"
+
+
+def load_predictions(path: Path | None, required: bool):
+    """BioCLIP's per-image call, which owes nothing to the labelling.
+
+    The distinction from `load_taxa` is the whole point and is easy to lose: the
+    label taxonomy is looked up *from the species string*, so where the labeller
+    is wrong it is confidently wrong in the same direction. This is read off the
+    pixels, so it is a genuine second opinion and can be compared against the
+    species keyword rather than merely restating it.
+    """
+    if path is None and PRED_DEFAULT.is_file():
+        path = PRED_DEFAULT
+    if path is None:
+        if required:
+            raise SystemExit(f"error: no predictions at {PRED_DEFAULT}. Build them "
+                             "with `python3 -m tools.predict_taxa`.")
+        return {}
+    if not Path(path).is_file():
+        raise SystemExit(f"error: no predictions at {path}. Build them with "
+                         "`python3 -m tools.predict_taxa`.")
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        pred = {r["jpg"]: r for r in csv.DictReader(fh)}
+    print(f"  predictions: {len(pred):,} images from {path}")
+    return pred
+
+
+def prediction_keywords(row) -> list[str]:
+    """`bc:` for what BioCLIP saw, so it cannot be mistaken for the label's own.
+
+    Prefixed separately from `ord:`/`fam:`/`gen:` on purpose. A photo can carry
+    a species keyword from one source and a genus from another -- that is true
+    of 19% of this set today, and reading the pair as one opinion is exactly the
+    confusion this is meant to end.
+    """
+    if not row:
+        return []
+    out = []
+    for prefix, rank in (("bc-ord", "order"), ("bc-fam", "family"), ("bc-gen", "genus")):
+        if row.get(rank):
+            out.append(f"{prefix}:{row[rank]}")
+    if row.get("common_name"):
+        out.append(f"bc:{row['common_name']}")
+    bucket = margin_bucket(row.get("margin", ""))
+    if bucket:
+        out.append(f"bc-conf:{bucket}")
+    return out
 
 
 def load_taxa(path: Path | None, required: bool):
@@ -325,7 +390,10 @@ def export_index(args):
     clustering that produced it.
     """
     labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
-    taxa = load_taxa(args.taxonomy, required=args.taxonomy is not None)
+    taxa = (load_taxa(args.taxonomy, required=args.taxonomy is not None)
+            if args.taxonomy_source in ("label", "both") else {})
+    pred = (load_predictions(args.predictions, required=args.predictions is not None)
+            if args.taxonomy_source in ("image", "both") else {})
     # utf-8-sig, not utf-8: layout.csv carries a BOM so Excel reads its Chinese
     # trip names, and a plain read would leave it glued to the first field name
     # -- which then gets written back out behind a second BOM.
@@ -348,22 +416,28 @@ def export_index(args):
     stat, failures, recoloured = Counter(), [], 0
     index = out / "index.csv.tmp"
     with open(index, "w", newline="", encoding="utf-8-sig") as fh:
-        ranks = [rank for _, rank in TAXA_RANKS] if taxa else []
+        ranks = ([rank for _, rank in TAXA_RANKS] if taxa else []) \
+            + (["bc_common", "bc_genus", "bc_margin"] if pred else [])
         w = csv.DictWriter(fh, fieldnames=list(rows[0]) + ["species"] + ranks)
         w.writeheader()
         for seq, r in enumerate(rows, 1):
             when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
             colour = r.get("color", "")
             source = apply_row(r["key"], when, colour, out, jpg_root, labels,
-                               args.labels_only, stat, failures, taxa)
+                               args.labels_only, stat, failures, taxa, pred)
             recoloured += bool(colour)
             # The export's own index: the layout it was given, plus the caption
             # it chose. The layout has no species column -- that is the point --
             # so this file is the only record of which labelling was rendered,
             # and it is written by the step that did the rendering.
-            t = taxa.get(r["key"]) or {}
+            t, bc = taxa.get(r["key"]) or {}, pred.get(r["key"]) or {}
+            extra = {rank: t.get(rank, "") for _, rank in TAXA_RANKS} if taxa else {}
+            if pred:
+                extra.update(bc_common=bc.get("common_name", ""),
+                             bc_genus=bc.get("genus", ""),
+                             bc_margin=bc.get("margin", ""))
             w.writerow({**r, "species": (effective_english(source) if source else "") or "",
-                        **{rank: t.get(rank, "") for rank in ranks}})
+                        **extra})
             if seq % 2000 == 0:
                 print(f"    {seq:,}/{len(rows):,}", flush=True)
     index.replace(out / "index.csv")
@@ -402,6 +476,18 @@ def main():
                          "extra keywords (ord:/fam:/gen:) so a photo manager can "
                          f"filter by rank. Default: {TAXA_DEFAULT} if it exists, "
                          "otherwise none; naming one that is absent is an error")
+    ap.add_argument("--taxonomy-source", choices=("label", "image", "both"),
+                    default="label",
+                    help="where the rank keywords come from. `label` looks the "
+                         "species string up in the checklist, so it restates the "
+                         "labelling and inherits its errors. `image` is BioCLIP's "
+                         "own per-image call (bc:), which owes the labelling "
+                         "nothing and is therefore the one worth reviewing "
+                         "against. `both` writes each under its own prefix "
+                         "(default: label)")
+    ap.add_argument("--predictions", type=Path, default=None,
+                    help=f"per-image calls from tools.predict_taxa (default: "
+                         f"{PRED_DEFAULT} when --taxonomy-source uses it)")
     ap.add_argument("--layout", type=Path, default=None,
                     help="render a cluster2 layout.csv instead of planning a flat "
                          "seriation; the layout already carries the times")
@@ -417,7 +503,10 @@ def main():
         export_index(args)
         return
     labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
-    taxa = load_taxa(args.taxonomy, required=args.taxonomy is not None)
+    taxa = (load_taxa(args.taxonomy, required=args.taxonomy is not None)
+            if args.taxonomy_source in ("label", "both") else {})
+    pred = (load_predictions(args.predictions, required=args.predictions is not None)
+            if args.taxonomy_source in ("image", "both") else {})
 
     base = datetime.strptime(args.base_date, "%Y-%m-%d")
     for run_dir in resolve_runs(args):
@@ -450,7 +539,7 @@ def main():
             for seq, (cid, i, when, colour) in enumerate(plan, 1):
                 r = rows[i]
                 source = apply_row(r["key"], when, colour, out, jpg_root, labels,
-                                   args.labels_only, stat, failures, taxa)
+                                   args.labels_only, stat, failures, taxa, pred)
                 recoloured += bool(colour)
                 # The species comes from --label-dir, the same CSV the keyword
                 # above was written from, and *not* from `r["species"]` -- that
