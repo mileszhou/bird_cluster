@@ -194,7 +194,10 @@ python3 -m tools.export_seriated --layout output/cluster2/mcs3/layout.csv \
 `layout.csv` is the structural output and carries no labels: which leaf each
 image is in, which branch each leaf is in, and the time encoding of both. The
 export writes `index.csv` and `run.json` beside the JPEGs, so a folder of images
-can say which labellings captioned it and under which tags. The
+can say which labellings captioned it and under which tags. Its default name
+carries the backbone too — `cluster2-mcs3-dinov3-512` — since the same `mcs3`
+under two embeddings is two different groupings, and two exports named alike are
+two exports nobody can tell apart a month later. The
 render chooses the caption and owns it — a species column copied into a
 clustering artifact is a second copy of a fact owned elsewhere, and goes stale
 the moment a different labelling runs.
