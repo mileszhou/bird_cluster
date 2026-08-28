@@ -218,3 +218,19 @@ def test_prediction_rule_spares_lookalike_user_keywords():
     ours, theirs = split_keywords(subjects)
     assert ours == ()
     assert set(theirs) == set(subjects)
+
+
+def test_species_keywords_from_both_sources_are_ours():
+    """`sp:` is the labeller's species, `bc:` BioCLIP's, written side by side.
+
+    The review compares them, so both must be plain filterable keywords -- and
+    both must be claimed here, or a re-caption doubles them.
+    """
+    written = ["sp:black-naped monarch", "sp-sci:Hypothymis azurea",
+               "bc:Indian paradise flycatcher", "bc-sci:Terpsiphone paradisi"]
+    ours, theirs = split_keywords(written)
+    assert theirs == ()
+    assert len(ours) == len(written)
+    # and a hand-written keyword still survives beside them
+    ours, theirs = split_keywords(written + ["sd-寿带-Asian Paradise-flycatcher"])
+    assert theirs == ("sd-寿带-Asian Paradise-flycatcher",)

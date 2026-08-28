@@ -332,6 +332,8 @@ def prediction_keywords(row) -> list[str]:
             out.append(f"{prefix}:{row[rank]}")
     if row.get("common_name"):
         out.append(f"bc:{row['common_name']}")
+    if row.get("genus"):
+        out.append("bc-sci:" + " ".join(x for x in (row["genus"], row.get("species")) if x))
     bucket = margin_bucket(row.get("margin", ""))
     if bucket:
         out.append(f"bc-conf:{bucket}")
@@ -369,8 +371,29 @@ def load_taxa(path: Path | None, required: bool):
 
 
 def taxa_keywords(row) -> list[str]:
-    return [f"{prefix}:{row[rank]}" for prefix, rank in TAXA_RANKS
-            if row and row.get(rank)]
+    """What the *labelling* says, as ranks plus a plain species name.
+
+    `sp:` repeats the species the composed keyword already carries, and earns
+    its place by being comparable: `hzww-黑枕王鹟-black-naped monarch(98%)`
+    beside `bc:Indian paradise flycatcher` is not two species names a reader can
+    weigh against each other, and a keyword panel cannot filter on part of a
+    composed string.
+
+    `sp-sci:` is written **only where the checklist named the label by string**.
+    Where the label was resolved by BioCLIP's vote, the binomial came from the
+    pixels rather than from the labeller, and presenting it as the labeller's
+    scientific name would put one opinion in two columns and make the two
+    sources agree by construction on 5,336 images.
+    """
+    if not row:
+        return []
+    out = [f"{prefix}:{row[rank]}" for prefix, rank in TAXA_RANKS if row.get(rank)]
+    if row.get("label"):
+        out.append(f"sp:{row['label']}")
+    if (row.get("method") or "").startswith("string") and row.get("genus"):
+        binomial = " ".join(x for x in (row["genus"], row.get("species")) if x)
+        out.append(f"sp-sci:{binomial}")
+    return out
 
 
 def load_labels(label_dir: Path):

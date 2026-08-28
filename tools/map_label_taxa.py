@@ -193,6 +193,7 @@ def main():
     out_dir = args.output_dir
     out_dir.mkdir(parents=True, exist_ok=True)
     mapping: dict[str, dict] = {}
+    vocab_method: dict[str, str] = {}
     stats = collections.Counter()
 
     vocab_path = out_dir / "vocabulary_taxa.csv"
@@ -239,6 +240,7 @@ def main():
                 method = "vote" if any(hit[r] for r in RANKS) else "none"
 
             stats[method] += 1
+            vocab_method[lab] = method
             if method and method.startswith("string") and agrees == "no":
                 stats["string-but-vote-disagrees"] += 1
             mapping[lab] = hit
@@ -253,11 +255,17 @@ def main():
     # --- the per-image join, which is what a cluster review actually reads ---
     img_path = out_dir / "label_taxonomy.csv"
     with open(img_path, "w", newline="", encoding="utf-8-sig") as fh:
-        writer = csv.DictWriter(fh, fieldnames=["jpg", "label"] + list(RANKS))
+        # `method` rides along because a consumer has to know which route a row
+        # took. A binomial reached by the vote came from BioCLIP's reading of the
+        # pixels, not from the label -- so presenting it beside the label as
+        # "what the labeller meant, scientifically" would be two columns showing
+        # one opinion. Only the string routes can honestly claim that.
+        writer = csv.DictWriter(fh, fieldnames=["jpg", "label", "method"] + list(RANKS))
         writer.writeheader()
         for key, lab in labels.items():
             hit = mapping.get(lab) or {}
             writer.writerow({"jpg": key, "label": lab,
+                             "method": (vocab_method.get(lab) or ""),
                              **{r: hit.get(r, "") for r in RANKS}})
 
     covered = sum(n for lab, n in vocab.items() if mapping.get(lab, {}).get("family"))

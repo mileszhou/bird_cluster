@@ -108,7 +108,8 @@ class SidecarLabels(NamedTuple):
 # as the user's and then written again, so each --labels-only pass doubles it.
 RANK_KEYWORD_RE = re.compile(
     r"^(?:(?:bc-)?(?:ord|fam|gen):[A-Z][A-Za-z-]+(?: [a-z-]+)?"
-    r"|bc:[A-Za-z][\w '-]*"
+    r"|(?:sp-sci|bc-sci):[A-Z][A-Za-z-]+(?: [a-z-]+)?"
+    r"|(?:sp|bc):[A-Za-z][\w '-]*"
     r"|bc-conf:(?:high|mid|low))$")
 
 
