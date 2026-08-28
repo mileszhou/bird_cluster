@@ -65,6 +65,38 @@ sidecar a JPEG belongs to.
 | **`-Enhanced-NR`** | **N**oise **R**eduction: Lightroom's AI Denoise render, a separate DNG. |
 | **`-HDR`, `-Pano`, `-Edit`** | High dynamic range merge, panorama stitch, and an external edit. |
 
+### Keyword prefixes in a browsing export
+
+What `tools/export_seriated.py` writes into the exported JPEGs, so a photo
+manager's keyword panel can filter by any of them. **The prefix says which
+source is speaking**, which is the whole point: a photo carries two opinions and
+they frequently differ.
+
+The prefixes sort together in a keyword list, so one source's view stays
+contiguous while you browse.
+
+| | |
+|---|---|
+| *(no prefix)* | The labelling itself, as a composed keyword: `{pinyin_initials}-{chinese_name}-{english_name}({confidence}%)`. Written by the VLM labeller. A hand-written keyword has the same shape **without** the `(NN%)`. |
+| **`sp:`** | The labeller's species, repeated plainly so it can be read and filtered beside the others. |
+| **`sp-sci:`** | The scientific binomial for that species — **only** where the checklist matched the label by name. Absent where the label was resolved by BioCLIP's vote, because that binomial is BioCLIP's opinion and printing it here would show one opinion twice. |
+| **`ord:` `fam:` `gen:`** | Order, family, genus **derived from the labeller's species string** via the checklist. These restate the labelling; they do not check it. |
+| **`bc:`** | **B**io**C**LIP's species, as a common name. Read off the pixels, owing the labelling nothing — the independent second opinion. |
+| **`bc-sci:`** | The same call as a scientific binomial, for an expert's eye. |
+| **`bc-ord:` `bc-fam:` `bc-gen:`** | BioCLIP's ranks, on the same footing as its species. |
+| **`bc-conf:`** | `high` / `mid` / `low`, bucketing **margin** (see The measures). The only calibrated confidence here, and the right thing to sort a review by. |
+
+So one photo reads, schematically:
+
+    ord:<Order>  fam:<Family>  gen:<GenusA>  sp:<the labeller's name>  sp-sci:<GenusA epithet>
+    bc-ord:<Order>  bc-fam:<Family>  bc-gen:<GenusB>  bc:<BioCLIP's name>
+    bc-sci:<GenusB epithet>  bc-conf:high
+
+The shape to look for is that one: agreement at order and family, divergence at
+genus and species, and `bc-conf:high` saying the second opinion is a confident
+one. That is a disagreement a photograph can settle, which is what the export
+is for. Sorting a review by `bc-conf` puts those first.
+
 ### Shorthand in paths and flags
 
 | | |
