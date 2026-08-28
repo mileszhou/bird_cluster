@@ -184,9 +184,26 @@ def main():
                     help="default: the vectors the level-1 run recorded")
     ap.add_argument("--max-leaves", type=int, default=27,
                     help="leaves per branch before the rest go to the pool date (default 27)")
-    ap.add_argument("--base-year", type=int, default=2000)
+    ap.add_argument("--base-year", type=int, default=2000,
+                    help="first year of the fabricated capture times (default 2000). "
+                         "The same constant for every run, on purpose -- see below")
     ap.add_argument("--dry-run", action="store_true",
                     help="report the layout and stop, writing nothing")
+    # Every run starts at the same base year, and must. Two runs in one catalog
+    # do overlap in time -- roughly six years each, 70 branches being 70 months --
+    # which looks like a reason to hand each run its own era. It is not: a photo
+    # manager scopes to a folder, so the date axis only ever runs within one
+    # export, and the overlap is invisible where it would matter.
+    #
+    # The cost of the alternative is the part worth writing down. Picking a
+    # non-colliding base year means consulting the other runs on disk to produce
+    # this one, and the encoding stops being a function of this clustering alone:
+    # re-running it yields different times depending on what else happens to be
+    # there, and two runs computed on different machines cannot be combined at
+    # all. That is the same locality the claim rule keeps -- `SidecarClaims`
+    # looks only at one JPEG's own name and never at another, so `build_items()`
+    # stays a pure function of the two trees. Global state bought nothing here
+    # and would have cost reproducibility.
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
