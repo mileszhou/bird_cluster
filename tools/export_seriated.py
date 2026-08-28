@@ -406,6 +406,45 @@ def taxa_keywords(row) -> list[str]:
     return out
 
 
+def clustering_source(run_dir: Path, explicit: Path | None) -> Path | None:
+    """The vectors *this clustering recorded*, or nothing. Never a live default.
+
+    Deliberately stricter than `csv_post.embeddings_for`, which this used to
+    call, and the difference is the point. That function exists to *read*
+    vectors, so when a recorded absolute path no longer resolves it falls back
+    to the live `output/embed` — a reasonable last resort when you need numbers.
+
+    Naming cannot use that fallback. A clustering built on BioCLIP whose source
+    path has gone stale would be handed whatever happens to be sitting in
+    `output/embed` and get called `dinov3-512`: a folder asserting, in its name,
+    a fact it never recorded. A missing name is a small problem; a confidently
+    wrong one is the kind this project keeps having to undo.
+
+    So: the explicit flag, then the run's own record, then the sibling `embed/`
+    under the same run root — which is the *same file* after `./clean` moved the
+    whole archive, not a different run. Nothing else.
+    """
+    if explicit:
+        return Path(explicit)
+    run_json = run_dir / "run.json"
+    if run_json.is_file():
+        try:
+            source = json.loads(run_json.read_text()).get("source")
+        except (json.JSONDecodeError, OSError):
+            source = None
+        if source:
+            src = Path(source)
+            # The JSONL may be gone while its run.json survives; the identity
+            # lives in the latter, so accept the directory either way.
+            if src.is_file() or (src.parent / "run.json").is_file():
+                return src
+    if len(run_dir.parents) >= 2:
+        sibling = run_dir.parents[1] / "embed" / "embeddings.jsonl"
+        if sibling.is_file():
+            return sibling
+    return None
+
+
 def embedding_identity(jsonl: Path | None) -> dict:
     """(model, image_size) for the vectors a clustering was built from.
 
@@ -592,7 +631,7 @@ def export_index(args):
     # run.json. The folder name carries it because a folder name is the first
     # thing anyone reads, and `cluster2-mcs3` is the same string whichever
     # backbone produced it.
-    ident = embedding_identity(embeddings_for(args.layout.parent, args.embeddings))
+    ident = embedding_identity(clustering_source(args.layout.parent, args.embeddings))
     out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
                        "-".join(x for x in (args.layout.parent.parent.name,
                                             args.layout.parent.name,
@@ -723,7 +762,7 @@ def main():
         kept, tail = seriated_groups(rows, X, args.min_cluster)
         plan, day = plan_dates(kept, tail, base)
 
-        ident = embedding_identity(embeddings_for(run_dir, args.embeddings))
+        ident = embedding_identity(clustering_source(run_dir, args.embeddings))
         out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
                            "-".join(x for x in (run_dir.name,
                                                 embedding_slug(ident) if ident else "") if x))
