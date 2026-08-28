@@ -780,7 +780,12 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    decides nothing structural. `export_seriated --layout <path>` renders it and
    writes `index.csv` beside the JPEGs — the layout it was given, plus what it
    captioned with — and a `run.json` recording the labellings and their tags, the
-   taxonomy source, and what was written. A render's inputs are not recoverable
+   taxonomy source, the embedding the clustering came from, and what was written.
+   **The folder is named for the clustering *and its backbone*** —
+   `cluster2-mcs3-dinov3-512`, `cluster2-mcs3-bioclip-224crop` — because `mcs3`
+   under two backbones is two different groupings with one name, and a hand-added
+   suffix survives only as long as the person who invented it. The slug is
+   resolved by walking the level-2 `run.json` back to the embedding run's. A render's inputs are not recoverable
    from pixels afterwards: a photo tagged `(Q)` does not say which directory `Q`
    was.
 

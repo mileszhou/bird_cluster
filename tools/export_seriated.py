@@ -112,6 +112,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -405,6 +406,62 @@ def taxa_keywords(row) -> list[str]:
     return out
 
 
+def embedding_identity(jsonl: Path | None) -> dict:
+    """(model, image_size) for the vectors a clustering was built from.
+
+    Read from the embedding run's own `run.json`, walking back from the JSONL
+    the clustering recorded as its source. Nothing else knows this: a clustering
+    directory is named for `min_cluster_size` alone, so `mcs3` under two
+    backbones gives two different groupings with the same name.
+    """
+    if not jsonl:
+        return {}
+    run = Path(jsonl).parent / "run.json"
+    if not run.is_file():
+        return {}
+    try:
+        meta = json.loads(run.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+    return {"model": meta.get("model"),
+            "image_size": meta.get("image_size"),
+            "embeddings": str(jsonl)}
+
+
+def embedding_slug(identity: dict) -> str:
+    """A short filesystem-safe token naming the backbone and resolution.
+
+    `dinov3-512`, `bioclip-224crop`. The folder name is the first thing anyone
+    reads, and until now it said `cluster2-mcs3` whichever backbone produced it
+    -- Miles had to append `-bc` by hand to tell two exports apart, which is a
+    convention that survives exactly as long as the person who invented it.
+
+    Deliberately lossy: it is a label, not provenance. The full model id and
+    resolution go in run.json, which is what a reader consults when the short
+    name is not enough.
+    """
+    model = (identity.get("model") or "").rsplit("/", 1)[-1].lower()
+    size = (identity.get("image_size") or "").lower()
+    name = ""
+    for key in ("dinov3", "dinov2", "bioclip", "siglip", "clip"):
+        if key in model:
+            name = key
+            break
+    if not name:
+        name = re.sub(r"[^a-z0-9]+", "", model.split("-")[0])[:10] or "unknown"
+    # "512x512" -> 512;  "224x224/crop" -> 224crop
+    # Keep the resize mode whenever the processor reports one, rather than
+    # treating either as the silent default: `bioclip-224` would otherwise mean
+    # squash while `bioclip-224crop` means crop, which is a distinction nobody
+    # can read. DINOv3's processor reports no mode, so it stays `dinov3-512`.
+    m = re.match(r"(\d+)x\1(?:/(\w+))?", size)
+    if m:
+        size = m.group(1) + (m.group(2) or "")
+    else:
+        size = re.sub(r"[^a-z0-9]+", "", size)[:12]
+    return f"{name}-{size}" if size else name
+
+
 def git_commit() -> str:
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
@@ -531,14 +588,22 @@ def export_index(args):
         rows = list(csv.DictReader(fh))
     if not rows:
         raise SystemExit(f"error: {args.layout} is empty")
+    # Which vectors this grouping came from, walked back through the level-2
+    # run.json. The folder name carries it because a folder name is the first
+    # thing anyone reads, and `cluster2-mcs3` is the same string whichever
+    # backbone produced it.
+    ident = embedding_identity(embeddings_for(args.layout.parent, args.embeddings))
     out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
-                       f"{args.layout.parent.parent.name}-{args.layout.parent.name}")
+                       "-".join(x for x in (args.layout.parent.parent.name,
+                                            args.layout.parent.name,
+                                            embedding_slug(ident) if ident else "") if x))
     jpg_root = data_dir() / "jpg"
     span = (rows[0]["capture_time"][:10], rows[-1]["capture_time"][:10])
     branches = len({r["branch"] for r in rows})
     leaves = len({r["leaf"] for r in rows})
     print(f"  {args.layout}: {len(rows):,} images, {branches} branches, "
           f"{leaves:,} leaves ({span[0]} .. {span[1]})")
+    print(f"  -> {out}")
     if args.dry_run:
         return
 
@@ -572,6 +637,7 @@ def export_index(args):
                 print(f"    {seq:,}/{len(rows):,}", flush=True)
     index.replace(out / "index.csv")
     write_run_json(out, args, labellings, taxa, pred, stat,
+                   embedding=ident,
                    layout=str(Path(args.layout).resolve()),
                    images=len(rows),
                    branches=len({r["branch"] for r in rows}),
@@ -657,7 +723,10 @@ def main():
         kept, tail = seriated_groups(rows, X, args.min_cluster)
         plan, day = plan_dates(kept, tail, base)
 
-        out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" / run_dir.name)
+        ident = embedding_identity(embeddings_for(run_dir, args.embeddings))
+        out = args.out or (PROJECT_ROOT / "output" / "lightroom" / "jpg" /
+                           "-".join(x for x in (run_dir.name,
+                                                embedding_slug(ident) if ident else "") if x))
         jpg_root = data_dir() / "jpg"
 
         pooled = sum(len(m) for _, m in tail)
@@ -705,6 +774,7 @@ def main():
         # reporting success for a fraction of the export.
         index.replace(out / "index.csv")
         write_run_json(out, args, labellings, taxa, pred, stat,
+                       embedding=ident,
                        run=str(run_dir.resolve()),
                        embeddings=str(embeddings_for(run_dir, args.embeddings)),
                        images=len(plan),
