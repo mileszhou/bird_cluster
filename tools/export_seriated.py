@@ -265,7 +265,11 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
     return source
 
 
-TAXA_DEFAULT = Path("output") / "taxa" / "label_taxonomy.csv"
+# PROJECT_ROOT-anchored like every other default here, not cwd-relative: a
+# relative default silently finds nothing when the tool is run from anywhere but
+# the repo root, and the export then completes looking entirely normal with the
+# rank keywords quietly absent.
+TAXA_DEFAULT = PROJECT_ROOT / "output" / "taxa" / "label_taxonomy.csv"
 TAXA_RANKS = (("ord", "order"), ("fam", "family"), ("gen", "genus"))
 
 
