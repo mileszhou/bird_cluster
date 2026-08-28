@@ -24,13 +24,26 @@ CATEGORIES = ("bird", "animal", "people", "scenery")
 # A model-written label. The trailing "(NN%)" is load-bearing: hand-written
 # species keywords use the same py-cn-en shape but carry no confidence, and
 # must not be mistaken for a model label.
-LABEL_RE = re.compile(r"^(?P<pinyin>[^-]+)-(?P<chinese>[^-]+)-(?P<english>.+)\((?P<confidence>\d+)%\)$")
+LABEL_RE = re.compile(
+    r"^(?P<pinyin>[^-]+)-(?P<chinese>[^-]+)-(?P<english>.+)"
+    r"\((?:(?P<confidence>\d+)%|(?P<tag>[A-Z]{1,3}))\)$")
 
 # Any injected label, not just a species one. `label_generator` only produces
 # the `py-cn-en` shape for bird/animal; scenery and people get a bare
 # description plus the confidence -- "person playing tennis(98%)" -- so LABEL_RE
 # does not match them and the trailing "(NN%)" is the only common marker.
-CONFIDENCE_SUFFIX_RE = re.compile(r"^_?.+\(\d{1,3}%\)$")
+# The suffix marking a keyword as this pipeline's. Two forms, because the
+# meaning of the parenthesis changed: it used to hold a confidence -- which was
+# uninformative and *split* a species across as many keyword entries as it had
+# distinct percentages -- and now holds a short uppercase source tag saying which
+# labeller wrote it.
+#
+# The tag is `[A-Z]{1,3}` deliberately: tight enough that an ordinary
+# parenthesised keyword the user wrote (`Kestrel (juvenile)`, `(nest)`) cannot be
+# claimed, since those are lowercase. Loosening this to any parenthesised token
+# would start deleting hand-written work, which is the one direction this file
+# must never err in.
+CONFIDENCE_SUFFIX_RE = re.compile(r"^_?.+\((?:\d{1,3}%|[A-Z]{1,3})\)$")
 
 # The earliest GPT-4o runs wrote a capitalised category and no confidence
 # suffix, so their output is not recognisable by shape alone.
@@ -49,7 +62,7 @@ class Label(NamedTuple):
     pinyin: str
     chinese: str
     english: str       # lowercased, stripped -- the species key
-    confidence: float  # 0.0-1.0
+    confidence: Optional[float]  # 0.0-1.0, or None for a tag-form label
     raw: str
 
 
@@ -58,11 +71,16 @@ def parse_label(keyword: str) -> Optional[Label]:
     m = LABEL_RE.match(keyword.strip())
     if not m:
         return None
+    # A tag-form label carries no confidence, and that is the point of it -- the
+    # number was uninformative and split one species across several keyword
+    # entries. `None` rather than 0.0, so a consumer cannot mistake "not
+    # recorded" for "the model was certain it was wrong".
+    conf = m.group("confidence")
     return Label(
         pinyin=m.group("pinyin").strip(),
         chinese=m.group("chinese").strip(),
         english=m.group("english").strip().lower(),
-        confidence=int(m.group("confidence")) / 100.0,
+        confidence=(int(conf) / 100.0 if conf is not None else None),
         raw=keyword.strip(),
     )
 

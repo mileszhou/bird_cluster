@@ -232,8 +232,19 @@ def effective_english(row) -> str | None:
     return (row.get("label") or "").strip().lower() or None
 
 
-def effective_label(row) -> str | None:
-    """The `py-cn-en(NN%)` keyword for a label CSV row, resolving never-demote.
+def effective_label(row, tag: str | None = None) -> str | None:
+    """The `py-cn-en(SUFFIX)` keyword for a label CSV row, resolving never-demote.
+
+    `tag` replaces the confidence in the suffix, and exists because the
+    confidence was doing active harm in a keyword panel. It is uninformative --
+    it averages 0.968 against a measured ~35% error -- and it *splits*: one
+    species labelled at 99% and 98% is two different strings, so a photo manager
+    lists it twice and neither entry holds all the photos. A source tag says
+    something true instead (which labeller wrote this) and collapses each
+    species to one entry.
+
+    The confidence is not lost; it stays in the CSV, which is where a number
+    nobody should read at a glance belongs.
 
     Mirrors `embed.effective_species()`, and for the same reason: where
     `applied` is `kept-existing` the run's verdict was overruled and the bird is
@@ -256,13 +267,15 @@ def effective_label(row) -> str | None:
     if not english:
         return None
     chinese = (row.get("label_cn") or "").strip()
-    try:
-        percent = int(round(float(row.get("confidence") or 0) * 100))
-    except ValueError:
-        return None
+    suffix = tag
+    if suffix is None:
+        try:
+            suffix = f"{int(round(float(row.get('confidence') or 0) * 100))}%"
+        except ValueError:
+            return None
     if not chinese:
-        return f"{english}({percent}%)"
-    return f"{pinyin_initials(chinese)}-{chinese}-{english}({percent}%)"
+        return f"{english}({suffix})"
+    return f"{pinyin_initials(chinese)}-{chinese}-{english}({suffix})"
 
 
 LABEL_ATTR_RE = re.compile(r'(\bxmp:Label=")([^"]*)(")')

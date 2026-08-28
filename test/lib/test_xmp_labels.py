@@ -234,3 +234,34 @@ def test_species_keywords_from_both_sources_are_ours():
     # and a hand-written keyword still survives beside them
     ours, theirs = split_keywords(written + ["sd-寿带-Asian Paradise-flycatcher"])
     assert theirs == ("sd-寿带-Asian Paradise-flycatcher",)
+
+
+# --- source tags in place of the confidence ---------------------------------
+
+def test_tag_form_labels_are_ours():
+    """`(Q)` marks a keyword as this pipeline's, exactly as `(98%)` used to."""
+    ours, theirs = split_keywords(
+        ["ptcn-普通翠鸟-common kingfisher(Q)", "ptcn-普通翠鸟-common kingfisher(G)",
+         "ptcn-普通翠鸟-common kingfisher(99%)", "scenery(Q)"])
+    assert theirs == ()
+    assert len(ours) == 4
+
+
+def test_tag_rule_spares_parenthesised_user_keywords():
+    """The tag is uppercase and short so ordinary parentheses survive.
+
+    This is the rule that could destroy hand-written work if loosened: a user
+    keyword ending in `(juvenile)` or `(nest)` must never be claimed.
+    """
+    subjects = ["Kestrel (juvenile)", "my note (nest)", "xs-小隼-Kestrel", "(Q)x"]
+    ours, theirs = split_keywords(subjects)
+    assert ours == ()
+    assert set(theirs) == set(subjects)
+
+
+def test_parse_label_reads_both_forms():
+    tagged = parse_label("ptcn-普通翠鸟-common kingfisher(Q)")
+    assert tagged.english == "common kingfisher"
+    assert tagged.confidence is None, "a tag carries no confidence, and must not fake one"
+    old = parse_label("ptcn-普通翠鸟-common kingfisher(99%)")
+    assert old.english == "common kingfisher" and old.confidence == 0.99

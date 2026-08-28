@@ -237,7 +237,7 @@ def set_capture_time(src: Path, dst: Path, when: datetime):
     piexif.insert(piexif.dump(exif), str(dst))
 
 
-def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
+def apply_row(key, when, colour, out, jpg_root, labellings, labels_only,
               stat, failures, taxa=None, pred=None):
     """Copy one image and write its metadata. Returns its label CSV row, if any.
 
@@ -250,13 +250,21 @@ def apply_row(key, when, colour, out, jpg_root, labels, labels_only,
     dst.parent.mkdir(parents=True, exist_ok=True)
     if not labels_only:
         set_capture_time(jpg_root / key, dst, when)
-    source = labels.get(key)
-    label = effective_label(source) if source else None
-    if not label:
+    # One keyword per labelling, each tagged. Additive on purpose: the point of
+    # exporting two is to see them disagree on the same photo.
+    composed, source = [], None
+    for tag, labels in labellings:
+        row = labels.get(key)
+        if source is None:
+            source = row
+        text = effective_label(row, tag) if row else None
+        if text:
+            composed.append(text)
+    if not composed:
         stat["no label"] += 1
-        failures.append((key, "no usable label in the label CSV"))
+        failures.append((key, "no usable label in any label CSV"))
         return source
-    keywords = ([label] + taxa_keywords((taxa or {}).get(key))
+    keywords = (composed + taxa_keywords((taxa or {}).get(key))
                 + prediction_keywords((pred or {}).get(key)))
     try:
         stat[write_keywords(dst, keywords, when, colour)] += 1
@@ -396,6 +404,62 @@ def taxa_keywords(row) -> list[str]:
     return out
 
 
+def resolve_labellings(args) -> list[tuple[str, dict]]:
+    """[(tag, rows-by-key)] for every --label-dir, in the order given.
+
+    One tag per labelling, and they must differ: two labellings writing the same
+    tag would put two keywords on a photo that cannot be told apart, which is
+    the whole thing the tag exists to prevent.
+
+    Every labelling is tagged, including a lone one. The tag replaces the
+    confidence, which had to go: it is uninformative, and it *split* a species
+    across as many keyword entries as it had distinct percentages, so a photo
+    manager listed one bird several times and no entry held all of it. Reading
+    the old form still works -- `split_keywords` accepts both -- so an existing
+    export is re-captioned rather than confused.
+    """
+    dirs = args.label_dir or [PROJECT_ROOT / "data" / "label"]
+    tags = args.label_tag or []
+    if tags and len(tags) != len(dirs):
+        raise SystemExit(f"error: {len(tags)} --label-tag for {len(dirs)} "
+                         f"--label-dir; give one each, in the same order.")
+    out = []
+    for i, d in enumerate(dirs):
+        tag = tags[i] if tags else label_tag(d)
+        out.append((tag, load_labels(d)))
+        print(f"  labelling: {len(out[-1][1]):,} rows from {d}"
+              + (f"  tag ({tag})" if tag else ""))
+    seen = [t for t, _ in out if t]
+    if len(set(seen)) != len(seen):
+        raise SystemExit(f"error: duplicate label tags {seen}. Two labellings "
+                         f"sharing a tag are indistinguishable on a photo; pass "
+                         f"--label-tag to separate them.")
+    return out
+
+
+def label_tag(label_dir: Path) -> str:
+    """A one-or-two letter tag naming the labeller behind a label directory.
+
+    Read from the run's own `args.json`, because that is where the model that
+    produced the CSV is already recorded -- asking the caller to supply it would
+    let a run be labelled `Q` by a typo and there would be nothing to check it
+    against.
+    """
+    args = label_dir / "args.json"
+    model = ""
+    if args.is_file():
+        try:
+            model = (json.loads(args.read_text()).get("model") or "")
+        except (json.JSONDecodeError, OSError):
+            model = ""
+    stem = model.rstrip("/").split("/")[-1]
+    for prefix, tag in (("qwen", "Q"), ("gemma", "G"), ("bioclip", "B"),
+                        ("gpt", "P"), ("llava", "L")):
+        if stem.lower().startswith(prefix):
+            return tag
+    return (stem[:1].upper() or "X")
+
+
 def load_labels(label_dir: Path):
     with open(label_dir / "bird_identification_output.csv",
               encoding="utf-8-sig", newline="") as fh:
@@ -412,7 +476,8 @@ def export_index(args):
     with a different `--label-dir` re-captions an export without touching the
     clustering that produced it.
     """
-    labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
+    labellings = resolve_labellings(args)
+    labels = labellings[0][1]      # the first is the one index.csv reports
     taxa = (load_taxa(args.taxonomy, required=args.taxonomy is not None)
             if args.taxonomy_source in ("label", "both") else {})
     pred = (load_predictions(args.predictions, required=args.predictions is not None)
@@ -446,7 +511,7 @@ def export_index(args):
         for seq, r in enumerate(rows, 1):
             when = datetime.strptime(r["capture_time"], "%Y-%m-%d %H:%M:%S")
             colour = r.get("color", "")
-            source = apply_row(r["key"], when, colour, out, jpg_root, labels,
+            source = apply_row(r["key"], when, colour, out, jpg_root, labellings,
                                args.labels_only, stat, failures, taxa, pred)
             recoloured += bool(colour)
             # The export's own index: the layout it was given, plus the caption
@@ -490,10 +555,15 @@ def main():
                          "(default 15: at mcs15 nothing is pooled)")
     ap.add_argument("--base-date", default="2000-01-01",
                     help="date of the first cluster; a year far from real photos")
-    ap.add_argument("--label-dir", type=Path, default=None,
-                    help="directory holding bird_identification_output.csv. Default: "
-                         "data/label; with --index, whatever the cluster2 run recorded, "
-                         "and passing a different one is an error rather than an override")
+    ap.add_argument("--label-dir", type=Path, action="append", default=None,
+                    help="directory holding bird_identification_output.csv. Repeat "
+                         "it to caption with several labellings at once: each "
+                         "writes its own keyword, tagged with the labeller that "
+                         "produced it (Q, G, ...) so they can be told apart and "
+                         "compared. Default: data/label")
+    ap.add_argument("--label-tag", action="append", default=None,
+                    help="override the tag for the corresponding --label-dir, in "
+                         "the same order. Normally read from each run's args.json")
     ap.add_argument("--taxonomy", type=Path, default=None,
                     help="per-image ranks from tools.map_label_taxa, written as "
                          "extra keywords (ord:/fam:/gen:) so a photo manager can "
@@ -525,7 +595,8 @@ def main():
     if args.layout:
         export_index(args)
         return
-    labels = load_labels(args.label_dir or PROJECT_ROOT / "data" / "label")
+    labellings = resolve_labellings(args)
+    labels = labellings[0][1]      # the first is the one index.csv reports
     taxa = (load_taxa(args.taxonomy, required=args.taxonomy is not None)
             if args.taxonomy_source in ("label", "both") else {})
     pred = (load_predictions(args.predictions, required=args.predictions is not None)
@@ -561,7 +632,7 @@ def main():
             w.writerow(["seq", "capture_time", "cluster_id", "species", "color", "key"])
             for seq, (cid, i, when, colour) in enumerate(plan, 1):
                 r = rows[i]
-                source = apply_row(r["key"], when, colour, out, jpg_root, labels,
+                source = apply_row(r["key"], when, colour, out, jpg_root, labellings,
                                    args.labels_only, stat, failures, taxa, pred)
                 recoloured += bool(colour)
                 # The species comes from --label-dir, the same CSV the keyword

@@ -77,7 +77,7 @@ contiguous while you browse.
 
 | | |
 |---|---|
-| *(no prefix)* | The labelling itself, as a composed keyword: `{pinyin_initials}-{chinese_name}-{english_name}({confidence}%)`. Written by the VLM labeller. A hand-written keyword has the same shape **without** the `(NN%)`. |
+| *(no prefix)* | The labelling itself, composed: `{pinyin_initials}-{chinese_name}-{english_name}({tag})`, where the tag names the labeller — `Q`, `G`. One keyword per labelling, so a photo can carry several and they can be told apart. A hand-written keyword has the same shape **without** any parenthesis. |
 | **`sp:`** | The labeller's species, repeated plainly so it can be read and filtered beside the others. |
 | **`sp-sci:`** | The scientific binomial for that species — **only** where the checklist matched the label by name. Absent where the label was resolved by BioCLIP's vote, because that binomial is BioCLIP's opinion and printing it here would show one opinion twice. |
 | **`ord:` `fam:` `gen:`** | Order, family, genus **derived from the labeller's species string** via the checklist. These restate the labelling; they do not check it. |
@@ -85,6 +85,15 @@ contiguous while you browse.
 | **`bc-sci:`** | The same call as a scientific binomial, for an expert's eye. |
 | **`bc-ord:` `bc-fam:` `bc-gen:`** | BioCLIP's ranks, on the same footing as its species. |
 | **`bc-conf:`** | `high` / `mid` / `low`, bucketing **margin** (see The measures). The only calibrated confidence here, and the right thing to sort a review by. |
+
+The labeller's own confidence **is not written into a keyword**, and used to be.
+It said nothing — it averages 0.968 against a measured ~35% error — and it did
+harm: a species labelled at 99% on some photos and 95% on others is two
+different strings, so a keyword panel listed one bird several times and no entry
+held all of it. Over the species with 20 or more photos, 97% were split this
+way, into 1,232 entries for 330 birds. The tag collapses each to one. The number
+survives in the CSV, which is where something nobody should read at a glance
+belongs. Older exports carry `(NN%)`; both forms are still read.
 
 So one photo reads, schematically:
 
