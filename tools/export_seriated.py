@@ -1,6 +1,22 @@
 #!/usr/bin/env python3
 """Export copies of a run's images with the seriated order encoded in EXIF time.
 
+**This is a view organizer. It decides nothing, and it records everything it
+presents.** The clustering chose the grouping, the labellers chose the names,
+the taxonomy came from a checklist; this stage arranges what they produced into
+something a person can look at, and its whole obligation is that the arrangement
+can say where every part of itself came from. That obligation is not decorative.
+A folder of photographs is the most persuasive artifact this project makes --
+you look at it and form a belief -- so an unlabelled or mislabelled one leads
+somewhere false faster than any number would.
+
+Hence: the backbone is read from what the clustering recorded rather than
+inferred, and where it cannot be read the name simply omits it; each labelling
+tags its own keywords; and `run.json` holds the full identity of everything that
+contributed. Nothing here is named by hand. A human-typed folder name is right
+until the day someone runs four combinations in an afternoon, and then it is
+quietly wrong with no way to notice.
+
 The point is to study clusters visually in Lightroom without touching the master
 library. Lightroom sorts by capture time, filename, rating or colour label --
 never by arbitrary metadata -- so the ordering that produced the adjacency curve

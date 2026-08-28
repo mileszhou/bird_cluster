@@ -789,6 +789,15 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    from pixels afterwards: a photo tagged `(Q)` does not say which directory `Q`
    was.
 
+   **The render is a view organizer: it decides nothing and records everything
+   it presents.** The grouping came from the clustering, the names from the
+   labellers, the ranks from a checklist; this stage arranges them and is
+   obliged to say where each part came from. A folder of photographs is the most
+   persuasive artifact here — you look and form a belief — so a mislabelled one
+   misleads faster than a wrong number. Nothing in it is named by hand: the
+   backbone is read from what the clustering recorded and omitted when it cannot
+   be, each labelling tags its own keywords, and `run.json` carries the rest.
+
    **The label is chosen by the render, and by nothing earlier.** Clustering does not
    read a labelling, because it does not depend on one — the vectors are
    self-supervised and the grouping is geometry. A species column copied into a
