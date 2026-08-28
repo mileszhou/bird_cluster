@@ -778,8 +778,11 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    image is in, which branch each leaf is in, and the time encoding both — a few
    hundred KB that can be read and diffed, against 2.7 GB of copied pixels that
    decides nothing structural. `export_seriated --layout <path>` renders it and
-   writes its own `index.csv` beside the JPEGs: the layout it was given, plus the
-   species it captioned with.
+   writes `index.csv` beside the JPEGs — the layout it was given, plus what it
+   captioned with — and a `run.json` recording the labellings and their tags, the
+   taxonomy source, and what was written. A render's inputs are not recoverable
+   from pixels afterwards: a photo tagged `(Q)` does not say which directory `Q`
+   was.
 
    **The label is chosen by the render, and by nothing earlier.** Clustering does not
    read a labelling, because it does not depend on one — the vectors are

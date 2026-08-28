@@ -113,6 +113,7 @@ import csv
 import json
 import os
 import shutil
+import subprocess
 import sys
 from collections import Counter
 from datetime import datetime, timedelta
@@ -404,6 +405,47 @@ def taxa_keywords(row) -> list[str]:
     return out
 
 
+def git_commit() -> str:
+    try:
+        return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"],
+                                       text=True, cwd=PROJECT_ROOT).strip()
+    except Exception:
+        return "unknown"
+
+
+def write_run_json(out: Path, args, labellings, taxa, pred, stat, **extra) -> None:
+    """What produced this export, beside what it produced.
+
+    Every other stage records its parameters next to its output and this one did
+    not, which made it the only artifact here that could not say what it was.
+    That matters more for a render than for a computation: the JPEGs carry
+    keywords from up to four sources, and which labellings were passed, in what
+    order, with which tags, is not recoverable from the pixels afterwards -- a
+    photo tagged `(Q)` does not say which directory `Q` was.
+
+    `stat` is included because a count of what was written is part of the
+    description: an export that quietly skipped 3,000 images for want of a label
+    is a different artifact from one that did not, and index.csv alone will not
+    say so.
+    """
+    payload = {
+        "commit": git_commit(),
+        "out": str(out.resolve()),
+        "labellings": [{"tag": tag, "dir": str(Path(d).resolve()), "rows": len(rows)}
+                       for (tag, rows), d in zip(labellings, args.label_dir
+                                                 or [PROJECT_ROOT / "data" / "label"])],
+        "taxonomy_source": args.taxonomy_source,
+        "taxonomy": str(Path(args.taxonomy).resolve()) if args.taxonomy else
+                    (str(TAXA_DEFAULT) if taxa else None),
+        "predictions": str(Path(args.predictions).resolve()) if args.predictions else
+                       (str(PRED_DEFAULT) if pred else None),
+        "labels_only": bool(args.labels_only),
+        "written": dict(sorted(stat.items())),
+        **extra,
+    }
+    (out / "run.json").write_text(json.dumps(payload, indent=2) + "\n")
+
+
 def resolve_labellings(args) -> list[tuple[str, dict]]:
     """[(tag, rows-by-key)] for every --label-dir, in the order given.
 
@@ -529,7 +571,12 @@ def export_index(args):
             if seq % 2000 == 0:
                 print(f"    {seq:,}/{len(rows):,}", flush=True)
     index.replace(out / "index.csv")
-    print(f"    -> {out}  ({len(rows):,} files + index.csv)")
+    write_run_json(out, args, labellings, taxa, pred, stat,
+                   layout=str(Path(args.layout).resolve()),
+                   images=len(rows),
+                   branches=len({r["branch"] for r in rows}),
+                   leaves=len({r["leaf"] for r in rows}))
+    print(f"    -> {out}  ({len(rows):,} files + index.csv + run.json)")
     for what, count in sorted(stat.items()):
         print(f"       {what}: {count:,}")
     if recoloured:
@@ -657,8 +704,18 @@ def main():
         # while this was still writing and label only the rows that existed,
         # reporting success for a fraction of the export.
         index.replace(out / "index.csv")
+        write_run_json(out, args, labellings, taxa, pred, stat,
+                       run=str(run_dir.resolve()),
+                       embeddings=str(embeddings_for(run_dir, args.embeddings)),
+                       images=len(plan),
+                       min_cluster=args.min_cluster,
+                       base_date=args.base_date,
+                       clusters_kept=len(kept),
+                       clusters_pooled=len(tail),
+                       images_pooled=pooled,
+                       dates_used=day)
 
-        print(f"    -> {out}  ({len(plan):,} files + index.csv)")
+        print(f"    -> {out}  ({len(plan):,} files + index.csv + run.json)")
         for what, count in sorted(stat.items()):
             print(f"       {what}: {count:,}")
         if recoloured:
