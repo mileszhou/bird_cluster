@@ -133,7 +133,8 @@ Key CLI flags:
 - `--vllm-url URL` — vLLM OpenAI-compatible server endpoint (default: `config.toml` `[servers.vllm]`, vllm approach only)
 - `--conf-threshold FLOAT` — confidence below which to flag as low-confidence (default 0.6)
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
-- `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV
+- `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV. The rule is hardcoded; to select on anything else, generate a manifest (below)
+- `--prior-labels DIR` — where `prior_category` / `prior_label` come from (default `data/label`). **The CSV, not the sidecars**: a sidecar exists only for a photo that had a raw, so the sidecar route covered 9,918 of 49,224 rows and never the 5,229 with no raw at all — meaning the paired-verdict comparison, which is the point of the design, was a comparison of nothing over a fifth of the library. Fixed 2026-09-04; sidecars remain the fallback when no such CSV exists
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `local/manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
@@ -479,6 +480,16 @@ inside the repository, which is the part worth keeping — a list read from `/tm
 makes a run's recorded scope a dangling reference. The cost is accepted: a
 `run.json` naming a `local/` manifest is reproducible only for the person who
 has it.
+
+**Selecting by a previous run's category** — `tools/manifest_from_labels.py`
+writes a manifest naming the images a labelling put in a category, resolving the
+never-demote rule the way `embed.py` does. It exists as a *generator* rather than
+a `--category` flag so that scope stays one mechanism: the output is an ordinary
+manifest, recorded in `run.json`, diffable and reproducible. The category is the
+part of a labelling worth trusting — two independent labellers agree on it 0.9626
+against 0.288 on species — and this is where that difference is worth spending:
+`--category bird` selects 27,194 of 49,224, so a paid run skips 45% of its cost
+without touching a bird.
 
 **Scope is a manifest and nothing else.** `--years` was removed on 2026-08-09: it did the same
 job through a second mechanism, and a manifest expresses everything it could (`--years

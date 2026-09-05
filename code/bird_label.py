@@ -170,19 +170,50 @@ def set_keywords_in_xmp(xmp_path: Path, category: str, label: str):
         return APPLIED_FAILED, ()
 
 
-def prior_labels(key: str) -> tuple[str, str]:
+def load_prior_labels(label_dir: Path) -> dict:
+    """{jpg key: (category, label)} from a previous run's CSV.
+
+    **The CSV, not the sidecars.** A sidecar only exists for a photo that had a
+    raw file, so reading priors from `data/xmp` covers 20% of this library:
+    9,918 of 49,224 rows, and never the 5,229 images that never had a raw at
+    all. The CSV is the output of labelling and has a row for every image, which
+    is the same reason `embed.py` takes its guide from there.
+
+    That matters because these columns are the entire paired-verdict comparison
+    -- run a second model over a tree the first one labelled and every row
+    carries both readings. Over a fifth of the rows, that comparison was a
+    comparison of nothing.
+    """
+    csv_path = Path(label_dir) / "bird_identification_output.csv"
+    if not csv_path.is_file():
+        return {}
+    out = {}
+    with open(csv_path, newline='', encoding='utf-8-sig') as fh:
+        reader = csv.DictReader(fh)
+        if 'jpg' not in (reader.fieldnames or []):
+            sys.exit(f"error: {csv_path} has no 'jpg' column, so its rows cannot "
+                     f"be matched to the images this run walks.")
+        for row in reader:
+            out[row['jpg']] = ((row.get('category') or '').strip(),
+                               (row.get('label') or '').strip())
+    return out
+
+
+def prior_labels(key: str, jpg_key: str = "") -> tuple[str, str]:
     """(category, label) a previous run left on this photo, for the CSV.
 
-    Read from the pristine `data/xmp` rather than from the working copy, so the
-    answer is the same whether or not `output/raw` already holds a partial
-    re-label. Reading the working copy would make a resumed run record its own
-    fresh labels as the prior ones, quietly destroying the very comparison this
-    column exists for.
+    Prefers the prior run's CSV, which has a row per image. Falls back to the
+    pristine `data/xmp` when no such CSV was given -- and to *that* tree rather
+    than the working copy, so the answer is the same whether or not `output/raw`
+    already holds a partial re-label. Reading the working copy would make a
+    resumed run record its own fresh labels as the prior ones, quietly
+    destroying the very comparison this column exists for.
 
-    An empty key means the JPEG writes to no sidecar, so there is no prior label
-    to report -- the truth for a photo that never had a raw, and for an alternate
-    edit whose capture's sidecar was claimed by the exact-stem export.
+    An empty key means the JPEG writes to no sidecar; with the CSV route that no
+    longer costs the comparison, since the CSV is keyed by the image.
     """
+    if PRIOR_LABELS:
+        return PRIOR_LABELS.get(jpg_key, ("", ""))
     if not key:
         return "", ""
     labels = read_labels(PRISTINE_XMP_DIR / key)
@@ -299,7 +330,7 @@ def write_row(csv_writer, item, category, label, label_cn, conf, note, applied,
     # item.xmp points into the working copy; the relative part is identical in
     # data/xmp, which is where prior_labels() reads from.
     xmp_rel = item.xmp_key(RAW_OUT)
-    prior_category, prior_label = prior_labels(xmp_rel)
+    prior_category, prior_label = prior_labels(xmp_rel, item.key)
     csv_writer.writerow([
         item.key, xmp_rel, item.name,
         category, label, label_cn,
@@ -458,6 +489,10 @@ def _param_fix(detail: str, payload: dict):
 # The key a predictor puts in `response_json` when it never got an answer, and
 # the marker the loop counts. In the CSV it is the record of what went wrong.
 PREDICTION_FAILED = "_prediction_failed"
+
+# {jpg key: (category, label)} from the previous labelling, filled at startup.
+# Empty means fall back to reading sidecars -- see prior_labels().
+PRIOR_LABELS: dict = {}
 
 
 def prediction_failed(raw_json: str) -> str | None:
@@ -1004,6 +1039,14 @@ if __name__ == "__main__":
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
+    parser.add_argument("--prior-labels", type=Path, default=None,
+                        help="directory holding a previous run's "
+                             "bird_identification_output.csv, whose verdicts are "
+                             "recorded as prior_category/prior_label for the paired "
+                             "comparison (default: data/label if present). The CSV "
+                             "has a row per image; sidecars cover only the 20%% that "
+                             "had a raw file. Pass a nonexistent path to fall back "
+                             "to reading sidecars")
     parser.add_argument("--limit", type=int, default=0,
                         help="stop after N images (0 = no limit). For trying a "
                              "model cheaply, not for scoping a run -- which "
@@ -1063,6 +1106,17 @@ if __name__ == "__main__":
     # Prior labels are always read from here, never from the working copy --
     # see prior_labels().
     PRISTINE_XMP_DIR = RAW_DIR
+    # The previous labelling, for prior_category/prior_label. data/label by
+    # default: it is the curated run, and the one a second model is normally
+    # being compared against.
+    prior_dir = args.prior_labels if args.prior_labels is not None else (DATA_DIR / "label")
+    PRIOR_LABELS = load_prior_labels(prior_dir)
+    if PRIOR_LABELS:
+        logger.info(f"⚙️  Prior labels: {len(PRIOR_LABELS):,} rows from {prior_dir}")
+    else:
+        logger.info(f"⚙️  Prior labels: no CSV at {prior_dir}; "
+                    f"reading them from sidecars instead (covers only images "
+                    f"that have one)")
     if not RAW_DIR.is_dir() or not JPG_DIR.is_dir():
         sys.exit(f"error: expected {RAW_DIR} and {JPG_DIR} to exist")
 
