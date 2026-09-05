@@ -90,7 +90,7 @@ def test_code_fenced_json_is_parsed(stub, jpg):
     became scenery/unknown -- a wrong label rather than a visible failure.
     """
     url, _ = stub
-    category, label, label_cn, conf, raw = predict_with_vllm(
+    category, label, label_cn, _sci, conf, raw = predict_with_vllm(
         jpg, url, "gpt-4o", 0.6, 0.2, api_key="sk-test")
     assert category == "bird"
     assert label == "grey wagtail"
@@ -111,7 +111,7 @@ def test_chinese_in_the_label_field_is_moved(stub, jpg):
     url, cls = stub
     cls.reply = '{"category":"bird","label":"灰鴺鷌","label_cn":"","confidence":0.8}'
     try:
-        _, label, label_cn, _, _ = predict_with_vllm(
+        _, label, label_cn, *_ = predict_with_vllm(
             jpg, url, "gpt-4o", 0.6, 0.2, api_key="sk-test")
         assert label_cn == "灰鴺鷌"
         assert label == "unknown"
@@ -189,7 +189,7 @@ def test_reasoning_model_parameters_are_corrected(strict, jpg):
     and adapts, so the *first* image succeeds rather than being spent learning.
     """
     url, cls = strict
-    category, label, _, _, _ = predict_with_vllm(
+    category, label, *_ = predict_with_vllm(
         jpg, url, "gpt-5", 0.6, 0.2, api_key="sk-test")
     assert (category, label) == ("bird", "grey wagtail")
     assert cls.calls[0] == ["max_tokens", "temperature"]
@@ -219,7 +219,7 @@ def test_a_400_we_cannot_fix_is_reported_not_swallowed(strict, jpg):
         return None
     original, bl._param_fix = bl._param_fix, _bad
     try:
-        _, _, _, _, raw = predict_with_vllm(jpg, url, "gpt-5", 0.6, 0.2, api_key="sk")
+        *_, raw = predict_with_vllm(jpg, url, "gpt-5", 0.6, 0.2, api_key="sk")
     finally:
         bl._param_fix = original
     assert bl.prediction_failed(raw), "an unfixable 400 must be recorded as a failure"
@@ -286,7 +286,7 @@ def test_a_reasoning_model_gets_room_and_a_low_effort(reasoning, jpg):
     billed, so a generous budget across 49,000 images is money spent on
     deliberation nobody reads. Both parts, or neither works.
     """
-    category, label, _, _, _ = predict_with_vllm(
+    category, label, *_ = predict_with_vllm(
         jpg, reasoning, "gpt-5", 0.6, 0.2, api_key="sk-test")
     assert (category, label) == ("bird", "grey wagtail")
 
@@ -345,7 +345,7 @@ def test_a_traditional_reply_is_stored_simplified(stub, jpg):
     cls.reply = ('{"category":"bird","label":"Common Kingfisher",'
                  '"label_cn":"普通翠鳥","confidence":0.9}')
     try:
-        _, _, label_cn, _, _ = predict_with_vllm(
+        _, _, label_cn, *_ = predict_with_vllm(
             jpg, url, "gpt-4o", 0.6, 0.2, api_key="sk-test")
     finally:
         cls.reply = _Stub.__dict__["reply"]

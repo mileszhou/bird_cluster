@@ -316,7 +316,7 @@ def build_items(claims: SidecarClaims, xmp_root: Path, jpg_root: Path, paths=Non
 
 
 CSV_COLUMNS = ['jpg', 'xmp', 'filename',
-               'category', 'label', 'label_cn',
+               'category', 'label', 'label_cn', 'label_sci',
                'confidence', 'note', 'prior_category', 'prior_label',
                'applied', 'run_label', 'response_json']
 
@@ -341,15 +341,15 @@ def check_csv_schema(csv_path: Path) -> None:
                  f"and re-run from the beginning.")
 
 
-def write_row(csv_writer, item, category, label, label_cn, conf, note, applied,
-              raw_json, args):
+def write_row(csv_writer, item, category, label, label_cn, label_sci, conf, note,
+              applied, raw_json, args):
     # item.xmp points into the working copy; the relative part is identical in
     # data/xmp, which is where prior_labels() reads from.
     xmp_rel = item.xmp_key(RAW_OUT)
     prior_category, prior_label = prior_labels(xmp_rel, item.key)
     csv_writer.writerow([
         item.key, xmp_rel, item.name,
-        category, label, label_cn,
+        category, label, label_cn, label_sci,
         f"{conf:.2f}", note, prior_category, prior_label, applied,
         args.run_label, raw_json,
     ])
@@ -366,6 +366,8 @@ VLLM_SYSTEM_PROMPT = (
     "for 'scenery', a concise description naming the specific subject of the scene \u2014 the landmark, landscape feature, or activity in view (e.g. 'Sunset over Lofoten fjord', 'Sahara sand dunes', 'Gothic cathedral facade', 'Hikers on mountain trail') rather than a generic word like 'landscape' or 'outdoor scene'; "
     "for 'people', a brief description of who/what they're doing. "
     "`label_cn` \u2013 the standard Chinese (Mandarin) name or translation of `label` (e.g. '\u7070\u9d3a\u9dcc'). "
+    "`label_sci` \u2013 for 'bird'/'animal' only, the scientific binomial (genus and species, e.g. 'Motacilla cinerea'); "
+    "empty string for 'people' and 'scenery'. Give the accepted binomial, not a subspecies or an author citation. "
     "`confidence` \u2013 a float between 0.0 and 1.0. "
     "Output ONLY a JSON object, no other text."
 )
@@ -538,6 +540,39 @@ def to_simplified(text: str) -> str:
     return zhconv.convert(text, 'zh-cn')
 
 
+def normalise_binomial(text: str) -> str:
+    """`Genus species`, or nothing.
+
+    A binomial is standardised where a common name is not, which is the whole
+    reason to ask for one: 5,336 bird images fall back to a pixel guess today
+    because the checklist has no entry for the *common* name the labeller used,
+    while carrying every one of those birds under its binomial. Matching on the
+    strong key is what closes that.
+
+    This checks *shape*, not existence: two Latin-script words of at least three
+    letters, genus capitalised, species lower-case. A subspecies trinomial keeps
+    its first two words; an author citation, a bare genus, Chinese text, or a
+    short English phrase like "a bird" is rejected.
+
+    Existence is checked where the checklist is, in `tools.map_label_taxa`. That
+    layering is deliberate and it is what makes a wrong binomial cheap: a name
+    the checklist does not carry simply fails to match and falls back to the
+    common name, exactly as a run with no `label_sci` at all does. A *common*
+    name that is wrong has no such backstop, which is the asymmetry that makes
+    this field worth asking for.
+    """
+    parts = (text or "").strip().replace("_", " ").split()
+    if len(parts) < 2:
+        return ""
+    genus, species = parts[0], parts[1]
+    if not (genus.isascii() and species.isascii()
+            and genus.isalpha() and species.isalpha()
+            and len(genus) >= 3 and len(species) >= 3
+            and species.islower()):
+        return ""
+    return f"{genus.capitalize()} {species}"
+
+
 def prediction_failed(raw_json: str) -> str | None:
     """The error a prediction reported, or None if it produced an answer."""
     try:
@@ -623,7 +658,7 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
 def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
                       conf_threshold: float, no_bird_conf: float,
                       api_key: str | None = None):
-    """Returns (category, label, label_cn, confidence, raw_json) from a vLLM server.
+    """Returns (category, label, label_cn, label_sci, confidence, raw_json).
     The model is asked to return a JSON object with the following fields:
     - `category` \u2013 'bird', 'animal', 'people', or 'scenery'
     - `label` \u2013 English name or description
@@ -633,6 +668,7 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
     category = "scenery"
     label = "unknown"
     label_cn = ""
+    label_sci = ""
     confidence = 0.0
     raw_json = "{}"
     content = None
@@ -677,6 +713,7 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
         raw_json = json.dumps(data, ensure_ascii=False)
         label = data.get('label', '').lower()
         label_cn = to_simplified(data.get('label_cn', ''))
+        label_sci = normalise_binomial(data.get('label_sci', ''))
         confidence = float(data.get('confidence', 0.0))
         category = data.get('category', 'scenery')
         # If model put Chinese in label field, move it to label_cn
@@ -695,14 +732,17 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
         # and never retried. PREDICTION_FAILED is what the caller looks for.
         raw_json = json.dumps({PREDICTION_FAILED: str(e)}, ensure_ascii=False)
     # Return the collected values (defaults may be unchanged if an error occurred)
-    return category, label, label_cn, confidence, raw_json
+    return category, label, label_cn, label_sci, confidence, raw_json
 
 
 def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, conf_threshold: float, no_bird_conf: float):
     """Batch vLLM inference against a vLLM server. Fires requests concurrently so the
     server's continuous batching handles them together. Returns a list of
-    (category, label, label_cn, confidence, raw_json), one per input image, in order."""
-    results = [("scenery", "unknown", "", 0.0, "{}") for _ in image_paths]
+    (category, label, label_cn, label_sci, confidence, raw_json) per image, in order."""
+    # Six fields, matching predict_with_vllm. A default of the wrong arity would
+    # only fail on the batch path and only when a request errored, which is the
+    # least-exercised corner there is.
+    results = [("scenery", "unknown", "", "", 0.0, "{}") for _ in image_paths]
     if not image_paths:
         return results
 
@@ -718,6 +758,11 @@ def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, c
                 results[idx] = future.result()
             except Exception as e:
                 logger.info(f"\u26a0\ufe0f  vLLM request failed for {image_paths[idx].name}: {e}")
+                # Same marker the single path uses, so the loop skips the row and
+                # leaves it uncheckpointed rather than writing the defaults as a
+                # verdict.
+                results[idx] = ("scenery", "unknown", "", "", 0.0,
+                                json.dumps({PREDICTION_FAILED: str(e)}))
 
     return results
 
@@ -777,16 +822,16 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> bool:
     """
     switch = args.approach
     if switch == "llama.cpp":
-        category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
+        category, label, label_cn, label_sci, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
     elif switch == "openai":
-        category, label, label_cn, conf, raw_json = predict_with_vllm(
+        category, label, label_cn, label_sci, conf, raw_json = predict_with_vllm(
             item.jpg, OPENAI_URL, args.model, args.conf_threshold, args.no_bird,
             api_key=openai_key())
     elif switch == "vllm":
-        category, label, label_cn, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
+        category, label, label_cn, label_sci, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
     else:  # should not happen due to argparse choices, but handle gracefully:
         logger.info(f"⚠️  Unknown approach '{switch}' for {item.name}, skipping.")
-        category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
+        category, label, label_cn, label_sci, conf, raw_json = "scenery", "unknown", "未知", "", 0.0, "{}"
 
     why = prediction_failed(raw_json)
     if why:
@@ -807,7 +852,7 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> bool:
         # This run's verdict, unconditionally; the old one goes to the CSV.
         applied, _ = set_keywords_in_xmp(item.xmp, category, spec)
 
-    write_row(csv_writer, item, category, label, label_cn, conf,
+    write_row(csv_writer, item, category, label, label_cn, label_sci, conf,
               note, applied, raw_json, args)
     if applied == APPLIED_CSV_ONLY:
         logger.info(f"📄 {item.name} → {', '.join(keywords)} (conf={conf:.2f}); CSV only")
@@ -993,7 +1038,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
                             batch_results = predict_with_vllm_batch(
                                 [it.jpg for it in batch], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
-                            for item, (category, label, label_cn, conf, raw_json) in zip(batch, batch_results):
+                            for item, (category, label, label_cn, label_sci, conf, raw_json) in zip(batch, batch_results):
                                 why = prediction_failed(raw_json)
                                 if why:
                                     logger.info(f"⚠️  {item.name}: no answer from the "

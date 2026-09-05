@@ -194,6 +194,9 @@ def predict_with_llamacpp(image_path: Path, model_name: str, conf_threshold: flo
         category = data.get('category', 'scenery')
     except Exception as e:
         print(f"⚠️  llama.cpp request failed for {image_path.name}: {e}")
-    return category, label, label_cn, confidence, raw_json
+    # label_sci is always empty here: this backend keeps its own prompt, which
+    # does not ask for a binomial. The column exists for every row regardless, so
+    # a consumer never has to know which backend wrote it.
+    return category, label, label_cn, "", confidence, raw_json
 
 # (Rest of script logic omitted for brevity in this thought block, but will be included in the write)

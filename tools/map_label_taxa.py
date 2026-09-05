@@ -140,6 +140,10 @@ def main():
     ap.add_argument("--predictions", type=Path,
                     default=Path("./output/taxa/taxa_predictions.csv"),
                     help="per-image taxa from tools.predict_taxa, for the vote")
+    ap.add_argument("--label-dir", type=Path, default=None,
+                    help="labelling whose `label_sci` column supplies binomials, "
+                         "the checklist's strong key. Older runs have no such "
+                         "column, which simply falls back to matching on the name")
     ap.add_argument("--output-dir", type=Path, default=Path("./output/taxa"))
     ap.add_argument("--taxon-class", default="Aves")
     ap.add_argument("--min-vote", type=float, default=0.34,
@@ -148,6 +152,22 @@ def main():
     args = ap.parse_args()
 
     # --- the population, and the vocabulary it uses ---
+    # label -> the binomial the labeller recorded, where it did. Read from the
+    # label CSV rather than the JSONL: `label_sci` is a labelling's output and
+    # older runs simply have no such column, which reads as "no binomial" and
+    # falls through to matching on the name exactly as before.
+    sci_names: dict[str, str] = {}
+    label_csv = Path(args.label_dir) / "bird_identification_output.csv" \
+        if getattr(args, "label_dir", None) else None
+    if label_csv and label_csv.is_file():
+        with open(label_csv, encoding="utf-8-sig", newline="") as fh:
+            for row in csv.DictReader(fh):
+                lab = (row.get("label") or "").strip().lower()
+                sci = (row.get("label_sci") or "").strip()
+                if lab and sci:
+                    sci_names.setdefault(lab, sci)
+        print(f"  binomials recorded by the labelling: {len(sci_names):,} labels")
+
     labels: dict[str, str] = {}
     for line in open(args.embeddings):
         line = line.strip()
@@ -161,6 +181,12 @@ def main():
 
     # --- the checklist ---
     rows, _ = load_checklist(args.taxon_class)
+    # Binomial index. This is the checklist's complete side and the common-name
+    # index is its thin one: `great crested grebe`, `eurasian hoopoe`, `white
+    # wagtail` and `common moorhen` are all absent by common name and all present
+    # by binomial. So when a labelling records one -- `label_sci`, asked for since
+    # 2026-09-04 -- match on that first and only fall back to the name.
+    by_binomial = {f"{r['genus']} {r['species']}".strip().lower(): r for r in rows}
     by_common: dict[str, dict] = {}
     for r in rows:
         for form in (r["common_name"], f"{r['genus']} {r['species']}"):
@@ -204,8 +230,14 @@ def main():
         writer.writeheader()
         for lab, n in vocab.most_common():
             norm = normalise(lab)
-            hit = by_common.get(norm)
-            method = "string"
+            hit, method = None, None
+            sci = (sci_names.get(lab) or "").strip().lower()
+            if sci:
+                hit = by_binomial.get(sci)
+                method = "binomial" if hit else None
+            if hit is None:
+                hit = by_common.get(norm)
+                method = "string" if hit else None
             if hit is None:
                 stripped = normalise(strip_qualifier(norm))
                 hit = by_common.get(stripped) if stripped and stripped != norm else None
