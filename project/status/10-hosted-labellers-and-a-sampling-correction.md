@@ -1,7 +1,6 @@
-# 10 — Hosted labellers, and a confidence that means something
+# 10 — Hosted labellers, and what a proper sample did to the findings
 
-Sessions of 2026-09-04 and 09-05, on `main`. 22 commits, `e25161b` through
-`c7be7ce`. Everything below is committed; nothing is pushed.
+Sessions of 2026-09-04 and 09-05, on `main`. 24 commits, `e25161b` through `eeaf7e4`. Everything below is committed; nothing is pushed.
 
 Two threads, and the second one only became visible because the first was done.
 
@@ -67,50 +66,77 @@ a run with gaps says so.
 
 ## Thread 2 — confidence, and a second field worth asking for
 
-### The confidence column was useless, and is not always
+### The confidence column is weakly calibrated, and the first reading of it was wrong
+
+**Read the second table, not the first.** A 200-image run suggested this column
+had finally become useful; a 2,000-image *sampled* run showed most of that was
+the sample. Both are recorded here because the mistake is the more instructive
+half.
 
 The labeller's `confidence` has been dismissed here for good reason: it averages
 0.968 against a measured ~35% species error, and `findings/03` says plainly it is
-not an error estimate. **That is a property of the models tried, not of the
-column.** Over 200 images one hosted model produced this:
+not an error estimate. One hosted model returns a genuine spread instead — 49
+distinct values over 2,022 rows — so the column is not inherently useless. What
+that spread is *worth* is the question, and it is worth much less than it first
+appeared.
 
-| confidence | images | agrees with the curated labelling |
+**The biased first look**, 200 images taken in walk order — 37 distinct labels,
+a handful of trips, one species dominating:
+
+| confidence | images | disagrees |
 |---|---:|---:|
-| below 0.70 | 20 | 10.0% |
-| 0.70–0.89 | 37 | 35.1% |
-| 0.90+ | 143 | 96.5% |
+| below 0.70 | 20 | 90.0% |
+| 0.70–0.89 | 37 | 64.9% |
+| 0.90+ | 143 | **3.5%** |
 
-Monotonic, and a **21× ratio** in disagreement rate between the top band and the
-rest. 26 distinct values over 200 images, against a model that returns 0.968 for
-almost everything.
+That is a 21× ratio, and it supported a workflow: review below 0.90, which is
+28.5% of images and catches 89% of disagreements.
 
-**What it buys is triage.** Reviewing only below 0.90 is 28.5% of the images and
-catches 89.4% of the disagreements — about 7,400 to review instead of 26,104,
-with ~650 disagreements accepted unreviewed.
+**The same model over 2,022 images drawn at random** — 759 labels across 424
+folders:
 
-**The threshold is not fittable yet.** Youden's J picks 0.88 on this sample, but
-bootstrapping puts the optimum anywhere between 0.88 and 0.98, and 0.88 and 0.90
-give identical results here. 0.90 is inside the interval and is a number you can
-state. The principled choice needs a cost ratio — how many images you would
-review to prevent one accepted error — which is a judgement about purpose rather
-than a statistic.
+| confidence | images | disagrees |
+|---|---:|---:|
+| below 0.50 | 97 | 92.8% |
+| 0.50–0.69 | 258 | 89.9% |
+| 0.70–0.79 | 407 | 88.5% |
+| 0.80–0.89 | 361 | 78.7% |
+| 0.90–0.94 | 279 | 71.0% |
+| 0.95+ | 620 | **37.9%** |
 
-**And "agreement" is not "correct".** The comparison is against a labelling that
-is itself ~35% wrong at species, so a 0.90+ row means two independent models
-concur, which is evidence and not a verdict.
+Still monotonic across all six bands, so the calibration is real. But the spread
+is **2.4×**, not 21×, and the top band still disagrees on 38%. Reviewing below
+0.90 is now **56% of images for 69% of the disagreements** — against 28% for 89%.
+There is no threshold that licenses skipping review.
 
-### Most disagreement is naming, not structure
+Overall species agreement fell from 76.5% to **30.8%**, which sits alongside the
+28.8% measured between the two earlier labellers over the whole library. This
+model is an ordinary labeller, not an exceptional one.
 
-Worth recording because it settles how much the disagreements matter. Over the
-same 200 images: exact string agreement 76.5%, but **ARI 0.96** — for almost any
-two photos, both labellings agree on whether they show the same bird. The gap is
-the naming-versus-structure distinction, and for a project whose interest is
-structure, a consistent wrong name is nearly free.
+**Why the first reading was wrong, and it is not subtle.** `--limit` takes images
+in walk order, which is path order: 2,000 images that way is 43 folders and 326
+species, against 415 and 778 drawn at random. A sample dominated by one common,
+easy species makes any labeller look calibrated and accurate at once. The fix
+(`--sample-seed`) landed *between* the two runs, which is the only reason the
+error was caught rather than carried into a 26,104-image decision.
 
-The exception is worth knowing: a **merge** (one name covering several real
-species) destroys a distinction, where a **split** only relabels. 10 merges and
-12 splits in 200 images, and the merges concentrate in the low-confidence band —
-so the triage already separates the harmful case from the harmless one.
+**And "agreement" is not "correct" either.** The comparison is against a
+labelling itself ~35% wrong at species, so 30.8% agreement is consistent with
+both being substantially wrong — which is what `findings/03` already bounded.
+
+### Disagreement is *not* mostly naming, either
+
+The same correction applies. On the 200 biased images, exact agreement was 76.5%
+against **ARI 0.96**, which said the two labellings differed about names while
+agreeing about the partition — and for a project whose interest is structure,
+that would have made the disagreements nearly free.
+
+On the 2,022 sampled images, exact agreement is 30.8% and **ARI is 0.41**, with
+284 merges and 281 splits. The two labellings genuinely disagree about which
+photos show the same bird. The naming-versus-structure distinction is still the
+right frame, and a **merge** (one name covering several real species) still costs
+more than a **split** — but the comforting version of the finding was an
+artifact.
 
 ### `label_sci` — the checklist's strong key
 
@@ -121,9 +147,16 @@ TreeOfLife carries 11,131 Aves taxa and 10,788 distinct common names, and the ga
 is exactly the names people use.
 
 So the prompt asks for the binomial, the CSV carries `label_sci`, and
-`map_label_taxa` matches on it before the common name. Over 200 images from one
-hosted model: **200/200 present, 200/200 valid checklist binomials**, where the
-common name alone matched 170/200. That closes the gap rather than narrowing it.
+`map_label_taxa` matches on it before the common name. Over 2,022 sampled images
+from one hosted model: **99.7% present, 94.3% of those valid checklist taxa**,
+where the common name alone would have matched 82.1%. That is **242 images, 12%
+of the sample, gaining a taxonomy they would otherwise have lost** to a pixel
+guess — most of the 19.6% gap, on a representative sample.
+
+**This is the finding that survived the sampling correction**, and it is a
+property of asking for the binomial rather than of the model being good: a
+binomial is standardised where a common name is not, and a wrong one falls back
+harmlessly.
 
 The asymmetry that justified a schema change: a wrong binomial is cheap — it
 matches nothing and falls back to the common name, exactly as a run without the
@@ -171,13 +204,12 @@ column does. A wrong common name has no backstop.
 ## Open, in rough priority order
 
 1. **The review verdict** for `findings/01` — still the item nothing here can
-   supply, and now cheaper to produce: with a calibrated confidence, a review can
-   start with the images where it is low.
+   supply. The confidence gives a review order (lowest first) but not a stopping
+   point: at 0.95+ the disagreement rate is still 37.9%.
 2. **An expert**, for whether species inside a branch are close relatives.
-3. **Phase II: ~2,000 images, sampled, batched.** Confirms whether the
-   calibration and the binomial validity hold beyond one sample, and gives a real
-   cost per image. Fit the threshold on half and check on the other; fitting and
-   evaluating on the same rows overstates it.
+3. **Phase II is done** (2,000 sampled, batched, 44 minutes). It overturned the
+   confidence finding and confirmed the binomial one. What it did *not* produce
+   is a cost per image, because token usage is not recorded — see below.
 4. **Re-run the taxonomy against a labelling that has `label_sci`.** The 19.6%
    gap should close, which would let `audit_rank_alignment --source checklist`
    run over the whole population instead of 80% — removing the one caveat on
@@ -185,10 +217,24 @@ column does. A wrong common name has no backstop.
 5. **`bird_label.py:39`** still imports torch through a dead backend.
 6. The clustering-methods stability study, the `label_cn` composer, `stats.py`.
 
+## Token usage is not recorded, so a run cannot price itself
+
+The response carries a `usage` block and only `reasoning_tokens` is read from it,
+for an error message. Nothing lands in the CSV, so the cost of a paid run has to
+come from the provider's dashboard rather than from the artifact. Worth adding
+before a 26,104-image pass, where a 10% error in a per-image estimate is real
+money. Observed on this run: completions of roughly 200–300 tokens, which is what
+made the original 200-token budget truncate answers mid-JSON.
+
 ## A note on the confidence column
 
-If a labelling with calibrated confidence is ever promoted, CLAUDE.md's flat
-statement that the confidence "is not an error estimate" becomes false for that
-run. It is true of the models used so far and should be qualified rather than
-deleted — the point it makes is that the column cannot be trusted *by default*,
-which remains right.
+CLAUDE.md says flatly that the confidence "is not an error estimate". After the
+sampled run that statement stands, and should not be softened. One model returns
+a genuine spread and the spread is monotonic against agreement — so the column is
+not *meaningless* — but at 0.95+ it still disagrees with the other labelling 38%
+of the time, which is not an error estimate by any useful definition.
+
+The wider lesson is the one worth carrying: **a measurement on a convenience
+sample can invert.** 21× became 2.4×, ARI 0.96 became 0.41, and 76.5% agreement
+became 30.8%, from the same model and the same code. Nothing was wrong with the
+first measurement except which images it was taken over.
