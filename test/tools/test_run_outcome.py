@@ -93,3 +93,41 @@ def test_a_working_run_succeeds_and_says_how_many(data, tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "1 images labelled" in done.stdout, done.stdout
     assert (out / "processed.txt").read_text().strip()
+
+
+def test_limit_caps_the_run_and_the_dry_run_agrees(data, tmp_path):
+    """`--limit` exists so a paid model can be tried for pennies.
+
+    It is not scope: which images you get depends on walk order, so a run
+    narrowed this way cannot be described or reproduced. `--include-from` is the
+    only way to name a population -- `--years` was removed for being a second
+    one. The dry run must report the capped figure, or the flag would be
+    invisible exactly where it is being checked.
+    """
+    from PIL import Image
+    trip = data / "jpg" / "Photos-16" / "trip"
+    for n in range(4):
+        Image.new("RGB", (8, 8)).save(trip / f"extra{n}.jpg")
+
+    out = tmp_path / "out"
+    stub = tmp_path / "stub.py"
+    stub.write_text(STUB)
+    proc = subprocess.Popen([str(PY), str(stub), "ok"], stdout=subprocess.PIPE, text=True)
+    try:
+        port = proc.stdout.readline().strip()
+        env = {**os.environ, "OPENAI_BASE_URL": f"http://127.0.0.1:{port}/v1",
+               "OPENAI_API_KEY": "sk-test", "PROJECT_ROOT": str(ROOT)}
+        base = [str(PY), "-m", "code.bird_label", "--approach", "openai",
+                "--data-dir", str(data), "--output-dir", str(out), "--limit", "2"]
+        dry = subprocess.run(base + ["--dry-run"], cwd=ROOT, env=env,
+                             capture_output=True, text=True)
+        assert "2 would be sent to the model" in dry.stdout, dry.stdout
+        done = subprocess.run(base, cwd=ROOT, env=env, capture_output=True, text=True)
+    finally:
+        proc.kill()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "2 images labelled" in done.stdout, done.stdout
+    rows = [l for l in (out / "bird_identification_output.csv")
+            .read_text(encoding="utf-8-sig").splitlines()[1:] if l.strip()]
+    assert len(rows) == 2, rows

@@ -137,6 +137,7 @@ Key CLI flags:
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
 - `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `local/manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
+- `--limit INT` — stop after N images, matching `embed.py`. **Not a scoping mechanism**: which images you get depends on walk order, so a run narrowed this way cannot be described or reproduced, and `--include-from` remains the only way to name a population. It exists so a paid backend can be tried for five API calls instead of 47,908. Applied after the scope and the checkpoint, and before the dry-run report, so `--dry-run --limit 5` says 5
 - `--dry-run` — resolve the scope and report it, then stop. No model probe, no sidecar copy, no writes
 
 **A run that labels nothing exits non-zero**, and a photo the model could not answer

@@ -775,6 +775,20 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
         if item.key not in processed and (filter_set is None or item.key in filter_set)
     ]
 
+    # After the scope and the checkpoint, so `--limit 5` means five *more*
+    # images rather than five from the top of a resumed run. Matches embed.py.
+    #
+    # It is not a scoping mechanism and does not want to become one: which
+    # images you get depends on walk order, so a run narrowed this way cannot
+    # be reproduced or described. `--include-from` is how a population is named,
+    # and it is the only way -- `--years` was removed for doing the same job
+    # through a second mechanism. This is for spending five API calls instead of
+    # 47,908 to find out whether a model works at all.
+    limit = getattr(args, 'limit', 0)
+    if limit:
+        pending = pending[:limit]
+        logger.info(f"⚙️  --limit {limit}: labelling {len(pending)} this run")
+
     if getattr(args, 'dry_run', False):
         by_lib = collections.Counter(it.key.split("/")[0] for it in items)
         logger.info("  by library: " + ", ".join(f"{k}={by_lib[k]}" for k in sorted(by_lib)))
@@ -938,6 +952,11 @@ if __name__ == "__main__":
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
     parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
+    parser.add_argument("--limit", type=int, default=0,
+                        help="stop after N images (0 = no limit). For trying a "
+                             "model cheaply, not for scoping a run -- which "
+                             "images you get depends on walk order. Use a "
+                             "manifest when the population matters")
     parser.add_argument("--dry-run", action="store_true",
                         help="resolve the scope and report it, then stop. No model probe, "
                              "no sidecar copy, no writes -- use it to check what a "
