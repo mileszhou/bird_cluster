@@ -64,6 +64,7 @@ if has_stage base; then
     pip install --upgrade pip
     pip install python-dotenv   # for loading environment variables from .env files
     pip install pypinyin        # for Chinese pinyin conversion
+    pip install zhconv          # traditional -> simplified, so one bird is one string
     pip install Pillow          # image IO, used by embed_server and the labeler
 fi
 

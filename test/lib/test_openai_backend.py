@@ -316,3 +316,37 @@ def test_an_empty_reply_names_the_token_limit(jpg):
         srv.shutdown()
     why = bl.prediction_failed(raw)
     assert why and "token limit" in why and "reasoning tokens" in why, why
+
+
+# --- one bird, one string ---------------------------------------------------
+
+def test_chinese_names_are_normalised_to_simplified():
+    """A model answers in whichever script it likes.
+
+    `普通翠鳥` against `普通翠鸟` is one bird under two keywords: a photo manager
+    lists it twice and any join on the label splits it. Same fragmentation the
+    confidence used to cause in a keyword, so it gets the same answer --
+    normalise at the boundary rather than teaching every consumer about it.
+    """
+    from code.bird_label import to_simplified
+    assert to_simplified("普通翠鳥") == "普通翠鸟"
+    assert to_simplified("普通翠鸟") == "普通翠鸟"
+
+
+def test_normalising_leaves_non_chinese_alone():
+    from code.bird_label import to_simplified
+    for text in ("Grey Wagtail", "", "mrs. gould's sunbird"):
+        assert to_simplified(text) == text
+
+
+def test_a_traditional_reply_is_stored_simplified(stub, jpg):
+    """End to end: the model may answer in traditional, the CSV holds one form."""
+    url, cls = stub
+    cls.reply = ('{"category":"bird","label":"Common Kingfisher",'
+                 '"label_cn":"普通翠鳥","confidence":0.9}')
+    try:
+        _, _, label_cn, _, _ = predict_with_vllm(
+            jpg, url, "gpt-4o", 0.6, 0.2, api_key="sk-test")
+    finally:
+        cls.reply = _Stub.__dict__["reply"]
+    assert label_cn == "普通翠鸟", label_cn

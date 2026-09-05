@@ -511,6 +511,33 @@ PREDICTION_FAILED = "_prediction_failed"
 PRIOR_LABELS: dict = {}
 
 
+def to_simplified(text: str) -> str:
+    """Chinese names in one script, so a species is one string.
+
+    A model asked for "the standard Chinese name" answers in whichever script it
+    feels like, and 普通翠鳥 against 普通翠鸟 is one bird under two keywords: a
+    photo manager lists it twice, and any join on the label splits it. Same
+    fragmentation the confidence used to cause in a keyword, arriving by a
+    different route, so it gets the same answer -- normalise at the boundary,
+    once, rather than teaching every consumer about it.
+
+    Simplified because the library and the existing labelling are overwhelmingly
+    simplified: 1,509 of 49,224 rows are not, so converting is the smaller move.
+
+    **It is not the main cause of unstable names, and should not be mistaken for
+    a fix for that.** Of the 980 English names carrying more than one Chinese
+    form, simplification collapses 7. The other 973 differ by genuine synonymy --
+    two real Chinese names for one bird -- which no script conversion touches.
+    """
+    if not text or not any('\u4e00' <= c <= '\u9fff' for c in text):
+        return text
+    try:
+        import zhconv
+    except ImportError:  # a client without it still labels, just unnormalised
+        return text
+    return zhconv.convert(text, 'zh-cn')
+
+
 def prediction_failed(raw_json: str) -> str | None:
     """The error a prediction reported, or None if it produced an answer."""
     try:
@@ -649,7 +676,7 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
             data = json.loads(match.group())
         raw_json = json.dumps(data, ensure_ascii=False)
         label = data.get('label', '').lower()
-        label_cn = data.get('label_cn', '')
+        label_cn = to_simplified(data.get('label_cn', ''))
         confidence = float(data.get('confidence', 0.0))
         category = data.get('category', 'scenery')
         # If model put Chinese in label field, move it to label_cn
