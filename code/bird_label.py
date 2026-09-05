@@ -1433,15 +1433,47 @@ if __name__ == "__main__":
         shutil.copytree(RAW_DIR, RAW_OUT)
     else:
         logger.info(f"⚙️  Raw output folder {RAW_OUT} already exists; reusing existing files.")
-    # Save command‑line args for reproducibility (overwrites previous args.json)
+    # Save the arguments for reproducibility -- honouring what is already there.
+    #
+    # Every other artifact in a run directory accumulates: the CSV, the
+    # checkpoint and the log are all appended. args.json alone was overwritten,
+    # so a directory holding rows from two runs could only describe the last of
+    # them -- and the first run's parameters, which produced most of the rows,
+    # were simply gone.
+    #
+    # So the previous one is kept under a number before the new one lands, and a
+    # difference is announced rather than absorbed. A resumed run with a
+    # different model or scope is a legitimate thing to do and a dangerous thing
+    # to do silently: the rows it appends are not comparable to the rows already
+    # there, and nothing else in the directory would say so.
     import subprocess
     try:
         git_hash = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     except Exception:
         git_hash = "unknown"
     if not args.dry_run:
-        with open(RUN_DIR / "args.json", "w", encoding="utf-8") as f:
-            json.dump({**vars(args), "git_commit": git_hash}, f, indent=2)
+        record = {**vars(args), "git_commit": git_hash}
+        record = json.loads(json.dumps(record, default=str))   # Paths -> strings
+        args_path = RUN_DIR / "args.json"
+        if args_path.is_file():
+            try:
+                previous = json.loads(args_path.read_text(encoding="utf-8"))
+            except (json.JSONDecodeError, OSError):
+                previous = None
+            if previous is not None and previous != record:
+                differs = sorted(k for k in set(previous) | set(record)
+                                 if previous.get(k) != record.get(k))
+                n = 2
+                while (RUN_DIR / f"args.{n}.json").exists():
+                    n += 1
+                kept = RUN_DIR / f"args.{n}.json"
+                args_path.rename(kept)
+                logger.info(f"⚙️  This run's arguments differ from the ones in "
+                            f"{args_path.name}: {', '.join(differs)}")
+                logger.info(f"   Kept the previous set as {kept.name}; the CSV "
+                            f"now holds rows from more than one set of arguments.")
+        with open(args_path, "w", encoding="utf-8") as f:
+            json.dump(record, f, indent=2)
 
     start_time = time.perf_counter()
 
