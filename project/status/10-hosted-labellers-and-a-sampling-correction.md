@@ -217,14 +217,41 @@ column does. A wrong common name has no backstop.
 5. **`bird_label.py:39`** still imports torch through a dead backend.
 6. The clustering-methods stability study, the `label_cn` composer, `stats.py`.
 
-## Token usage is not recorded, so a run cannot price itself
+## What a hosted pass actually costs, and what that changes
 
-The response carries a `usage` block and only `reasoning_tokens` is read from it,
-for an error message. Nothing lands in the CSV, so the cost of a paid run has to
-come from the provider's dashboard rather than from the artifact. Worth adding
-before a 26,104-image pass, where a 10% error in a per-image estimate is real
-money. Observed on this run: completions of roughly 200–300 tokens, which is what
-made the original 200-token budget truncate answers mid-JSON.
+Measured on the sampled run, from the provider's dashboard: **2,000 images, 3.47M
+tokens, $1.40** — 1,735 tokens and $0.0007 per image. Roughly 250 tokens out and
+1,485 in, so **the image dominates**: the `label_sci` field costs essentially
+nothing, and the export resolution is what you are paying for.
+
+| scope | cost | time at `--batch-size 8` |
+|---|---:|---:|
+| the bird set (`--categories bird`) | **$18** | 9.6 h |
+| the whole library | $34 | 18.1 h |
+
+**This inverts the assumption the flags were built under.** `--categories bird`
+was added to save 45% of a paid run; at these prices it saves $15 and is no
+longer a reason for anything. Cost is not the constraint — *time* is, and the run
+saw only 7 rate limits across 2,000 images, so `--batch-size` has clear headroom
+above 8.
+
+The figure is for one deliberately cheap model and should not be generalised;
+another may be an order of magnitude more. What generalises is the shape: input
+tokens dominate, so cost scales with image resolution and the number of images,
+not with how much the prompt asks for.
+
+**And it changes which question matters.** At ~$18 a pass, a second and third
+labelling over the bird set is ~$37 — so the choice stops being "can we afford
+another opinion" and becomes "which opinion is most decorrelated", which is what
+`findings/03` says makes a second labelling useful in the first place. A model
+agreeing with the curated labelling only 30.8% of the time is a candidate for
+that role even though it is unfit for promotion.
+
+**Token usage is still not recorded in the CSV.** The response carries a `usage`
+block and only `reasoning_tokens` is read from it, for an error message, so this
+number had to come from a dashboard rather than from the artifact. Worth adding:
+a run that can price itself needs no external bookkeeping, and the per-image cost
+is a property of the run worth keeping beside its parameters.
 
 ## A note on the confidence column
 
