@@ -689,12 +689,22 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
                 if attempt == TRANSIENT_RETRIES - 1:
                     raise
                 wait = TRANSIENT_BACKOFF * (2 ** attempt)
+                asked = 0.0
                 try:
-                    wait = max(wait, float(exc.headers.get('Retry-After') or 0))
+                    asked = float(exc.headers.get('Retry-After') or 0)
                 except (TypeError, ValueError):
-                    pass
-                logger.info(f"⏳ {exc.code} from {base_url}; waiting {wait:.0f}s "
-                            f"(attempt {attempt + 1} of {TRANSIENT_RETRIES - 1})")
+                    asked = 0.0
+                wait = max(wait, asked)
+                # Say whose number this is. A long wait from `Retry-After` is the
+                # server stating its quota, and that is worth knowing: at 60s a
+                # request, 26,000 images is eighteen days of waiting, so the
+                # answer is a different tier or a different model rather than
+                # patience.
+                whose = (f"the server asked for {asked:.0f}s" if asked >= wait
+                         else f"backing off {wait:.0f}s")
+                logger.info(f"⏳ {exc.code} Too Many Requests from {base_url}; "
+                            f"{whose} (attempt {attempt + 1} of "
+                            f"{TRANSIENT_RETRIES - 1})")
                 time.sleep(wait)
         raise RuntimeError("unreachable")
 
