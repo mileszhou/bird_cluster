@@ -419,3 +419,86 @@ def test_the_budget_fix_is_learned_once(silent, jpg):
         predict_with_vllm(jpg, url, "qwen/some-flash", 0.6, 0.2, api_key="sk-test")
     # 2 for the first image (starved, then retried), 1 for each after.
     assert len(cls.calls) == 4, cls.calls
+
+
+class _RateLimited(BaseHTTPRequestHandler):
+    """429 for the first two requests, then answers. A gateway under load."""
+    seen = 0
+    fail_for = 2
+
+    def do_POST(self):
+        self.rfile.read(int(self.headers["Content-Length"]))
+        type(self).seen += 1
+        if type(self).seen <= type(self).fail_for:
+            self.send_response(429)
+            self.send_header("Retry-After", "0")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        c = json.dumps({"category": "bird", "label": "Common Kingfisher",
+                        "label_cn": "普通翠鸟", "confidence": 0.9})
+        out = json.dumps({"choices": [{"message": {"content": c},
+                                       "finish_reason": "stop"}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def limited():
+    _RateLimited.seen = 0
+    _RateLimited.fail_for = 2
+    srv = HTTPServer(("127.0.0.1", 0), _RateLimited)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/v1", _RateLimited
+    srv.shutdown()
+
+
+def test_a_rate_limit_is_waited_out_not_treated_as_failure(limited, jpg):
+    """429 is a queue, not a refusal.
+
+    On a shared gateway across tens of thousands of images it is a certainty.
+    Treating it as permanent drops photos from a paid run -- they are at least
+    left uncheckpointed, so a re-run retries them, but a long run bleeds steadily
+    and still reports completion.
+    """
+    url, cls = limited
+    category, label, *_ = predict_with_vllm(
+        jpg, url, "qwen/flash", 0.6, 0.2, api_key="sk-test")
+    assert (category, label) == ("bird", "common kingfisher")
+    assert cls.seen == 3, cls.seen
+
+
+def test_a_persistent_rate_limit_still_fails_rather_than_hanging(limited, jpg):
+    import code.bird_label as bl
+    url, cls = limited
+    cls.fail_for = 99
+    *_, raw = predict_with_vllm(jpg, url, "qwen/flash", 0.6, 0.2, api_key="sk-test")
+    assert bl.prediction_failed(raw), "a permanent 429 must be recorded as a failure"
+    assert cls.seen == bl.TRANSIENT_RETRIES, cls.seen
+
+
+def test_a_real_refusal_is_not_retried(jpg):
+    """4xx other than 429 is a refusal; retrying it wastes a paid call."""
+    class _Refuse(_RateLimited):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            type(self).seen += 1
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+    _Refuse.seen = 0
+    srv = HTTPServer(("127.0.0.1", 0), _Refuse)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        predict_with_vllm(jpg, f"http://127.0.0.1:{srv.server_port}/v1",
+                          "m", 0.6, 0.2, api_key="sk")
+    finally:
+        srv.shutdown()
+    assert _Refuse.seen == 1, _Refuse.seen

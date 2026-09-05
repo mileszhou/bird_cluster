@@ -153,6 +153,15 @@ dead server or timeout became a permanent wrong label on a real bird. The
 predictors now put the error in `response_json` under `_prediction_failed` and the
 loop skips those rows entirely.
 
+**A 429 is a queue, not a refusal.** Rate limits and 5xx are retried with
+doubling waits (honouring `Retry-After`), four attempts, and only then recorded
+as a failure; a 4xx other than 429 is a real refusal and is not retried, since a
+retried refusal is a paid call wasted. On a shared gateway across tens of
+thousands of images a rate limit is a certainty rather than a possibility, and
+treating it as permanent bleeds photos out of a run that still reports
+completion. `--reasoning-budget` is a flag because how much a model needs is a
+property of that model, and a run is how you find out.
+
 **The adaptation triggers on a starved reply too, not only on a rejection.**
 An endpoint that *refuses* `max_tokens` announces itself with a 400; OpenRouter
 and others accept it and then let a reasoning model spend the whole allowance

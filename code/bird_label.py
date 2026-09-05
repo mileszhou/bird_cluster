@@ -473,6 +473,12 @@ def _describe_fix(fix: dict) -> str:
 REASONING_BUDGET = 2000
 REASONING_EFFORT = "minimal"
 
+# A 429 is a queue, not a refusal, and on a shared gateway over tens of thousands
+# of images it is a certainty. 5xx likewise. Four attempts with doubling waits,
+# or whatever Retry-After asks for if that is longer.
+TRANSIENT_RETRIES = 4
+TRANSIENT_BACKOFF = 2.0
+
 
 def _starved_fix(response: dict, payload: dict):
     """A 200 that answered nothing because the budget ran out. Same fix, no 400.
@@ -656,13 +662,41 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
     _apply_fixes(payload, _PARAM_FIXES.get((base_url, model_name), {}))
 
     def _post():
-        request = urllib.request.Request(
-            url=f'{base_url}/v1/chat/completions',
-            data=json.dumps(payload).encode('utf-8'),
-            headers=headers,
-        )
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read().decode('utf-8'))
+        """One request, retrying the transient statuses rather than giving up.
+
+        A 429 is not a failure, it is a queue -- and on a shared gateway across
+        26,104 images it is a certainty rather than a possibility. Treating it as
+        permanent silently drops photos from a paid run: they are at least not
+        checkpointed, so a re-run retries them, but a long run would bleed
+        steadily and finish looking complete.
+
+        `Retry-After` is honoured when the server sends one, since it knows more
+        than a guess does. 5xx is retried on the same grounds; 4xx other than 429
+        is a real refusal and is raised for the adaptation loop or the caller.
+        """
+        for attempt in range(TRANSIENT_RETRIES):
+            request = urllib.request.Request(
+                url=f'{base_url}/v1/chat/completions',
+                data=json.dumps(payload).encode('utf-8'),
+                headers=headers,
+            )
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    return json.loads(response.read().decode('utf-8'))
+            except urllib.error.HTTPError as exc:
+                if exc.code != 429 and exc.code < 500:
+                    raise
+                if attempt == TRANSIENT_RETRIES - 1:
+                    raise
+                wait = TRANSIENT_BACKOFF * (2 ** attempt)
+                try:
+                    wait = max(wait, float(exc.headers.get('Retry-After') or 0))
+                except (TypeError, ValueError):
+                    pass
+                logger.info(f"⏳ {exc.code} from {base_url}; waiting {wait:.0f}s "
+                            f"(attempt {attempt + 1} of {TRANSIENT_RETRIES - 1})")
+                time.sleep(wait)
+        raise RuntimeError("unreachable")
 
     # Loop rather than retry once: a model may object to several parameters, and
     # it reports them one at a time. Bounded by the number of parameters that
@@ -1192,6 +1226,13 @@ if __name__ == "__main__":
                              "has a row per image; sidecars cover only the 20%% that "
                              "had a raw file. Pass a nonexistent path to fall back "
                              "to reading sidecars")
+    parser.add_argument("--reasoning-budget", type=int, default=REASONING_BUDGET,
+                        help=f"token allowance for a reasoning model, covering "
+                             f"reasoning *and* output (default {REASONING_BUDGET}). "
+                             f"Raised automatically when a model answers nothing "
+                             f"within it; raise this when even that is not enough. "
+                             f"Reasoning tokens are billed, so a model that needs a "
+                             f"large budget is an expensive model for this task")
     parser.add_argument("--categories", default="",
                         help="comma-separated categories to label, from the "
                              "previous labelling (--prior-labels). Empty, the "
@@ -1219,6 +1260,10 @@ if __name__ == "__main__":
     # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
+    globals()['REASONING_BUDGET'] = args.reasoning_budget
+    # A module-level default the CLI can move, rather than a constant someone has
+    # to edit: how much a model needs is a property of the model, and this run is
+    # how you find out.
     # openai has no server to probe, so it is the one backend that needs a name
     # up front. vllm and llama.cpp resolve theirs below, from the server itself.
     # It comes from config.toml `[models] openai`, not from a literal here: the
