@@ -30,29 +30,6 @@ def read_image_base64(image_path: Path) -> str:
 # ------------------------------------------------------------
 # OpenAI API helper (existing)
 # ------------------------------------------------------------
-def _openai_chat_completion(messages, model_name):
-    """Send a request to OpenAI's /v1/chat/completions endpoint using urllib."""
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise RuntimeError('OPENAI_API_KEY not set in environment')
-    payload = {
-        'model': model_name,
-        'messages': messages,
-        'max_tokens': 80,
-        'temperature': 0.0,
-    }
-    request = urllib.request.Request(
-        url='https://api.openai.com/v1/chat/completions',
-        data=json.dumps(payload).encode('utf-8'),
-        headers={
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}',
-        }
-    )
-    with urllib.request.urlopen(request) as response:
-        resp_body = response.read().decode('utf-8')
-        return json.loads(resp_body)
-
 # ------------------------------------------------------------
 # llama.cpp API helper
 # ------------------------------------------------------------
@@ -162,46 +139,6 @@ def add_keywords_to_xmp(xmp_path: Path, keywords):
 # ------------------------------------------------------------
 # OpenAI GPT‑4o Vision query (existing).
 # ------------------------------------------------------------
-
-def predict_with_gpt4o(image_path: Path, model_name: str, conf_threshold: float, no_bird_conf: float):
-    img_b64 = read_image_base64(image_path)
-    system_prompt = (
-        "You are an expert bird and wild animal identification system. "
-        "For the given image, output a JSON object with the following fields: "
-        "`category` – a string that must be one of: 'bird', 'animal', 'people', or 'scenery'. "
-        "`label` – the English name of the bird/animal, or a brief English description if the category is 'people' or 'scenery'."
-        "`label_cn` – the Chinese name corresponding to `label`."
-        "`confidence` – a float between 0.0 and 1.0 indicating the model's confidence. "
-        "If the image contains no recognizable animal, set `category` to 'people' or 'scenery' as appropriate and provide an appropriate English description, leaving `label_cn` blank."
-    )
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": [{"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}}]}
-    ]
-
-    category = "scenery"
-    label = "unknown"
-    label_cn = ""
-    confidence = 0.0
-    raw_json = "{}"
-    try:
-        response = _openai_chat_completion(messages, model_name)
-        content = response['choices'][0]['message']['content']
-        try:
-            data = json.loads(content)
-        except json.JSONDecode_decodeError:
-            match = re.search(r'\{.*\}', content, re.DOTALL)
-            if not match:
-                raise ValueError('No JSON found in OpenAI response')
-            data = json.loads(match.group())
-        raw_json = json.dumps(data, ensure_ascii=False)
-        label = data.get('label', 'unknown').lower()
-        label_cn = data.get('label_cn', '未知')
-        confidence = float(data.get('confidence', 0.0))
-        category = data.get('category', 'scenery')
-    except Exception as e:
-        print(f"⚠️  OpenAI request failed for {image_path.name}: {e}")
-    return category, label, label_cn, confidence, raw_json
 
 # ------------------------------------------------------------
 # llama.cpp Vision query (NEW)

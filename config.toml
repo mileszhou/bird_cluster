@@ -21,6 +21,15 @@ current_working_output = "./output"
 # Override any of these in config.local.toml -- host alone is enough, the port
 # is inherited. --vllm-url / --embed-url still win for a single run.
 
+# Which model a backend asks for. Only the cloud backends appear here: `vllm`
+# and `llama.cpp` probe their server and record whatever it actually serves, and
+# a name configured here would be a second, unchecked source of that same fact.
+# `chatgpt` has no server to probe, so its model has to be stated somewhere --
+# and in config rather than in code, because the answer changes as models are
+# retired. Override in config.local.toml, or per run with --model.
+[models]
+chatgpt = "gpt-4o"
+
 [servers.vllm]
 host = "localhost"
 port = 8000

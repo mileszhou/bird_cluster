@@ -30,7 +30,7 @@ from PIL import Image
 import time
 
 from code.lib.label_generator import pinyin_initials
-from code.lib.config import data_dir, server_url
+from code.lib.config import data_dir, model_name, server_url
 from code.lib.jpg_index import library_year
 from code.lib.jpg_claim import SidecarClaims, sort_key
 from code.lib import path_filter
@@ -59,32 +59,6 @@ def setup_logging(log_path: Path) -> None:
 def read_image_base64(image_path: Path) -> str:
     with open(image_path, 'rb') as f:
         return base64.b64encode(f.read()).decode('utf-8')
-
-# ------------------------------------------------------------
-# Helper: call OpenAI Chat Completion API using only stdlib.
-# ------------------------------------------------------------
-def _openai_chat_completion(messages, model_name):
-    """Send a request to OpenAI's /v1/chat/completions endpoint using urllib."""
-    api_key = os.getenv('OPENAI_API_KEY')
-    if not api_key:
-        raise RuntimeError('OPENAI_API_KEY not set in environment')
-    payload = {
-        'model': model_name,
-        'messages': messages,
-        'max_tokens': 80,
-        'temperature': 0.0,
-    }
-    request = urllib.request.Request(
-        url='https://api.openai.com/v1/chat/completions',
-        data=json.dumps(payload).encode('utf-8'),
-        headers={
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}',
-        }
-    )
-    with urllib.request.urlopen(request) as response:
-        resp_body = response.read().decode('utf-8')
-        return json.loads(resp_body)
 
 # ------------------------------------------------------------
 # XMP keyword handling (unchanged from original).
@@ -402,7 +376,45 @@ def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
     return requested_model
 
 
-def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int = 120):
+# Overridable so an OpenAI-compatible proxy (Azure, OpenRouter, a local gateway)
+# can be used without a code change -- and so this backend can be exercised end
+# to end against a stub, which is how the breakage below was found. The default
+# is the real API.
+OPENAI_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
+
+
+def openai_key() -> str:
+    """The API key, or a refusal that says what to do about it.
+
+    Checked at the point of use rather than at startup because the other two
+    backends need no key at all, and a run against a local server should not
+    fail for want of a credential it will never send.
+    """
+    key = os.getenv('OPENAI_API_KEY')
+    if not key:
+        sys.exit("error: OPENAI_API_KEY is not set, and the chatgpt backend calls a "
+                 "paid API.\n       Put it in .env (cp _env .env, then add the "
+                 "line) or export it for this run.")
+    return key
+
+
+def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int = 120,
+                          api_key: str | None = None):
+    """POST to any OpenAI-protocol chat endpoint: vLLM, llama.cpp, or OpenAI.
+
+    One function for all three because it is one protocol, and keeping a second
+    copy for the cloud is what broke the `chatgpt` backend. That copy drifted
+    until it shared nothing but a shape: it carried a prompt from before `bird`
+    meant class Aves, a `max_tokens` too small for the JSON now asked for, no
+    timeout, and `json.JSONDecode_decodeError` -- an attribute that does not
+    exist, so the fenced-JSON fallback raised `AttributeError` and every
+    response wrapped in a code fence silently became `scenery/unknown`.
+
+    The key is a parameter rather than something inferred from the URL. Matching
+    on `api.openai.com` would send nothing to any other authenticated endpoint
+    and cannot be tested without contacting the real one -- so the caller that
+    knows it needs a key supplies it, and a local server simply does not.
+    """
     base_url = vllm_url.rstrip('/').replace('/v1', '')
     payload = {
         'model': model_name,
@@ -410,16 +422,21 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
         'max_tokens': 200,
         'temperature': 0.0,
     }
+    headers = {'Content-Type': 'application/json'}
+    if api_key:
+        headers['Authorization'] = f'Bearer {api_key}'
     request = urllib.request.Request(
         url=f'{base_url}/v1/chat/completions',
         data=json.dumps(payload).encode('utf-8'),
-        headers={'Content-Type': 'application/json'}
+        headers=headers,
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
         return json.loads(response.read().decode('utf-8'))
 
 
-def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str, conf_threshold: float, no_bird_conf: float):
+def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
+                      conf_threshold: float, no_bird_conf: float,
+                      api_key: str | None = None):
     """Returns (category, label, label_cn, confidence, raw_json) from a vLLM server.
     The model is asked to return a JSON object with the following fields:
     - `category` \u2013 'bird', 'animal', 'people', or 'scenery'
@@ -441,7 +458,8 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str, conf_thr
                 {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}},
             ]}
         ]
-        response = _vllm_chat_completion(messages, model_name, vllm_url)
+        response = _vllm_chat_completion(messages, model_name, vllm_url,
+                                         api_key=api_key)
         msg = response['choices'][0]['message']
         content = msg.get('content') or msg.get('reasoning_content', '')
         try:
@@ -543,7 +561,9 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
     if switch == "llama.cpp":
         category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
     elif switch == "chatgpt":
-        category, label, label_cn, conf, raw_json = predict_with_gpt4o(item.jpg, args.model, args.conf_threshold, args.no_bird)
+        category, label, label_cn, conf, raw_json = predict_with_vllm(
+            item.jpg, OPENAI_URL, args.model, args.conf_threshold, args.no_bird,
+            api_key=openai_key())
     elif switch == "vllm":
         category, label, label_cn, conf, raw_json = predict_with_vllm(item.jpg, args.vllm_url, args.model, args.conf_threshold, args.no_bird)
     else:  # should not happen due to argparse choices, but handle gracefully:
@@ -758,14 +778,17 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
 # ------------------------------------------------------------
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Bird ID using GPT‑4o (Vision) with Chinese name support")
+    parser = argparse.ArgumentParser(
+        description="Bird identification with English and Chinese names. Backends: "
+                    "vllm (default), llama.cpp, chatgpt.")
     parser.add_argument("--run-label", default="", help="Label for this run (e.g., 'first successful run')")
     parser.add_argument("--model", default="",
                         help="Model name. For vllm/llama.cpp this is only a hint -- the "
                              "server is probed and whatever it actually serves wins, so "
                              "leaving it empty is the honest default. Required in "
                              "practice only for chatgpt, which has nothing to probe "
-                             "(defaults to gpt-4o there)")
+                             "-- and that one comes from config.toml [models] "
+                             "rather than being hardcoded here")
     parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
     parser.add_argument("--no-bird", type=float, default=0.2, help="Confidence below which we label as 'no bird' (default 0.2)")
     parser.add_argument("--output-dir", default="./output/label",
@@ -799,8 +822,14 @@ if __name__ == "__main__":
     args = parser.parse_args()
     # chatgpt has no server to probe, so it is the one backend that needs a name
     # up front. vllm and llama.cpp resolve theirs below, from the server itself.
+    # It comes from config.toml `[models] chatgpt`, not from a literal here: the
+    # right answer changes as models are retired, and a name buried in code is
+    # one nobody edits until a run fails.
     if args.approach == "chatgpt" and not args.model:
-        args.model = "gpt-4o"
+        args.model = model_name("chatgpt")
+        if not args.model:
+            sys.exit("error: no model for the chatgpt backend. Set it in "
+                     "config.toml under [models], or pass --model.")
 
 
     if args.approach == "vllm" and not args.vllm_url:

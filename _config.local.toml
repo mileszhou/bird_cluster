@@ -23,6 +23,14 @@
 
 # data_dir = "/mnt/photos/library"
 
+# Which model the OpenAI backend asks for. config.toml names one that works;
+# set it here to use a different or newer one without dirtying a tracked file.
+# `--model` still overrides for a single run. The server-backed backends are not
+# listed: they probe and take what is actually being served.
+
+# [models]
+# chatgpt = "gpt-4o"
+
 # [servers.vllm]
 # host = "gpu-box"          # port 8000 inherited from config.toml
 

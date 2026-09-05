@@ -104,6 +104,20 @@ def server_url(name: str, scheme: str = "http", path: str = "") -> str:
     return f"{scheme}://{entry['host']}:{entry['port']}{path}"
 
 
+def model_name(backend: str, default: str | None = None) -> str | None:
+    """The model to ask a backend for, from `[models]` in config.toml.
+
+    Only the cloud backends need this. `vllm` and `llama.cpp` probe their server
+    and take whatever it actually serves -- that probe is how a run learns what
+    it is talking to, and a configured name there would be a second, unchecked
+    source of the same fact. `chatgpt` has nothing to probe, so it is the one
+    backend whose model has to be stated, and it belongs in config rather than
+    hardcoded: the answer changes as models are retired, and it changed while
+    nobody was looking.
+    """
+    return load_config().get("models", {}).get(backend, default)
+
+
 def working_output(default: str = "./output") -> Path:
     """The run directory the analysis tools default to.
 
