@@ -131,3 +131,44 @@ def test_limit_caps_the_run_and_the_dry_run_agrees(data, tmp_path):
     rows = [l for l in (out / "bird_identification_output.csv")
             .read_text(encoding="utf-8-sig").splitlines()[1:] if l.strip()]
     assert len(rows) == 2, rows
+
+
+def test_the_batch_path_writes_rows(data, tmp_path):
+    """The concurrent path, which had no end-to-end cover and was broken by it.
+
+    `write_row` gained a `label_sci` argument; the single-image call was updated
+    and the batch one was not, so `--batch-size 8` died on the first batch with a
+    missing positional argument. Nothing caught it because every test drove the
+    serial path -- and the batch path is the one a real run of any size uses.
+    """
+    from PIL import Image
+    trip = data / "jpg" / "Photos-16" / "trip"
+    for n in range(7):
+        Image.new("RGB", (8, 8)).save(trip / f"extra{n}.jpg")
+
+    out = tmp_path / "out"
+    stub = tmp_path / "stub.py"
+    stub.write_text(STUB)
+    proc = subprocess.Popen([str(PY), str(stub), "ok"], stdout=subprocess.PIPE, text=True)
+    try:
+        port = proc.stdout.readline().strip()
+        env = {**os.environ, "OPENAI_BASE_URL": f"http://127.0.0.1:{port}/v1",
+               "OPENAI_API_KEY": "sk-test", "PROJECT_ROOT": str(ROOT)}
+        done = subprocess.run(
+            [str(PY), "-m", "code.bird_label", "--approach", "openai",
+             "--data-dir", str(data), "--output-dir", str(out), "--batch-size", "4"],
+            cwd=ROOT, env=env, capture_output=True, text=True)
+    finally:
+        proc.kill()
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "8 images labelled" in done.stdout, done.stdout
+    rows = [l for l in (out / "bird_identification_output.csv")
+            .read_text(encoding="utf-8-sig").splitlines()[1:] if l.strip()]
+    assert len(rows) == 8, rows
+    # and the column the arity bug was about is populated, not shifted
+    import csv as _csv
+    with open(out / "bird_identification_output.csv", encoding="utf-8-sig") as fh:
+        first = next(_csv.DictReader(fh))
+    assert first["category"] == "bird", first
+    assert first["confidence"] == "0.90", first

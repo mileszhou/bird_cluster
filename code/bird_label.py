@@ -731,9 +731,16 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
         fix = _starved_fix(response, payload)
         if not fix:
             return response
-        _PARAM_FIXES.setdefault((base_url, model_name), {}).update(fix)
-        logger.info(f"ℹ️  {model_name} answered nothing within its token budget; "
-                    + _describe_fix(fix) + " for the rest of this run.")
+        # Several concurrent requests can each discover the same starvation
+        # before any of them has cached the fix. Applying it twice is harmless --
+        # it is idempotent -- but saying so once is enough, and a batch of 32
+        # would otherwise print it 32 times.
+        cache = _PARAM_FIXES.setdefault((base_url, model_name), {})
+        news = {k: v for k, v in fix.items() if cache.get(k, object()) != v}
+        cache.update(fix)
+        if news:
+            logger.info(f"ℹ️  {model_name} answered nothing within its token "
+                        f"budget; " + _describe_fix(fix) + " for the rest of this run.")
         _apply_fixes(payload, fix)
     raise RuntimeError(f"{base_url} kept rejecting the request for {model_name}")
 
@@ -1172,7 +1179,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
                                     applied, _ = set_keywords_in_xmp(
                                         item.xmp, category, spec)
                                 write_row(writer, item, category, label, label_cn,
-                                                      conf, note, applied, raw_json, args)
+                                          label_sci, conf, note, applied,
+                                          raw_json, args)
                                 labelled += 1
                                 if applied == APPLIED_CSV_ONLY:
                                     logger.info(f"📄 {item.name} → {', '.join(keywords)} "
