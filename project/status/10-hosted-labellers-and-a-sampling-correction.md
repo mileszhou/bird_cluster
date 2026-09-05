@@ -220,9 +220,24 @@ column does. A wrong common name has no backstop.
 ## What a hosted pass actually costs, and what that changes
 
 Measured on the sampled run, from the provider's dashboard: **2,000 images, 3.47M
-tokens, $1.40** — 1,735 tokens and $0.0007 per image. Roughly 250 tokens out and
-1,485 in, so **the image dominates**: the `label_sci` field costs essentially
-nothing, and the export resolution is what you are paying for.
+tokens, $1.40** — 1,735 tokens and $0.0007 per image. At $0.20/M in and $1.20/M
+out, that solves to 1,382 input and 353 output tokens per image:
+
+| | tokens | cost |
+|---|---:|---:|
+| input | 79.7% | 39.5% |
+| output | 20.3% | **60.5%** |
+
+**The image dominates the token count and the output dominates the bill** — output
+is six times the price, so 353 tokens of it outweigh 1,382 of input. Worth being
+precise about, because it decides which lever is worth pulling: halving the export
+resolution saves $3.60 over the bird set, while eliminating reasoning entirely
+saves $3.22. Neither is worth doing at this total.
+
+It also shows `reasoning_effort=minimal` earning its place: ~353 output tokens
+against the 200–300 visible in the JSON means only ~100 are reasoning. Left
+unconstrained, GPT-5 spent its whole 2,000-token allowance thinking, which at
+output prices would be roughly $60 for the bird set rather than $18.
 
 | scope | cost | time at `--batch-size 8` |
 |---|---:|---:|
