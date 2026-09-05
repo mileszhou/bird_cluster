@@ -1099,21 +1099,28 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
 
     limit = getattr(args, 'limit', 0)
     seed = getattr(args, 'sample_seed', None)
-    if limit and seed is not None:
-        # Shuffle a copy, then take the head: the same seed over the same pending
-        # list gives the same sample, and the seed is in args.json. Note the
-        # pending list depends on the checkpoint, so a *resumed* run draws from
-        # what is left rather than reproducing the original draw -- reproducing
-        # that wants a fresh --output-dir.
+    if seed is not None:
+        # Shuffle the whole pending list, whether or not a --limit follows.
+        #
+        # Tying this to --limit was wrong. A full run in walk order is fine while
+        # it finishes, and a biased sample the moment it does not: stop it, or
+        # look at it before the end, and what you have is a path-ordered prefix
+        # -- a handful of trips, the exact bias --sample-seed exists to remove.
+        # Shuffled, *every* prefix is a random sample, so a long run can be
+        # interrupted, inspected, or resumed and still measured honestly.
+        #
+        # Nothing downstream depends on order: the CSV is append-ordered, the
+        # checkpoint is keyed per image, and resumption matches on keys.
         import random
-        pending = random.Random(seed).sample(pending, min(limit, len(pending)))
-        trips = len({it.key.rsplit("/", 1)[0] for it in pending})
-        logger.info(f"⚙️  --limit {limit} --sample-seed {seed}: {len(pending)} "
-                    f"drawn at random across {trips:,} folders")
-    elif limit:
+        pending = random.Random(seed).sample(pending, len(pending))
+        where = f" (first {limit:,} of them)" if limit else ""
+        logger.info(f"⚙️  --sample-seed {seed}: {len(pending):,} pending shuffled"
+                    f"{where}, so any prefix is a random sample")
+    if limit:
         pending = pending[:limit]
-        logger.info(f"⚙️  --limit {limit}: labelling {len(pending)} this run "
-                    f"(walk order -- pass --sample-seed for a spread sample)")
+        note = "" if seed is not None else \
+            " (walk order -- pass --sample-seed for a spread sample)"
+        logger.info(f"⚙️  --limit {limit}: labelling {len(pending)} this run{note}")
 
     if getattr(args, 'dry_run', False):
         by_lib = collections.Counter(it.key.split("/")[0] for it in items)
@@ -1319,13 +1326,15 @@ if __name__ == "__main__":
                              "on species 0.288, so this spends the reliable part. "
                              "No effect when there is no prior labelling")
     parser.add_argument("--sample-seed", type=int, default=None,
-                        help="draw the --limit images at random with this seed, "
-                             "instead of taking them in walk order. Walk order is "
-                             "path order, so a trial run gets a handful of "
-                             "consecutive trips -- 2,000 images is 43 trips and "
-                             "326 species that way, against 415 and 778 at "
-                             "random. The seed is recorded in args.json, so the "
-                             "sample is reproducible")
+                        help="process images in a reproducible random order "
+                             "rather than walk order, so that any prefix of the "
+                             "run is an unbiased sample. Walk order is path "
+                             "order: 2,000 images that way is 43 folders and 326 "
+                             "species, against 415 and 778 at random. Applies "
+                             "with or without --limit -- a full run that is "
+                             "interrupted or inspected early leaves a "
+                             "path-ordered prefix otherwise, which is the same "
+                             "bias. The seed goes into args.json")
     parser.add_argument("--limit", type=int, default=0,
                         help="stop after N images (0 = no limit). For trying a "
                              "model cheaply, not for scoping a run -- which "

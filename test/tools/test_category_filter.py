@@ -71,9 +71,19 @@ def tree(tmp_path):
 
 
 def _dry(data, label, *args):
+    """A dry run in an isolated output directory.
+
+    `--output-dir` is not optional here even though a dry run writes nothing: it
+    still *reads* the checkpoint, and the default is the live `output/label`. A
+    test that omits it reports whatever a real run happens to have processed --
+    and if one is running, two invocations disagree, which is exactly how this
+    was found.
+    """
+    out = Path(str(data)).parent / "out"
     return subprocess.run(
         [str(PY), "-m", "code.bird_label", "--approach", "openai", "--dry-run",
-         "--data-dir", str(data), "--prior-labels", str(label), *args],
+         "--data-dir", str(data), "--prior-labels", str(label),
+         "--output-dir", str(out), *args],
         cwd=ROOT, capture_output=True, text=True,
         env={**os.environ, "PROJECT_ROOT": str(ROOT)})
 
@@ -136,5 +146,20 @@ def test_a_seeded_sample_is_spread_and_reproducible(tree, tmp_path):
 
     assert "walk order" in draw(), "unseeded runs should say they are in walk order"
     first = draw("--sample-seed", "5")
-    assert "drawn at random" in first, first
+    assert "pending shuffled" in first, first
     assert draw("--sample-seed", "5") == first, "same seed must give the same draw"
+
+
+def test_the_seed_shuffles_without_a_limit(tree, tmp_path):
+    """A full run needs the shuffle as much as a capped one.
+
+    Tying it to `--limit` was wrong: a full run in walk order is fine only if it
+    finishes. Interrupt it, or look at the results before the end, and what you
+    have is a path-ordered prefix -- the exact bias the seed exists to remove.
+    Shuffled, every prefix is a random sample.
+    """
+    data, label = tree
+    done = _dry(data, label, "--categories", "bird", "--sample-seed", "3")
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert "pending shuffled" in done.stdout, done.stdout
+    assert "any prefix is a random sample" in done.stdout, done.stdout
