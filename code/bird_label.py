@@ -818,10 +818,24 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
     return category, label, label_cn, label_sci, confidence, raw_json
 
 
-def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, conf_threshold: float, no_bird_conf: float):
-    """Batch vLLM inference against a vLLM server. Fires requests concurrently so the
-    server's continuous batching handles them together. Returns a list of
-    (category, label, label_cn, label_sci, confidence, raw_json) per image, in order."""
+def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str,
+                            conf_threshold: float, no_bird_conf: float,
+                            api_key: str | None = None):
+    """Several images at once, against any OpenAI-protocol endpoint.
+
+    Nothing here is vLLM-specific: it is a thread pool of ordinary HTTP requests,
+    which a local server turns into continuous batching and a hosted API turns
+    into concurrency. Restricting it to the `vllm` approach was historical, and
+    it cost the cloud backend an order of magnitude -- 26,104 images at 2.2s
+    serial is sixteen hours, and about two at eight in flight.
+
+    Concurrency against a metered endpoint is the thing that provokes a 429, so
+    the batch size is the caller's to choose. The transient retry handles the
+    rate limits that result; it does not make an unreasonable batch size
+    reasonable.
+
+    Returns (category, label, label_cn, label_sci, confidence, raw_json) per
+    image, in order."""
     # Six fields, matching predict_with_vllm. A default of the wrong arity would
     # only fail on the batch path and only when a request errored, which is the
     # least-exercised corner there is.
@@ -832,7 +846,8 @@ def predict_with_vllm_batch(image_paths: list, vllm_url: str, model_name: str, c
     import concurrent.futures
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(image_paths)) as pool:
         futures = {
-            pool.submit(predict_with_vllm, path, vllm_url, model_name, conf_threshold, no_bird_conf): i
+            pool.submit(predict_with_vllm, path, vllm_url, model_name,
+                        conf_threshold, no_bird_conf, api_key): i
             for i, path in enumerate(image_paths)
         }
         for future in concurrent.futures.as_completed(futures):
@@ -1078,7 +1093,10 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
                 "aborted": None, "interrupted": False, "dry_run": True}
 
     batch_size = getattr(args, 'batch_size', 1)
-    use_batch = args.approach == "vllm" and batch_size > 1
+    # Any OpenAI-protocol backend can be driven concurrently; the batch path is
+    # a thread pool, not a vLLM feature. llama.cpp keeps its own predictor and
+    # its own prompt, so it stays serial.
+    use_batch = args.approach in ("vllm", "openai") and batch_size > 1
     if use_batch:
         logger.info(f"⚙️  vLLM batch mode: batch_size={batch_size}, {len(pending)} images to process.")
 
@@ -1119,7 +1137,10 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
                     if batch:
                         try:
                             batch_results = predict_with_vllm_batch(
-                                [it.jpg for it in batch], args.vllm_url, args.model, args.conf_threshold, args.no_bird
+                                [it.jpg for it in batch],
+                                OPENAI_URL if args.approach == "openai" else args.vllm_url,
+                                args.model, args.conf_threshold, args.no_bird,
+                                api_key=(openai_key() if args.approach == "openai" else None)
                             )
                             for item, (category, label, label_cn, label_sci, conf, raw_json) in zip(batch, batch_results):
                                 why = prediction_failed(raw_json)
@@ -1227,7 +1248,16 @@ if __name__ == "__main__":
     parser.add_argument("--llama-url", default="", help="URL for LLaMA.cpp API (llama.cpp approach only; default: from config.toml [servers.llama_cpp])")
     parser.add_argument("--vllm-url", default="", help="URL for the vLLM OpenAI-compatible server (vllm approach only; default: from config.toml [servers.vllm])")
     parser.add_argument("--filter-csv", default="", help="Path to a prior run's CSV; only reprocess 'animal' category or low-confidence rows")
-    parser.add_argument("--batch-size", type=int, default=1, help="Number of images per vLLM batch (default 1, vllm only)")
+    parser.add_argument("--batch-size", type=int, default=1,
+                        help="images in flight at once (default 1). Applies to "
+                             "vllm and openai, which speak the same protocol: a "
+                             "local server turns the concurrency into continuous "
+                             "batching, a hosted API into parallel calls. Against "
+                             "a metered endpoint this is what provokes a 429, so "
+                             "raise it deliberately -- the retry handles the rate "
+                             "limits that follow, it does not make a reckless "
+                             "value safe. llama.cpp keeps its own predictor and "
+                             "stays serial")
     parser.add_argument("--prior-labels", type=Path, default=None,
                         help="directory holding a previous run's "
                              "bird_identification_output.csv, whose verdicts are "
