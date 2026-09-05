@@ -130,3 +130,96 @@ def test_server_backends_are_not_configured_with_a_model():
     second, unchecked source of the same fact."""
     assert model_name("vllm") is None
     assert model_name("llama.cpp") is None
+
+
+# --- models that reject the older parameter spelling ------------------------
+
+class _Strict(BaseHTTPRequestHandler):
+    """Behaves like GPT-5 / the o-series: rejects max_tokens, then temperature."""
+    calls: list = []
+
+    def _err(self, msg):
+        out = json.dumps({"error": {"message": msg}}).encode()
+        self.send_response(400)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        type(self).calls.append(sorted(
+            k for k in body if k in ("max_tokens", "max_completion_tokens", "temperature")))
+        if "max_tokens" in body:
+            return self._err("Unsupported parameter: 'max_tokens' is not supported "
+                             "with this model. Use 'max_completion_tokens' instead.")
+        if body.get("temperature") not in (None, 1):
+            return self._err("Unsupported value: 'temperature' does not support 0.0 "
+                             "with this model. Only the default (1) value is supported.")
+        content = json.dumps({"category": "bird", "label": "Grey Wagtail",
+                              "label_cn": "灰鴺鷌", "confidence": 0.9})
+        out = json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def strict():
+    import code.bird_label as bl
+    bl._PARAM_FIXES.clear()
+    _Strict.calls = []
+    srv = HTTPServer(("127.0.0.1", 0), _Strict)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/v1", _Strict
+    srv.shutdown()
+    bl._PARAM_FIXES.clear()
+
+
+def test_reasoning_model_parameters_are_corrected(strict, jpg):
+    """A hardcoded list of which models want which spelling goes stale.
+
+    GPT-5 and the o-series reject `max_tokens` for `max_completion_tokens`, and
+    reject a non-default temperature. The endpoint says so; this reads its 400
+    and adapts, so the *first* image succeeds rather than being spent learning.
+    """
+    url, cls = strict
+    category, label, _, _, _ = predict_with_vllm(
+        jpg, url, "gpt-5", 0.6, 0.2, api_key="sk-test")
+    assert (category, label) == ("bird", "grey wagtail")
+    assert cls.calls[0] == ["max_tokens", "temperature"]
+    assert cls.calls[-1] == ["max_completion_tokens"]
+
+
+def test_the_correction_is_learned_once_per_run(strict, jpg):
+    """Not re-derived per image: that would triple the request count."""
+    url, cls = strict
+    for _ in range(3):
+        predict_with_vllm(jpg, url, "gpt-5", 0.6, 0.2, api_key="sk-test")
+    # 3 for the first image (two rejections plus the success), 1 for each after.
+    assert len(cls.calls) == 5, cls.calls
+
+
+def test_a_400_we_cannot_fix_is_reported_not_swallowed(strict, jpg):
+    """An unrecognised rejection must surface as a failed prediction.
+
+    Returning the scenery/unknown defaults would put a plausible wrong label on
+    a real photograph and checkpoint it.
+    """
+    import code.bird_label as bl
+    url, cls = strict
+    cls.calls = []
+
+    def _bad(detail, payload):
+        return None
+    original, bl._param_fix = bl._param_fix, _bad
+    try:
+        _, _, _, _, raw = predict_with_vllm(jpg, url, "gpt-5", 0.6, 0.2, api_key="sk")
+    finally:
+        bl._param_fix = original
+    assert bl.prediction_failed(raw), "an unfixable 400 must be recorded as a failure"

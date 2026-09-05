@@ -122,6 +122,25 @@ Key CLI flags:
 - `--include-from` / `--exclude-from PATH` — a manifest under `manifests/`; `local/manifests/exclude-captive.txt` is the form to type, since it tab-completes and matches what is on disk. A bare name works too. Same mechanism and same keys as `embed.py`, so one list scopes both stages
 - `--dry-run` — resolve the scope and report it, then stop. No model probe, no sidecar copy, no writes
 
+**A run that labels nothing exits non-zero**, and a photo the model could not answer
+for gets no row, no sidecar edit and **no checkpoint entry** — so a re-run retries it.
+Both were fixed 2026-09-04. Every per-image failure is caught and logged, and the
+caller used to print "Run complete" regardless: that is how the `chatgpt` backend
+stayed broken for months, raising on the first image of every run and reporting
+success each time. Worse, a transport failure returned the predictor's
+`scenery/unknown/0.00` defaults, which read as a *verdict* rather than a gap — one
+dead server or timeout became a permanent wrong label on a real bird. The
+predictors now put the error in `response_json` under `_prediction_failed` and the
+loop skips those rows entirely.
+
+**The cloud backend adapts to what a model will accept.** GPT-5 and the o-series
+reject `max_tokens` for `max_completion_tokens` and reject a non-default
+`temperature`; a hardcoded list of which model wants which spelling is a list that
+goes stale, and the failure is a 400 nobody sees until a paid run dies. So the 400
+is read and the payload corrected — once per endpoint and model, cached for the run,
+looping until accepted so the *first* image succeeds. Same spirit as probing a vLLM
+server rather than assuming what it serves.
+
 **A failed model probe is fatal.** For the `vllm` and `llama.cpp` backends the run resolves what
 the server actually serves before doing anything else, and exits if it cannot. The probe is not
 a convenience for fixing up `--model` — it is how the run learns what it is talking to, and that

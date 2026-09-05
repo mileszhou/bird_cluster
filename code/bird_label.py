@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import NamedTuple, Optional
 import collections
 import csv
+import urllib.error
 import urllib.request
 import re
 from PIL import Image
@@ -382,6 +383,49 @@ def get_actual_vllm_model_name(vllm_url: str, requested_model: str) -> str:
 # is the real API.
 OPENAI_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 
+# Parameters a given endpoint+model has already rejected, so the correction is
+# made once per run rather than per image. Keyed by both, because two models on
+# one endpoint need not agree.
+_PARAM_FIXES: dict = {}
+
+
+def _param_fix(detail: str, payload: dict):
+    """Read a 400 and work out which parameter to drop or rename.
+
+    OpenAI's newer families moved the goalposts: GPT-5 and the o-series reject
+    `max_tokens` in favour of `max_completion_tokens`, and reject a `temperature`
+    other than the default. A hardcoded list of which models want which spelling
+    is a list that goes stale -- new models arrive, old ones retire, and the
+    failure is a 400 nobody sees until a paid run dies on its first image.
+
+    So the server is asked instead, the same way the vLLM backend probes rather
+    than assuming what is loaded. The endpoint says exactly what it will not
+    accept; this reads that and adapts once.
+
+    Returns (key_to_remove, (new_key, value)) or (key_to_remove, None) to drop.
+    """
+    lower = detail.lower()
+    if 'max_tokens' in lower and 'max_completion_tokens' in lower:
+        return 'max_tokens', ('max_completion_tokens', payload.get('max_tokens', 200))
+    if 'temperature' in lower and ('unsupported' in lower or 'not support' in lower):
+        return 'temperature', None
+    if 'max_tokens' in lower and 'unsupported' in lower:
+        return 'max_tokens', ('max_completion_tokens', payload.get('max_tokens', 200))
+    return None
+
+
+# The key a predictor puts in `response_json` when it never got an answer, and
+# the marker the loop counts. In the CSV it is the record of what went wrong.
+PREDICTION_FAILED = "_prediction_failed"
+
+
+def prediction_failed(raw_json: str) -> str | None:
+    """The error a prediction reported, or None if it produced an answer."""
+    try:
+        return json.loads(raw_json).get(PREDICTION_FAILED)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
 
 def openai_key() -> str:
     """The API key, or a refusal that says what to do about it.
@@ -425,13 +469,43 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
     headers = {'Content-Type': 'application/json'}
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
-    request = urllib.request.Request(
-        url=f'{base_url}/v1/chat/completions',
-        data=json.dumps(payload).encode('utf-8'),
-        headers=headers,
-    )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return json.loads(response.read().decode('utf-8'))
+
+    for key, value in _PARAM_FIXES.get((base_url, model_name), {}).items():
+        payload.pop(key, None)
+        if value is not None:
+            payload[value[0]] = value[1]
+
+    def _post():
+        request = urllib.request.Request(
+            url=f'{base_url}/v1/chat/completions',
+            data=json.dumps(payload).encode('utf-8'),
+            headers=headers,
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.loads(response.read().decode('utf-8'))
+
+    # Loop rather than retry once: a model may object to several parameters, and
+    # it reports them one at a time. Bounded by the number of parameters that
+    # can be corrected, so a server rejecting for some other reason still stops.
+    for _ in range(len(payload) + 1):
+        try:
+            return _post()
+        except urllib.error.HTTPError as exc:
+            if exc.code != 400:
+                raise
+            detail = exc.read().decode('utf-8', 'replace')
+            fix = _param_fix(detail, payload)
+            if not fix:
+                raise RuntimeError(f"{base_url} rejected the request: {detail}") from exc
+            key, replacement = fix
+            _PARAM_FIXES.setdefault((base_url, model_name), {})[key] = replacement
+            logger.info(f"ℹ️  {model_name} rejects '{key}'; "
+                        + (f"using '{replacement[0]}' instead" if replacement
+                           else "omitting it") + " for the rest of this run.")
+            payload.pop(key, None)
+            if replacement is not None:
+                payload[replacement[0]] = replacement[1]
+    raise RuntimeError(f"{base_url} kept rejecting the request for {model_name}")
 
 
 def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
@@ -484,6 +558,12 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
     except Exception as e:
         logger.info(f"\u26a0\ufe0f  vLLM request failed for {image_path.name}: {e}")
         logger.info(f"    raw response: {repr(content)}")
+        # Say the request failed, rather than returning the defaults and letting
+        # them read as an answer. `scenery/unknown/0.00` is a plausible label for
+        # a real photograph, so a dead server, a timeout or a truncated reply
+        # used to become a *wrong label* on a real bird -- written, checkpointed,
+        # and never retried. PREDICTION_FAILED is what the caller looks for.
+        raw_json = json.dumps({PREDICTION_FAILED: str(e)}, ensure_ascii=False)
     # Return the collected values (defaults may be unchanged if an error occurred)
     return category, label, label_cn, confidence, raw_json
 
@@ -550,12 +630,20 @@ def mk_label(category: str, label_en: str, label_cn: str, conf: float) -> str:
 # Process a single XMP file (extracted for notebook testing)
 # ------------------------------------------------------------
 
-def process_single_item(item: "WorkItem", csv_writer, args) -> None:
-    """Process one photo.
+def process_single_item(item: "WorkItem", csv_writer, args) -> bool:
+    """Process one photo. True if it was labelled, False if the model never answered.
+
     - Calls the selected model on its JPEG.
     - Updates the sidecar with keyword tags, if it has one.
     - Writes a row to the provided CSV writer.
     - Prints a concise status line.
+
+    **A photo the model could not answer for is left alone entirely** -- no row,
+    no sidecar edit, and the caller does not checkpoint it, so a re-run tries it
+    again. The alternative is what this used to do: write the predictor's
+    `scenery/unknown/0.00` defaults, which are a plausible label for a real
+    photograph, and checkpoint them. A dead server or one timeout then became a
+    permanent wrong label on a real bird, indistinguishable from a real verdict.
     """
     switch = args.approach
     if switch == "llama.cpp":
@@ -569,6 +657,12 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
     else:  # should not happen due to argparse choices, but handle gracefully:
         logger.info(f"⚠️  Unknown approach '{switch}' for {item.name}, skipping.")
         category, label, label_cn, conf, raw_json = "scenery", "unknown", "未知", 0.0, "{}"
+
+    why = prediction_failed(raw_json)
+    if why:
+        logger.info(f"⚠️  {item.name}: no answer from the model ({why}); "
+                    f"left for a later run")
+        return False
 
     spec = mk_label(category, label, label_cn, conf)
     keywords = [category, spec]
@@ -589,6 +683,7 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> None:
         logger.info(f"📄 {item.name} → {', '.join(keywords)} (conf={conf:.2f}); CSV only")
     else:
         logger.info(f"✅ {item.name} → {', '.join(keywords)} (conf={conf:.2f})")
+    return True
 
 
 # ------------------------------------------------------------
@@ -631,7 +726,7 @@ def load_filter_set(filter_csv: Path, conf_threshold: float) -> set | None:
     return keys
 
 
-def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
+def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
     claims = SidecarClaims(xmp_root)
     try:
         paths = path_filter.build(getattr(args, 'include_from', None),
@@ -689,7 +784,8 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         else:
             logger.info(f"  {len(pending)} would be sent to the model")
         logger.info("🔍 Dry run: nothing labelled, nothing written.")
-        return
+        return {"pending": len(pending), "labelled": 0, "unanswered": 0,
+                "aborted": None, "interrupted": False, "dry_run": True}
 
     batch_size = getattr(args, 'batch_size', 1)
     use_batch = args.approach == "vllm" and batch_size > 1
@@ -706,6 +802,15 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
         if not resuming:
             writer.writerow(CSV_COLUMNS)
 
+        # What actually happened, so the caller can say so. A run that labelled
+        # nothing used to end with "Run complete": every per-image failure is
+        # caught, logged and `break`s the loop, and the caller printed success
+        # regardless. That is how the chatgpt backend stayed broken for months
+        # -- it raised NameError on the first image of every run anyone tried.
+        labelled = 0
+        unanswered = 0
+        unanswered_keys: set = set()
+        aborted = None
         interrupted = False
         def _sigint_handler(sig, frame):
             nonlocal interrupted
@@ -727,6 +832,13 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                 [it.jpg for it in batch], args.vllm_url, args.model, args.conf_threshold, args.no_bird
                             )
                             for item, (category, label, label_cn, conf, raw_json) in zip(batch, batch_results):
+                                why = prediction_failed(raw_json)
+                                if why:
+                                    logger.info(f"⚠️  {item.name}: no answer from the "
+                                                f"model ({why}); left for a later run")
+                                    unanswered += 1
+                                    unanswered_keys.add(item.key)
+                                    continue
                                 spec = mk_label(category, label, label_cn, conf)
                                 keywords = [category, spec]
                                 note = f"{category} ({conf:.2f})"
@@ -737,6 +849,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                         item.xmp, category, spec)
                                 write_row(writer, item, category, label, label_cn,
                                                       conf, note, applied, raw_json, args)
+                                labelled += 1
                                 if applied == APPLIED_CSV_ONLY:
                                     logger.info(f"📄 {item.name} → {', '.join(keywords)} "
                                                 f"(conf={conf:.2f}); CSV only")
@@ -745,6 +858,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                                                 f"(conf={conf:.2f})")
                         except Exception as e:
                             logger.info(f"⚠️  Batch error at index {i}: {e}. Stopping to preserve checkpoint.")
+                            aborted = f"batch at index {i}: {e}"
                             break
                     # Checkpoint entire batch (including skipped missing-JPEG files).
                     # Flush the CSV first: the checkpoint is closed (and so
@@ -756,22 +870,33 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> None:
                     csvfile.flush()
                     with open(checkpoint_path, 'a', encoding='utf-8') as cp:
                         for item in batch:
-                            cp.write(f"{item.key}\n")
+                            if item.key not in unanswered_keys:
+                                cp.write(f"{item.key}\n")
                 else:
                     item = pending[i]
                     try:
-                        process_single_item(item, writer, args)
-                        csvfile.flush()      # see the batch path: row before checkpoint
-                        with open(checkpoint_path, 'a', encoding='utf-8') as cp:
-                            cp.write(f"{item.key}\n")
+                        if process_single_item(item, writer, args):
+                            labelled += 1
+                            csvfile.flush()  # see the batch path: row before checkpoint
+                            with open(checkpoint_path, 'a', encoding='utf-8') as cp:
+                                cp.write(f"{item.key}\n")
+                        else:
+                            # No answer: no row, and deliberately no checkpoint,
+                            # so a re-run retries rather than accepting a guess.
+                            unanswered += 1
                     except Exception as e:
                         logger.info(f"⚠️  Error processing {item.name}: {e}. Stopping batch to preserve checkpoint.")
+                        aborted = f"{item.name}: {e}"
                         break
                 if interrupted:
                     logger.info("Stopped cleanly. Re-run to resume.")
                     break
         finally:
             signal.signal(signal.SIGINT, original_sigint)
+
+    return {"pending": len(pending), "labelled": labelled,
+            "unanswered": unanswered, "aborted": aborted,
+            "interrupted": interrupted}
 
 # ------------------------------------------------------------
 # Main script execution
@@ -906,12 +1031,46 @@ if __name__ == "__main__":
 
     # Process and generate CSV
     logger.info("\n🔧 Labelling exported JPEGs…")
-    process_folder(RAW_OUT, CSV_PATH, args)
+    outcome = process_folder(RAW_OUT, CSV_PATH, args)
 
     end_time = time.perf_counter()
     processing_elapsed = end_time - init_time
     logger.info(f"⏱️  Initialization complete in {init_elapsed:.1f} seconds.")
     logger.info(f"⏱️  Processing time: {processing_elapsed:.1f} seconds.")
-    
-    logger.info(f"\n✅ Run complete. Output stored in: {RUN_DIR}")
+
+    # Say what happened, and exit non-zero when it was not a success. A run that
+    # laboured over nothing used to print "Run complete" exactly like one that
+    # laboured over 49,000 images: every per-image failure is caught, logged and
+    # breaks the loop, and this line did not look. That is precisely how the
+    # chatgpt backend stayed broken -- it raised on the first image of every run,
+    # said "Run complete", and left a CSV with a header and no rows.
+    if outcome.get("dry_run"):
+        logger.info(f"\n✅ Dry run complete. Nothing written.")
+    elif outcome["aborted"]:
+        logger.info(f"\n❌ Run FAILED after {outcome['labelled']:,} of "
+                    f"{outcome['pending']:,} images: {outcome['aborted']}")
+        logger.info(f"   Partial output in: {RUN_DIR}")
+        logger.info("   The checkpoint holds only what was written, so re-running "
+                    "resumes rather than repeats.")
+        sys.exit(1)
+    elif outcome["interrupted"]:
+        logger.info(f"\n⏸️  Interrupted after {outcome['labelled']:,} of "
+                    f"{outcome['pending']:,} images. Re-run to resume.")
+        logger.info(f"   Output so far in: {RUN_DIR}")
+    elif outcome["pending"] and not outcome["labelled"]:
+        logger.info(f"\n❌ Run labelled nothing, though {outcome['pending']:,} "
+                    f"images were selected"
+                    + (f"; the model answered for none of them."
+                       if outcome["unanswered"] else "."))
+        logger.info("   Nothing was checkpointed, so re-running starts over "
+                    "rather than skipping them.")
+        sys.exit(1)
+    elif outcome["unanswered"]:
+        logger.info(f"\n⚠️  Run complete with gaps: {outcome['labelled']:,} labelled, "
+                    f"{outcome['unanswered']:,} got no answer from the model.")
+        logger.info("   The unanswered are not checkpointed — re-run to retry just those.")
+        logger.info(f"   Output stored in: {RUN_DIR}")
+    else:
+        logger.info(f"\n✅ Run complete: {outcome['labelled']:,} images labelled. "
+                    f"Output stored in: {RUN_DIR}")
 
