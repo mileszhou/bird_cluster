@@ -502,3 +502,61 @@ def test_a_real_refusal_is_not_retried(jpg):
     finally:
         srv.shutdown()
     assert _Refuse.seen == 1, _Refuse.seen
+
+
+class _Truncating(BaseHTTPRequestHandler):
+    """Cuts the answer off mid-JSON at a small budget.
+
+    The commoner shape than an empty reply, and the one that slipped through:
+    the model reasons for most of its allowance, starts answering, and is cut off
+    leaving `..."confidence":0` with no closing brace.
+    """
+    budgets: list = []
+    FULL = json.dumps({"category": "bird", "label": "Eurasian Spoonbill",
+                       "label_cn": "白琵鹭", "label_sci": "Platalea leucorodia",
+                       "confidence": 0.94})
+
+    def do_POST(self):
+        b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        budget = b.get("max_completion_tokens") or b.get("max_tokens") or 0
+        type(self).budgets.append(budget)
+        if budget < 1000:
+            body = {"choices": [{"message": {"content": self.FULL[:70]},
+                                 "finish_reason": "length"}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": budget}}}
+        else:
+            body = {"choices": [{"message": {"content": self.FULL},
+                                 "finish_reason": "stop"}]}
+        out = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+def test_a_truncated_reply_adapts_like_an_empty_one(jpg):
+    """`finish_reason: length` is the signal, whatever the content is.
+
+    Requiring an *empty* answer missed this case entirely -- and adding
+    `label_sci` lengthened every reply, which is what began pushing answers over
+    the edge on a real run.
+    """
+    import code.bird_label as bl
+    bl._PARAM_FIXES.clear()
+    _Truncating.budgets = []
+    srv = HTTPServer(("127.0.0.1", 0), _Truncating)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        category, label, _, sci, *_ = predict_with_vllm(
+            jpg, f"http://127.0.0.1:{srv.server_port}/v1", "luna", 0.6, 0.2,
+            api_key="sk-test")
+    finally:
+        srv.shutdown()
+        bl._PARAM_FIXES.clear()
+    assert (category, label) == ("bird", "eurasian spoonbill")
+    assert sci == "Platalea leucorodia"
+    assert _Truncating.budgets == [200, 2000], _Truncating.budgets

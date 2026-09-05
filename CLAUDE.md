@@ -166,11 +166,11 @@ property of that model, and a run is how you find out.
 **The adaptation triggers on a starved reply too, not only on a rejection.**
 An endpoint that *refuses* `max_tokens` announces itself with a 400; OpenRouter
 and others accept it and then let a reasoning model spend the whole allowance
-thinking, so the request succeeds with empty content and `finish_reason:
-"length"`. Adapting only on the 400 left that case exactly as broken as before —
-just with a better error message, which is how it was found. An empty answer that
-stopped at the limit now raises the budget the same way, once per endpoint and
-model.
+thinking. `finish_reason: "length"` is the signal, **whatever the content is** —
+an empty reply and one cut off mid-JSON (`…"confidence":0` with no closing brace)
+have the same cause and take the same fix. Requiring an *empty* answer missed the
+commoner of the two, and adding `label_sci` lengthened every reply, which is what
+began pushing answers over the edge.
 
 **A reasoning model needs room to answer, and asking for less thinking.**
 `max_completion_tokens` covers reasoning *plus* output, and reasoning comes

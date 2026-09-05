@@ -490,15 +490,21 @@ def _starved_fix(response: dict, payload: dict):
     exactly as broken as before the adaptation existed -- it just failed with a
     better message.
 
-    So the observed failure is a trigger too: an empty answer that stopped at the
-    limit means the limit was wrong, whoever agreed to it.
+    So the observed failure is a trigger too: an answer that stopped at the limit
+    means the limit was wrong, whoever agreed to it -- whether it stopped before
+    saying anything or halfway through a sentence.
     """
     try:
         choice = response["choices"][0]
     except (KeyError, IndexError, TypeError):
         return None
-    content = (choice.get("message") or {}).get("content") or ""
-    if content.strip() or choice.get("finish_reason") != "length":
+    # `finish_reason: "length"` is the whole signal, whatever the content is.
+    # Requiring an *empty* answer missed the commoner case: a model that reasons
+    # for most of its allowance and then gets cut off mid-JSON, leaving
+    # `..."confidence":0` with no closing brace. Same cause, same fix -- and
+    # adding `label_sci` lengthened every reply, which is what started pushing
+    # answers over the edge.
+    if choice.get("finish_reason") != "length":
         return None
     key = "max_completion_tokens" if "max_completion_tokens" in payload else "max_tokens"
     if payload.get(key, 0) >= REASONING_BUDGET and "reasoning_effort" in payload:
@@ -775,6 +781,15 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
         choice = response['choices'][0]
         msg = choice['message']
         content = msg.get('content') or msg.get('reasoning_content', '')
+        truncated = (choice.get('finish_reason') == 'length'
+                     and (content or '').strip())
+        if truncated:
+            used = (response.get('usage') or {}).get(
+                'completion_tokens_details', {}).get('reasoning_tokens')
+            raise ValueError(
+                f"the model was cut off mid-answer at the token limit"
+                + (f" after {used} reasoning tokens" if used else "")
+                + f"; the reply ends {content.strip()[-40:]!r}")
         if not (content or '').strip():
             # Say what actually happened. A reasoning model that spends its whole
             # budget thinking returns an empty string with finish_reason
