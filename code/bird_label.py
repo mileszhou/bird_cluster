@@ -1076,9 +1076,22 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
                         f"{before:,} were placed there by the prior labelling.")
 
     limit = getattr(args, 'limit', 0)
-    if limit:
+    seed = getattr(args, 'sample_seed', None)
+    if limit and seed is not None:
+        # Shuffle a copy, then take the head: the same seed over the same pending
+        # list gives the same sample, and the seed is in args.json. Note the
+        # pending list depends on the checkpoint, so a *resumed* run draws from
+        # what is left rather than reproducing the original draw -- reproducing
+        # that wants a fresh --output-dir.
+        import random
+        pending = random.Random(seed).sample(pending, min(limit, len(pending)))
+        trips = len({it.key.rsplit("/", 1)[0] for it in pending})
+        logger.info(f"⚙️  --limit {limit} --sample-seed {seed}: {len(pending)} "
+                    f"drawn at random across {trips:,} folders")
+    elif limit:
         pending = pending[:limit]
-        logger.info(f"⚙️  --limit {limit}: labelling {len(pending)} this run")
+        logger.info(f"⚙️  --limit {limit}: labelling {len(pending)} this run "
+                    f"(walk order -- pass --sample-seed for a spread sample)")
 
     if getattr(args, 'dry_run', False):
         by_lib = collections.Counter(it.key.split("/")[0] for it in items)
@@ -1282,6 +1295,14 @@ if __name__ == "__main__":
                              "labellers agree on category 0.9626 of the time and "
                              "on species 0.288, so this spends the reliable part. "
                              "No effect when there is no prior labelling")
+    parser.add_argument("--sample-seed", type=int, default=None,
+                        help="draw the --limit images at random with this seed, "
+                             "instead of taking them in walk order. Walk order is "
+                             "path order, so a trial run gets a handful of "
+                             "consecutive trips -- 2,000 images is 43 trips and "
+                             "326 species that way, against 415 and 778 at "
+                             "random. The seed is recorded in args.json, so the "
+                             "sample is reproducible")
     parser.add_argument("--limit", type=int, default=0,
                         help="stop after N images (0 = no limit). For trying a "
                              "model cheaply, not for scoping a run -- which "

@@ -99,3 +99,42 @@ def test_without_a_prior_labelling_it_runs_everything(tree, tmp_path):
     assert done.returncode == 0, done.stdout + done.stderr
     assert "no prior labelling to filter on" in done.stdout, done.stdout
     assert "3 would be sent to the model" in done.stdout, done.stdout
+
+
+def test_a_seeded_sample_is_spread_and_reproducible(tree, tmp_path):
+    """Walk order is path order, so `--limit` alone takes consecutive trips.
+
+    Over the real library that is 43 folders and 326 species in 2,000 images,
+    against 415 and 778 drawn at random -- and a threshold fitted on the first
+    would not generalise. The seed goes into args.json, so the draw is
+    reproducible.
+    """
+    from PIL import Image
+    data, label = tree
+    # three folders, so a draw can differ from the head of the walk
+    rows = []
+    for folder in ("a", "b", "c"):
+        d = data / "jpg" / "Photos-16" / folder
+        d.mkdir(parents=True, exist_ok=True)
+        for n in range(4):
+            Image.new("RGB", (8, 8)).save(d / f"{n}.jpg")
+            rows.append(f"Photos-16/{folder}/{n}.jpg")
+
+    import csv as _csv
+    with open(label / "bird_identification_output.csv", "w", newline="",
+              encoding="utf-8-sig") as fh:
+        w = _csv.DictWriter(fh, fieldnames=COLUMNS)
+        w.writeheader()
+        for key in rows:
+            w.writerow({c: "" for c in COLUMNS} | {"jpg": key, "category": "bird",
+                                                   "applied": "written"})
+
+    def draw(*extra):
+        done = _dry(data, label, "--categories", "bird", "--limit", "6", *extra)
+        assert done.returncode == 0, done.stdout + done.stderr
+        return done.stdout
+
+    assert "walk order" in draw(), "unseeded runs should say they are in walk order"
+    first = draw("--sample-seed", "5")
+    assert "drawn at random" in first, first
+    assert draw("--sample-seed", "5") == first, "same seed must give the same draw"
