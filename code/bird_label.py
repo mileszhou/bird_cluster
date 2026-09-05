@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""run_hf_bird_model_chatgpt.py – Bird identification using OpenAI GPT‑4o (Vision).
+"""bird_label.py – Bird identification with English and Chinese names.
 
 - Uses the OpenAI Vision API to extract **English** and **Chinese** bird names, plus confidence.
 - Output CSV includes: `filename`, `label` (English), `label_cn` (Chinese), `confidence`, `note`, `response_json`.
@@ -7,7 +7,7 @@
 
 Run with the same CLI flags as before, for example:
 ```
-python3 run_hf_bird_model_chatgpt.py --conf-threshold 0.6 --no-bird 0.2
+python3 -m code.bird_label --conf-threshold 0.6 --no-bird 0.2
 ```
 """
 
@@ -436,7 +436,7 @@ def openai_key() -> str:
     """
     key = os.getenv('OPENAI_API_KEY')
     if not key:
-        sys.exit("error: OPENAI_API_KEY is not set, and the chatgpt backend calls a "
+        sys.exit("error: OPENAI_API_KEY is not set, and the openai backend calls a "
                  "paid API.\n       Put it in .env (cp _env .env, then add the "
                  "line) or export it for this run.")
     return key
@@ -447,7 +447,7 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
     """POST to any OpenAI-protocol chat endpoint: vLLM, llama.cpp, or OpenAI.
 
     One function for all three because it is one protocol, and keeping a second
-    copy for the cloud is what broke the `chatgpt` backend. That copy drifted
+    copy for the cloud is what broke the `openai` backend. That copy drifted
     until it shared nothing but a shape: it carried a prompt from before `bird`
     meant class Aves, a `max_tokens` too small for the JSON now asked for, no
     timeout, and `json.JSONDecode_decodeError` -- an attribute that does not
@@ -648,7 +648,7 @@ def process_single_item(item: "WorkItem", csv_writer, args) -> bool:
     switch = args.approach
     if switch == "llama.cpp":
         category, label, label_cn, conf, raw_json = code.lib.run_hf_bird_model_llamacpp.predict_with_llamacpp(item.jpg, args.model, args.conf_threshold, args.no_bird, args.llama_url)
-    elif switch == "chatgpt":
+    elif switch == "openai":
         category, label, label_cn, conf, raw_json = predict_with_vllm(
             item.jpg, OPENAI_URL, args.model, args.conf_threshold, args.no_bird,
             api_key=openai_key())
@@ -805,7 +805,7 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
         # What actually happened, so the caller can say so. A run that labelled
         # nothing used to end with "Run complete": every per-image failure is
         # caught, logged and `break`s the loop, and the caller printed success
-        # regardless. That is how the chatgpt backend stayed broken for months
+        # regardless. That is how the openai backend stayed broken for months
         # -- it raised NameError on the first image of every run anyone tried.
         labelled = 0
         unanswered = 0
@@ -905,13 +905,13 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(
         description="Bird identification with English and Chinese names. Backends: "
-                    "vllm (default), llama.cpp, chatgpt.")
+                    "vllm (default), llama.cpp, openai.")
     parser.add_argument("--run-label", default="", help="Label for this run (e.g., 'first successful run')")
     parser.add_argument("--model", default="",
                         help="Model name. For vllm/llama.cpp this is only a hint -- the "
                              "server is probed and whatever it actually serves wins, so "
                              "leaving it empty is the honest default. Required in "
-                             "practice only for chatgpt, which has nothing to probe "
+                             "practice only for openai, which has nothing to probe "
                              "-- and that one comes from config.toml [models] "
                              "rather than being hardcoded here")
     parser.add_argument("--conf-threshold", type=float, default=0.6, help="Low‑confidence threshold for special keyword (default 0.6)")
@@ -923,7 +923,13 @@ if __name__ == "__main__":
                         help="Root data directory (contains jpg/). Default: resolved by "
                              "code.lib.config.data_dir() -- ./data, else config.toml's "
                              "data_dir, else ./sample_data")
-    parser.add_argument("--approach", choices=["chatgpt", "llama.cpp", "vllm"],
+    # `openai` rather than `chatgpt`: the backend speaks the OpenAI *protocol*
+    # and $OPENAI_BASE_URL points it at any endpoint that does -- Azure, a
+    # gateway, a proxy -- so naming it for one company's product named something
+    # it may never touch. Renamed 2026-09-04 with no alias kept, which cost
+    # nothing: the backend had raised NameError on the first image of every run
+    # since the module split, so no working script could have used the old name.
+    parser.add_argument("--approach", choices=["openai", "llama.cpp", "vllm"],
                         default="vllm",
                         help="Inference backend. vllm is the only one fast enough for a "
                              "full run -- the others are kept for comparison against a "
@@ -945,15 +951,15 @@ if __name__ == "__main__":
     # --include-orphan-jpg is gone: the walk is over data/jpg, so a JPEG with no
     # sidecar is an ordinary member of the population rather than an opt-in extra.
     args = parser.parse_args()
-    # chatgpt has no server to probe, so it is the one backend that needs a name
+    # openai has no server to probe, so it is the one backend that needs a name
     # up front. vllm and llama.cpp resolve theirs below, from the server itself.
-    # It comes from config.toml `[models] chatgpt`, not from a literal here: the
+    # It comes from config.toml `[models] openai`, not from a literal here: the
     # right answer changes as models are retired, and a name buried in code is
     # one nobody edits until a run fails.
-    if args.approach == "chatgpt" and not args.model:
-        args.model = model_name("chatgpt")
+    if args.approach == "openai" and not args.model:
+        args.model = model_name("openai")
         if not args.model:
-            sys.exit("error: no model for the chatgpt backend. Set it in "
+            sys.exit("error: no model for the openai backend. Set it in "
                      "config.toml under [models], or pass --model.")
 
 
@@ -1042,7 +1048,7 @@ if __name__ == "__main__":
     # laboured over nothing used to print "Run complete" exactly like one that
     # laboured over 49,000 images: every per-image failure is caught, logged and
     # breaks the loop, and this line did not look. That is precisely how the
-    # chatgpt backend stayed broken -- it raised on the first image of every run,
+    # openai backend stayed broken -- it raised on the first image of every run,
     # said "Run complete", and left a CSV with a header and no rows.
     if outcome.get("dry_run"):
         logger.info(f"\n✅ Dry run complete. Nothing written.")

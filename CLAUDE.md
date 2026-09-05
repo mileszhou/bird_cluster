@@ -11,7 +11,7 @@ Automated bird species identification for photo libraries. Processes JPEG images
 Set up environment first:
 ```bash
 cp _env .env
-# Add OPENAI_API_KEY to .env if using chatgpt approach
+# Add OPENAI_API_KEY to .env if using the openai approach
 ```
 
 `config.toml` also carries **`current_working_output`** — the run directory the analysis tools
@@ -37,7 +37,7 @@ which a TOML file cannot be, and a leaked API key is a different problem from a 
 hostname. So: two ignored files, one boundary, and nobody edits a versioned file to point the
 project at their own machine.
 
-**vLLM is the only backend fast enough for a real run.** `chatgpt` and
+**vLLM is the only backend fast enough for a real run.** `openai` and
 `llama.cpp` work and are kept — the paired-verdict design makes this project a
 model-comparison instrument, and the early GPT-4o labels in `prior_label` came
 through that path — but neither is a way to label 49k images. `--approach`
@@ -104,7 +104,7 @@ The backend is a flag, not a script:
 Run via convenience scripts or directly:
 ```bash
 ./run-label                       # vLLM server, host from config.toml [servers.vllm]
-./run-label --approach chatgpt    # GPT-4o (requires OPENAI_API_KEY)
+./run-label --approach openai     # a hosted OpenAI-protocol API (needs OPENAI_API_KEY)
 ./run-label --approach llama.cpp  # llama.cpp server, host from [servers.llama_cpp]
 
 # Or directly with options:
@@ -112,7 +112,24 @@ python3 -m code.bird_label --approach vllm --model "Qwen/Qwen3-VL-132B-Instruct"
 ```
 
 Key CLI flags:
-- `--approach` — `chatgpt`, `llama.cpp` or `vllm`. All three speak the OpenAI chat protocol and share **one** transport and one prompt: the `chatgpt` path had its own copy, which drifted until it carried a prompt from before `bird` meant class Aves, a `max_tokens` too small for the JSON now asked for, and `json.JSONDecode_decodeError` — an attribute that does not exist, so every code-fenced reply silently became `scenery/unknown`. It had also been calling a function that lives in another module without qualifying it, so it raised `NameError` on the first image and had never run since the split. Fixed 2026-09-04 by deleting the copy rather than repairing it. The **model for `chatgpt` comes from `config.toml` `[models]`**, not a literal — models get retired, and a name buried in code is one nobody edits until a run fails; `vllm`/`llama.cpp` are deliberately absent from that table, since they probe the server and a configured name would be a second unchecked source of the same fact. `$OPENAI_BASE_URL` redirects the cloud path at an OpenAI-compatible proxy, and is what lets the backend be tested end to end against a stub. Not `transformer`: `transformers_engine.py` exists but was never added to the choices, so `--approach transformer` has always been rejected by argparse
+- `--approach` — `openai`, `llama.cpp` or `vllm`. Named for the *protocol*, not a
+  product: all three speak the OpenAI chat API over **one** transport and one
+  prompt, and `$OPENAI_BASE_URL` points the hosted one at any endpoint that
+  speaks it (Azure, a gateway, a proxy) — which is also what lets it be tested
+  end to end against a stub. Renamed from `chatgpt` on 2026-09-04 with no alias,
+  costing nothing: it had raised `NameError` on the first image of every run
+  since the module split, so no working script could have used the old name.
+  That single transport is the fix for what broke it — the cloud path kept its
+  own copy, which drifted until it carried a prompt from before `bird` meant
+  class Aves, a `max_tokens` too small for the JSON now asked for, and
+  `json.JSONDecode_decodeError`, an attribute that does not exist, so every
+  code-fenced reply silently became `scenery/unknown`. The **model for `openai`
+  comes from `config.toml` `[models]`**, not a literal — models get retired, and
+  a name buried in code is one nobody edits until a run fails. `vllm` and
+  `llama.cpp` are deliberately absent from that table: they probe their server,
+  and a configured name would be a second unchecked source of the same fact. Not
+  `transformer` either — `transformers_engine.py` exists but was never added to
+  the choices, so `--approach transformer` has always been rejected by argparse
 - `--vllm-url URL` — vLLM OpenAI-compatible server endpoint (default: `config.toml` `[servers.vllm]`, vllm approach only)
 - `--conf-threshold FLOAT` — confidence below which to flag as low-confidence (default 0.6)
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
@@ -125,7 +142,7 @@ Key CLI flags:
 **A run that labels nothing exits non-zero**, and a photo the model could not answer
 for gets no row, no sidecar edit and **no checkpoint entry** — so a re-run retries it.
 Both were fixed 2026-09-04. Every per-image failure is caught and logged, and the
-caller used to print "Run complete" regardless: that is how the `chatgpt` backend
+caller used to print "Run complete" regardless: that is how the `openai` backend
 stayed broken for months, raising on the first image of every run and reporting
 success each time. Worse, a transport failure returned the predictor's
 `scenery/unknown/0.00` defaults, which read as a *verdict* rather than a gap — one
@@ -321,7 +338,7 @@ re-embedding, while any filter can be added later without touching a vector alre
    `output/label/raw/`, and getting them back into the Lightroom library is a separate, manual step.
 3. It walks **`data/jpg`** — one work item per exported JPEG — and looks up the sidecar each
    one writes into (see JPEG-driven walk below)
-4. Each backend sends a system prompt + base64-encoded JPEG to the model (vLLM/llama.cpp backends call an OpenAI-compatible HTTP server; chatgpt calls OpenAI directly)
+4. Each backend sends a system prompt + base64-encoded JPEG to the model (all three speak the OpenAI chat protocol over one transport; `openai` adds an Authorization header and defaults to the hosted API)
 5. Model returns JSON: `{category, label, label_cn, confidence}`
 6. `code/lib/label_generator.py` formats a compact label with pinyin initials and confidence
 7. A CSV row is appended and the checkpoint updated — **the CSV is the output of labelling**.

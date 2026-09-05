@@ -122,7 +122,7 @@ def test_chinese_in_the_label_field_is_moved(stub, jpg):
 def test_chatgpt_model_comes_from_config():
     """Not a literal in the code: models get retired, and a buried name is one
     nobody edits until a run fails."""
-    assert model_name("chatgpt"), "config.toml [models] chatgpt is missing"
+    assert model_name("openai"), "config.toml [models] openai is missing"
 
 
 def test_server_backends_are_not_configured_with_a_model():

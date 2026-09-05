@@ -13,5 +13,5 @@
 # which looks like a network fault rather than a permission one.
 # export HF_TOKEN=hf_...
 
-# Required for --approach chatgpt only; not needed for vllm/llama.cpp.
+# Required for --approach openai only; not needed for vllm/llama.cpp.
 # export OPENAI_API_KEY=sk-...

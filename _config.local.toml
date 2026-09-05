@@ -29,7 +29,7 @@
 # listed: they probe and take what is actually being served.
 
 # [models]
-# chatgpt = "gpt-4o"
+# openai = "gpt-4o"
 
 # [servers.vllm]
 # host = "gpu-box"          # port 8000 inherited from config.toml

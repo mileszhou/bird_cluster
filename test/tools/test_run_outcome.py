@@ -55,7 +55,7 @@ def _run(mode, data, out, tmp_path):
         env = {**os.environ, "OPENAI_BASE_URL": f"http://127.0.0.1:{port}/v1",
                "OPENAI_API_KEY": "sk-test", "PROJECT_ROOT": str(ROOT)}
         return subprocess.run(
-            [str(PY), "-m", "code.bird_label", "--approach", "chatgpt",
+            [str(PY), "-m", "code.bird_label", "--approach", "openai",
              "--data-dir", str(data), "--output-dir", str(out)],
             cwd=ROOT, env=env, capture_output=True, text=True)
     finally:
