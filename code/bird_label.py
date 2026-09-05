@@ -194,9 +194,25 @@ def load_prior_labels(label_dir: Path) -> dict:
             sys.exit(f"error: {csv_path} has no 'jpg' column, so its rows cannot "
                      f"be matched to the images this run walks.")
         for row in reader:
-            out[row['jpg']] = ((row.get('category') or '').strip(),
-                               (row.get('label') or '').strip())
+            out[row['jpg']] = _effective(row)
     return out
+
+
+def _effective(row) -> tuple[str, str]:
+    """(category, label) the library actually holds for a row.
+
+    Resolves the never-demote rule, the way `embed.effective_category` does:
+    where `applied` is `kept-existing` this run's verdict was overruled and the
+    sidecar kept `prior_category`, with the species then in `prior_label`.
+    Reading `category` alone describes a decision that was not adopted, and
+    silently drops the rows that rule exists to protect.
+    """
+    if (row.get('applied') or '').strip() == 'kept-existing':
+        prior_cat = (row.get('prior_category') or '').strip()
+        if prior_cat:
+            return prior_cat.lower(), (row.get('prior_label') or '').strip()
+    return ((row.get('category') or '').strip().lower(),
+            (row.get('label') or '').strip())
 
 
 def prior_labels(key: str, jpg_key: str = "") -> tuple[str, str]:
@@ -871,6 +887,24 @@ def process_folder(xmp_root: Path, csv_path: Path, args) -> dict:
     # and it is the only way -- `--years` was removed for doing the same job
     # through a second mechanism. This is for spending five API calls instead of
     # 47,908 to find out whether a model works at all.
+    # Category filter, resolved at run time against the previous labelling
+    # rather than through a generated manifest. A manifest would have to live in
+    # local/, which is gitignored, so a run.json naming one is a dangling
+    # reference for everybody else -- the precise failure the manifest rule
+    # exists to prevent. `--prior-labels data/label --categories bird` names a
+    # versioned submodule and a word, and reproduces anywhere.
+    wanted = {c.strip().lower() for c in (args.categories or "").split(",") if c.strip()}
+    if wanted:
+        if not PRIOR_LABELS:
+            logger.info(f"⚙️  --categories {sorted(wanted)}: no prior labelling to "
+                        f"filter on, so labelling everything.")
+        else:
+            before = len(pending)
+            pending = [it for it in pending
+                       if PRIOR_LABELS.get(it.key, ("", ""))[0] in wanted]
+            logger.info(f"⚙️  --categories {sorted(wanted)}: {len(pending):,} of "
+                        f"{before:,} were placed there by the prior labelling.")
+
     limit = getattr(args, 'limit', 0)
     if limit:
         pending = pending[:limit]
@@ -1047,6 +1081,15 @@ if __name__ == "__main__":
                              "has a row per image; sidecars cover only the 20%% that "
                              "had a raw file. Pass a nonexistent path to fall back "
                              "to reading sidecars")
+    parser.add_argument("--categories", default="",
+                        help="comma-separated categories to label, from the "
+                             "previous labelling (--prior-labels). Empty, the "
+                             "default, labels everything. `--categories bird` "
+                             "skips what a prior run already placed elsewhere, "
+                             "which is the cheap half of a paid run: two "
+                             "labellers agree on category 0.9626 of the time and "
+                             "on species 0.288, so this spends the reliable part. "
+                             "No effect when there is no prior labelling")
     parser.add_argument("--limit", type=int, default=0,
                         help="stop after N images (0 = no limit). For trying a "
                              "model cheaply, not for scoping a run -- which "

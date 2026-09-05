@@ -134,6 +134,7 @@ Key CLI flags:
 - `--conf-threshold FLOAT` — confidence below which to flag as low-confidence (default 0.6)
 - `--no-bird FLOAT` — confidence below which to mark as "no bird" (default 0.2)
 - `--filter-csv PATH` — re-process only "animal" or low-confidence rows from a prior run's CSV. The rule is hardcoded; to select on anything else, generate a manifest (below)
+- `--categories LIST` — comma-separated categories to label, read from `--prior-labels` at run time; empty (the default) labels everything, and a missing prior labelling means a full run rather than an empty one. **This is the cheap half of a paid run**: two labellers agree on `category` 0.9626 of the time and on species 0.288, so `--categories bird` spends the reliable part — 27,194 of 49,224, skipping 45% of the cost without touching a bird. Resolved at run time rather than through a generated manifest, and that is not a breach of the manifest rule but an application of it: a generated list would live in gitignored `local/`, so a `run.json` naming one is a dangling reference for everybody else, while `--prior-labels data/label --categories bird` names a versioned submodule and a word. `--years` was removed for duplicating *path* scoping; a category is a different axis, and it resolves the never-demote rule the way `embed.py` does
 - `--prior-labels DIR` — where `prior_category` / `prior_label` come from (default `data/label`). **The CSV, not the sidecars**: a sidecar exists only for a photo that had a raw, so the sidecar route covered 9,918 of 49,224 rows and never the 5,229 with no raw at all — meaning the paired-verdict comparison, which is the point of the design, was a comparison of nothing over a fifth of the library. Fixed 2026-09-04; sidecars remain the fallback when no such CSV exists
 - `--run-label TEXT` — tag this run in the output CSV
 - `--batch-size INT` — number of images processed concurrently against the vLLM server (default 1; 8 is a reasonable default — each unit is a concurrent HTTP request, the server does its own continuous batching)
@@ -480,16 +481,6 @@ inside the repository, which is the part worth keeping — a list read from `/tm
 makes a run's recorded scope a dangling reference. The cost is accepted: a
 `run.json` naming a `local/` manifest is reproducible only for the person who
 has it.
-
-**Selecting by a previous run's category** — `tools/manifest_from_labels.py`
-writes a manifest naming the images a labelling put in a category, resolving the
-never-demote rule the way `embed.py` does. It exists as a *generator* rather than
-a `--category` flag so that scope stays one mechanism: the output is an ordinary
-manifest, recorded in `run.json`, diffable and reproducible. The category is the
-part of a labelling worth trusting — two independent labellers agree on it 0.9626
-against 0.288 on species — and this is where that difference is worth spending:
-`--category bird` selects 27,194 of 49,224, so a paid run skips 45% of its cost
-without touching a bird.
 
 **Scope is a manifest and nothing else.** `--years` was removed on 2026-08-09: it did the same
 job through a second mechanism, and a manifest expresses everything it could (`--years
