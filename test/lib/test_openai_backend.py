@@ -350,3 +350,72 @@ def test_a_traditional_reply_is_stored_simplified(stub, jpg):
     finally:
         cls.reply = _Stub.__dict__["reply"]
     assert label_cn == "普通翠鸟", label_cn
+
+
+class _Silent(BaseHTTPRequestHandler):
+    """Accepts max_tokens without complaint, then starves on it.
+
+    OpenRouter's shape, and the case the 400-driven adaptation missed entirely:
+    the request succeeds, the content is empty, `finish_reason` is "length".
+    """
+    calls: list = []
+
+    def do_POST(self):
+        b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        type(self).calls.append({k: b[k] for k in
+                                 ("max_tokens", "max_completion_tokens",
+                                  "reasoning_effort") if k in b})
+        budget = b.get("max_completion_tokens") or b.get("max_tokens") or 0
+        if budget < 1000:
+            body = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": budget}}}
+        else:
+            c = json.dumps({"category": "bird", "label": "Common Kingfisher",
+                            "label_cn": "普通翠鸟", "confidence": 0.9})
+            body = {"choices": [{"message": {"content": c}, "finish_reason": "stop"}]}
+        out = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def silent():
+    import code.bird_label as bl
+    bl._PARAM_FIXES.clear()
+    _Silent.calls = []
+    srv = HTTPServer(("127.0.0.1", 0), _Silent)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/v1", _Silent
+    srv.shutdown()
+    bl._PARAM_FIXES.clear()
+
+
+def test_a_starved_reply_adapts_even_without_a_rejection(silent, jpg):
+    """The 400 route cannot help when nothing is refused.
+
+    An endpoint that accepts `max_tokens: 200` and then lets a reasoning model
+    spend all of it thinking returns a *successful* response with empty content.
+    Adapting only on rejection left that as broken as before -- just with a
+    better error message. The observed failure has to be a trigger too.
+    """
+    url, cls = silent
+    category, label, *_ = predict_with_vllm(
+        jpg, url, "qwen/some-flash", 0.6, 0.2, api_key="sk-test")
+    assert (category, label) == ("bird", "common kingfisher")
+    assert cls.calls[0] == {"max_tokens": 200}, cls.calls
+    assert cls.calls[-1]["reasoning_effort"] == "minimal"
+    assert cls.calls[-1]["max_tokens"] >= 1000
+
+
+def test_the_budget_fix_is_learned_once(silent, jpg):
+    url, cls = silent
+    for _ in range(3):
+        predict_with_vllm(jpg, url, "qwen/some-flash", 0.6, 0.2, api_key="sk-test")
+    # 2 for the first image (starved, then retried), 1 for each after.
+    assert len(cls.calls) == 4, cls.calls

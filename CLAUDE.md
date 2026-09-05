@@ -153,6 +153,15 @@ dead server or timeout became a permanent wrong label on a real bird. The
 predictors now put the error in `response_json` under `_prediction_failed` and the
 loop skips those rows entirely.
 
+**The adaptation triggers on a starved reply too, not only on a rejection.**
+An endpoint that *refuses* `max_tokens` announces itself with a 400; OpenRouter
+and others accept it and then let a reasoning model spend the whole allowance
+thinking, so the request succeeds with empty content and `finish_reason:
+"length"`. Adapting only on the 400 left that case exactly as broken as before —
+just with a better error message, which is how it was found. An empty answer that
+stopped at the limit now raises the budget the same way, once per endpoint and
+model.
+
 **A reasoning model needs room to answer, and asking for less thinking.**
 `max_completion_tokens` covers reasoning *plus* output, and reasoning comes
 first: at the old `max_tokens: 200` budget a GPT-5 run spent the whole allowance

@@ -474,6 +474,35 @@ REASONING_BUDGET = 2000
 REASONING_EFFORT = "minimal"
 
 
+def _starved_fix(response: dict, payload: dict):
+    """A 200 that answered nothing because the budget ran out. Same fix, no 400.
+
+    The rejection route only fires when an endpoint *refuses* `max_tokens`.
+    OpenRouter and others accept it happily and then let a reasoning model spend
+    the whole allowance thinking, so the request succeeds, the content is empty,
+    and `finish_reason` is "length". Adapting only on the 400 left that case
+    exactly as broken as before the adaptation existed -- it just failed with a
+    better message.
+
+    So the observed failure is a trigger too: an empty answer that stopped at the
+    limit means the limit was wrong, whoever agreed to it.
+    """
+    try:
+        choice = response["choices"][0]
+    except (KeyError, IndexError, TypeError):
+        return None
+    content = (choice.get("message") or {}).get("content") or ""
+    if content.strip() or choice.get("finish_reason") != "length":
+        return None
+    key = "max_completion_tokens" if "max_completion_tokens" in payload else "max_tokens"
+    if payload.get(key, 0) >= REASONING_BUDGET and "reasoning_effort" in payload:
+        return None            # already asked for everything; let the caller report
+    fix = {key: REASONING_BUDGET}
+    if "reasoning_effort" not in payload:
+        fix["reasoning_effort"] = REASONING_EFFORT
+    return fix
+
+
 def _param_fix(detail: str, payload: dict):
     """Read a 400 and work out how to change the payload.
 
@@ -638,9 +667,9 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
     # Loop rather than retry once: a model may object to several parameters, and
     # it reports them one at a time. Bounded by the number of parameters that
     # can be corrected, so a server rejecting for some other reason still stops.
-    for _ in range(len(payload) + 1):
+    for _ in range(len(payload) + 2):
         try:
-            return _post()
+            response = _post()
         except urllib.error.HTTPError as exc:
             if exc.code != 400:
                 raise
@@ -652,6 +681,16 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
             logger.info(f"ℹ️  {model_name}: " + _describe_fix(fix)
                         + " for the rest of this run.")
             _apply_fixes(payload, fix)
+            continue
+
+        # The request succeeded. Whether it *answered* is a separate question.
+        fix = _starved_fix(response, payload)
+        if not fix:
+            return response
+        _PARAM_FIXES.setdefault((base_url, model_name), {}).update(fix)
+        logger.info(f"ℹ️  {model_name} answered nothing within its token budget; "
+                    + _describe_fix(fix) + " for the rest of this run.")
+        _apply_fixes(payload, fix)
     raise RuntimeError(f"{base_url} kept rejecting the request for {model_name}")
 
 
@@ -698,8 +737,8 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
                 raise ValueError(
                     f"the model returned nothing and stopped at the token limit"
                     + (f" after {used} reasoning tokens" if used else "")
-                    + f"; raise REASONING_BUDGET (currently {REASONING_BUDGET}) "
-                      f"or lower reasoning_effort")
+                    + f", even at {REASONING_BUDGET} with reasoning_effort="
+                      f"{REASONING_EFFORT}; raise REASONING_BUDGET")
             raise ValueError(f"the model returned an empty response "
                              f"(finish_reason={reason!r})")
         try:
