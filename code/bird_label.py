@@ -389,8 +389,44 @@ OPENAI_URL = os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1')
 _PARAM_FIXES: dict = {}
 
 
+# What a reasoning model needs instead of `max_tokens: 200`.
+#
+# The budget covers *reasoning plus output*, and reasoning comes first: at 200 a
+# GPT-5 run spends the whole allowance thinking and returns an empty string with
+# `finish_reason: "length"`, which arrives here as "No JSON found" over a blank
+# response. Raising it alone is the wrong fix, because reasoning tokens are
+# billed -- a generous budget on 49,000 images is real money spent on deliberation
+# nobody reads. So ask for less thinking *and* leave room to answer.
+#
+# `reasoning_effort` is sent only to a model that has already asked for
+# `max_completion_tokens`, i.e. one that reasons. If it is rejected anyway the
+# same adaptation loop drops it.
+def _apply_fixes(payload: dict, fixes: dict) -> None:
+    """Apply {parameter: value} to a payload; None removes the parameter."""
+    for key, value in fixes.items():
+        if value is None:
+            payload.pop(key, None)
+        else:
+            payload[key] = value
+
+
+def _describe_fix(fix: dict) -> str:
+    dropped = [k for k, v in fix.items() if v is None]
+    added = [f"{k}={v}" for k, v in fix.items() if v is not None]
+    parts = []
+    if dropped:
+        parts.append("dropping " + ", ".join(f"'{k}'" for k in dropped))
+    if added:
+        parts.append("using " + ", ".join(added))
+    return "; ".join(parts)
+
+
+REASONING_BUDGET = 2000
+REASONING_EFFORT = "minimal"
+
+
 def _param_fix(detail: str, payload: dict):
-    """Read a 400 and work out which parameter to drop or rename.
+    """Read a 400 and work out how to change the payload.
 
     OpenAI's newer families moved the goalposts: GPT-5 and the o-series reject
     `max_tokens` in favour of `max_completion_tokens`, and reject a `temperature`
@@ -402,15 +438,20 @@ def _param_fix(detail: str, payload: dict):
     than assuming what is loaded. The endpoint says exactly what it will not
     accept; this reads that and adapts once.
 
-    Returns (key_to_remove, (new_key, value)) or (key_to_remove, None) to drop.
+    Returns {parameter: value}, where None means remove it.
     """
     lower = detail.lower()
-    if 'max_tokens' in lower and 'max_completion_tokens' in lower:
-        return 'max_tokens', ('max_completion_tokens', payload.get('max_tokens', 200))
+    if 'max_tokens' in lower and ('max_completion_tokens' in lower
+                                  or 'unsupported' in lower):
+        # A model that wants this spelling is a reasoning model, so it needs the
+        # budget and the effort setting that go with being one.
+        return {'max_tokens': None,
+                'max_completion_tokens': REASONING_BUDGET,
+                'reasoning_effort': REASONING_EFFORT}
+    if 'reasoning_effort' in lower:
+        return {'reasoning_effort': None}
     if 'temperature' in lower and ('unsupported' in lower or 'not support' in lower):
-        return 'temperature', None
-    if 'max_tokens' in lower and 'unsupported' in lower:
-        return 'max_tokens', ('max_completion_tokens', payload.get('max_tokens', 200))
+        return {'temperature': None}
     return None
 
 
@@ -470,10 +511,7 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
     if api_key:
         headers['Authorization'] = f'Bearer {api_key}'
 
-    for key, value in _PARAM_FIXES.get((base_url, model_name), {}).items():
-        payload.pop(key, None)
-        if value is not None:
-            payload[value[0]] = value[1]
+    _apply_fixes(payload, _PARAM_FIXES.get((base_url, model_name), {}))
 
     def _post():
         request = urllib.request.Request(
@@ -497,14 +535,10 @@ def _vllm_chat_completion(messages, model_name: str, vllm_url: str, timeout: int
             fix = _param_fix(detail, payload)
             if not fix:
                 raise RuntimeError(f"{base_url} rejected the request: {detail}") from exc
-            key, replacement = fix
-            _PARAM_FIXES.setdefault((base_url, model_name), {})[key] = replacement
-            logger.info(f"ℹ️  {model_name} rejects '{key}'; "
-                        + (f"using '{replacement[0]}' instead" if replacement
-                           else "omitting it") + " for the rest of this run.")
-            payload.pop(key, None)
-            if replacement is not None:
-                payload[replacement[0]] = replacement[1]
+            _PARAM_FIXES.setdefault((base_url, model_name), {}).update(fix)
+            logger.info(f"ℹ️  {model_name}: " + _describe_fix(fix)
+                        + " for the rest of this run.")
+            _apply_fixes(payload, fix)
     raise RuntimeError(f"{base_url} kept rejecting the request for {model_name}")
 
 
@@ -534,8 +568,26 @@ def predict_with_vllm(image_path: Path, vllm_url: str, model_name: str,
         ]
         response = _vllm_chat_completion(messages, model_name, vllm_url,
                                          api_key=api_key)
-        msg = response['choices'][0]['message']
+        choice = response['choices'][0]
+        msg = choice['message']
         content = msg.get('content') or msg.get('reasoning_content', '')
+        if not (content or '').strip():
+            # Say what actually happened. A reasoning model that spends its whole
+            # budget thinking returns an empty string with finish_reason
+            # "length", and reporting that as "No JSON found" over a blank
+            # response sends the reader hunting for a parsing bug that is not
+            # there. The usage block names the cause exactly.
+            reason = choice.get('finish_reason')
+            used = (response.get('usage') or {}).get(
+                'completion_tokens_details', {}).get('reasoning_tokens')
+            if reason == 'length':
+                raise ValueError(
+                    f"the model returned nothing and stopped at the token limit"
+                    + (f" after {used} reasoning tokens" if used else "")
+                    + f"; raise REASONING_BUDGET (currently {REASONING_BUDGET}) "
+                      f"or lower reasoning_effort")
+            raise ValueError(f"the model returned an empty response "
+                             f"(finish_reason={reason!r})")
         try:
             data = json.loads(content)
         except json.JSONDecodeError:

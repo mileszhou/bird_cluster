@@ -223,3 +223,96 @@ def test_a_400_we_cannot_fix_is_reported_not_swallowed(strict, jpg):
     finally:
         bl._param_fix = original
     assert bl.prediction_failed(raw), "an unfixable 400 must be recorded as a failure"
+
+
+# --- reasoning models spend the budget before they answer -------------------
+
+class _Reasoning(BaseHTTPRequestHandler):
+    """GPT-5 shaped: wants max_completion_tokens, and returns nothing unless
+    given room *and* a low effort -- reasoning is charged and comes first."""
+
+    def _err(self, msg):
+        out = json.dumps({"error": {"message": msg}}).encode()
+        self.send_response(400)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def do_POST(self):
+        b = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        if "max_tokens" in b:
+            return self._err("Unsupported parameter: 'max_tokens' is not supported "
+                             "with this model. Use 'max_completion_tokens' instead.")
+        if b.get("temperature") not in (None, 1):
+            return self._err("Unsupported value: 'temperature' does not support 0.0.")
+        budget, effort = b.get("max_completion_tokens", 0), b.get("reasoning_effort")
+        if budget < 1000 or effort not in ("minimal", "low"):
+            body = {"choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                    "usage": {"completion_tokens_details": {"reasoning_tokens": budget}}}
+        else:
+            c = json.dumps({"category": "bird", "label": "Grey Wagtail",
+                            "label_cn": "x", "confidence": 0.9})
+            body = {"choices": [{"message": {"content": c}, "finish_reason": "stop"}]}
+        out = json.dumps(body).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+
+    def log_message(self, *a):
+        pass
+
+
+@pytest.fixture
+def reasoning():
+    import code.bird_label as bl
+    bl._PARAM_FIXES.clear()
+    srv = HTTPServer(("127.0.0.1", 0), _Reasoning)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{srv.server_port}/v1"
+    srv.shutdown()
+    bl._PARAM_FIXES.clear()
+
+
+def test_a_reasoning_model_gets_room_and_a_low_effort(reasoning, jpg):
+    """Renaming the parameter is not enough on its own.
+
+    `max_completion_tokens` covers reasoning *plus* output, and reasoning comes
+    first: at the old 200 a GPT-5 run spent the whole allowance thinking and
+    returned an empty string, which surfaced as "No JSON found" over a blank
+    response. Raising the budget alone would be wrong too -- reasoning tokens are
+    billed, so a generous budget across 49,000 images is money spent on
+    deliberation nobody reads. Both parts, or neither works.
+    """
+    category, label, _, _, _ = predict_with_vllm(
+        jpg, reasoning, "gpt-5", 0.6, 0.2, api_key="sk-test")
+    assert (category, label) == ("bird", "grey wagtail")
+
+
+def test_an_empty_reply_names_the_token_limit(jpg):
+    """Not "No JSON found": that sends the reader hunting a parsing bug."""
+    import code.bird_label as bl
+
+    class _Starved(_Reasoning):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            out = json.dumps({
+                "choices": [{"message": {"content": ""}, "finish_reason": "length"}],
+                "usage": {"completion_tokens_details": {"reasoning_tokens": 2000}}}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(out)))
+            self.end_headers()
+            self.wfile.write(out)
+
+    srv = HTTPServer(("127.0.0.1", 0), _Starved)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        *_, raw = predict_with_vllm(jpg, f"http://127.0.0.1:{srv.server_port}/v1",
+                                    "gpt-5", 0.6, 0.2, api_key="sk-test")
+    finally:
+        srv.shutdown()
+    why = bl.prediction_failed(raw)
+    assert why and "token limit" in why and "reasoning tokens" in why, why

@@ -151,6 +151,18 @@ dead server or timeout became a permanent wrong label on a real bird. The
 predictors now put the error in `response_json` under `_prediction_failed` and the
 loop skips those rows entirely.
 
+**A reasoning model needs room to answer, and asking for less thinking.**
+`max_completion_tokens` covers reasoning *plus* output, and reasoning comes
+first: at the old `max_tokens: 200` budget a GPT-5 run spent the whole allowance
+thinking and returned an empty string with `finish_reason: "length"` — which
+surfaced as "No JSON found" over a blank response and sent the reader hunting a
+parsing bug that was not there. 18 of 20 images failed that way. Raising the
+budget alone would be the wrong fix, since reasoning tokens are **billed** and a
+generous budget across 49k images is money spent on deliberation nobody reads. So
+the same adaptation that renames the parameter also sets `REASONING_BUDGET` and
+`reasoning_effort=minimal`, and an empty reply now names the token limit and the
+reasoning tokens consumed rather than blaming the parser.
+
 **The cloud backend adapts to what a model will accept.** GPT-5 and the o-series
 reject `max_tokens` for `max_completion_tokens` and reject a non-default
 `temperature`; a hardcoded list of which model wants which spelling is a list that
