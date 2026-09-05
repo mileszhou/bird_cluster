@@ -736,7 +736,16 @@ species for identical pixels, which is a useful direct measure of VLM label nois
    stake in the answer. Backend follows from the model id — `hf-hub:` or a name containing
    `clip` needs open_clip, everything else transformers — and `--backend` overrides.
 
-   **Accuracy at species is not what separates them.** Over the same 27,194 images DINOv3 at
+   **And the better leaves and the better branches come from different backbones**
+(`findings/04`). Over the 12,637 images both clusterings assign, BioCLIP's leaves
+are tighter once cluster size is controlled for (7.9× lift on species against
+6.2×) while DINOv3's branches are markedly more family-coherent (0.609 purity at
+7.3× against 0.422 at 5.2×). The crossover has no explanation yet. It also
+carries a methodological warning: on *raw* purity BioCLIP's leaves look worse,
+and are not — they are fewer and larger, so raw purity must never be compared
+across clusterings of different granularity.
+
+**Accuracy at species is not what separates them.** Over the same 27,194 images DINOv3 at
    512 scores 1-NN 0.5363 and BioCLIP at 224 scores 0.5334, a difference that is **not
    significant** (McNemar p=0.21), while the two are wrong *together* on 39.6%. Choose on
    kind, not score.

@@ -66,6 +66,7 @@ does.
 """
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -75,6 +76,12 @@ import sys
 from pathlib import Path
 
 import numpy as np
+
+# The composed keyword, for reading a species back out of `prior_label`. Both
+# suffix forms: a confidence, and the source tag that replaced it.
+LABEL_RE = re.compile(
+    r"^(?P<pinyin>[^-]+)-(?P<chinese>[^-]+)-(?P<english>.+)"
+    r"\((?:\d+%|[A-Z]{1,3})\)$")
 
 sys.path.insert(0, os.environ.get("PROJECT_ROOT")
                 or str(Path(__file__).resolve().parents[1]))
@@ -101,6 +108,45 @@ def discover() -> list[Path]:
     return [path for path in (PROJECT_ROOT / "data" / "embed",
                               PROJECT_ROOT / "output" / "embed")
             if (path / "embeddings.jsonl").is_file()]
+
+
+def load_labelling(label_dir: Path) -> dict:
+    """{jpg key: species} from a labelling's CSV, resolving the never-demote rule.
+
+    The referee runs in both directions. Holding the *labels* fixed and swapping
+    the vectors scores an embedding; holding the *vectors* fixed and swapping the
+    labels scores a labelling — and the second is legitimate for the same reason
+    as the first, provided the embedding is self-supervised and saw neither. Use
+    DINOv3 for this and not BioCLIP: a taxonomy-supervised backbone has a stake
+    in which labelling agrees with taxonomy.
+
+    Mirrors `embed.effective_species()`: where `applied` is `kept-existing` the
+    library kept `prior_category`, and the species is then in `prior_label`.
+    Reading `label` alone scores a verdict the library did not adopt.
+    """
+    csv_path = Path(label_dir) / "bird_identification_output.csv"
+    if not csv_path.is_file():
+        sys.exit(f"error: no bird_identification_output.csv in {label_dir}")
+    out = {}
+    with open(csv_path, encoding="utf-8-sig", newline="") as fh:
+        reader = csv.DictReader(fh)
+        if "jpg" not in (reader.fieldnames or []):
+            sys.exit(f"error: {csv_path} has no 'jpg' column, so its rows cannot "
+                     f"be joined to the vectors.")
+        for row in reader:
+            species = ""
+            if (row.get("applied") or "").strip() == "kept-existing" \
+                    and (row.get("prior_category") or "").strip():
+                for part in (row.get("prior_label") or "").split(";"):
+                    m = LABEL_RE.match(part.strip())
+                    if m:
+                        species = m.group("english").strip().lower()
+                        break
+            else:
+                species = (row.get("label") or "").strip().lower()
+            if species:
+                out[row["jpg"]] = species
+    return out
 
 
 def load(run_dir: Path):
@@ -229,6 +275,13 @@ def main():
     ap.add_argument("--anonymise", action="store_true",
                     help="replace species names with a stable digest, for a copy "
                          "that is going to leave this machine")
+    ap.add_argument("--labels", type=Path, action="append", default=None,
+                    help="score LABELLINGS against one fixed embedding instead of "
+                         "embeddings against one labelling. Each is a directory "
+                         "holding bird_identification_output.csv, joined to the "
+                         "vectors on the jpg key. Use a *self-supervised* "
+                         "embedding as the referee -- DINOv3, not BioCLIP, which "
+                         "is taxonomy-supervised and has a stake in the answer")
     ap.add_argument("--movers", type=int, default=15,
                     help="how many per-species changes to list (default 15)")
     args = ap.parse_args()
@@ -238,13 +291,38 @@ def main():
         sys.exit("error: no embeddings.jsonl found. Pass --run, or embed something first.")
 
     loaded = []
-    for run_dir in runs:
+    if args.labels:
+        # One embedding, several labellings. The vectors are the referee and are
+        # held fixed; each labelling supplies the species column, joined on key.
+        if len(runs) != 1:
+            sys.exit("error: --labels scores labellings against ONE embedding; "
+                     "pass a single --run.")
+        run_dir = runs[0]
         if not (run_dir / "embeddings.jsonl").is_file():
             sys.exit(f"error: no embeddings.jsonl in {run_dir}")
-        keys, species, X, info = load(run_dir)
-        print(f"  loaded {len(keys):,} vectors from {run_dir} "
+        keys, _, X, info = load(run_dir)
+        print(f"  referee: {len(keys):,} vectors from {run_dir} "
               f"({info['model']} @ {info['image_size']})", flush=True)
-        loaded.append((run_dir, keys, species, X, info))
+        if "dinov" not in (info.get("model") or "").lower():
+            print(f"  ! {info.get('model')} is not self-supervised; a backbone "
+                  f"trained on names has a stake in which labelling wins.")
+        for label_dir in args.labels:
+            names = load_labelling(label_dir)
+            covered = [i for i, k in enumerate(keys) if names.get(k)]
+            print(f"  labelling {label_dir}: {len(covered):,} of {len(keys):,} "
+                  f"vectors carry a species", flush=True)
+            loaded.append((label_dir,
+                           [keys[i] for i in covered],
+                           np.array([names[keys[i]] for i in covered]),
+                           X[covered], dict(info, model=str(label_dir))))
+    else:
+        for run_dir in runs:
+            if not (run_dir / "embeddings.jsonl").is_file():
+                sys.exit(f"error: no embeddings.jsonl in {run_dir}")
+            keys, species, X, info = load(run_dir)
+            print(f"  loaded {len(keys):,} vectors from {run_dir} "
+                  f"({info['model']} @ {info['image_size']})", flush=True)
+            loaded.append((run_dir, keys, species, X, info))
 
     shared = set(loaded[0][1])
     for _, keys, *_ in loaded[1:]:
@@ -312,9 +390,14 @@ def main():
             f"micro **{d_micro:+.4f}**, macro **{d_macro:+.4f}**, "
             f">={MIN_SPECIES} **{stats['big_micro'] - base['big_micro']:+.4f}**", "",
         ]
+        # Only species both sides actually use. Comparing two *embeddings* over one
+        # labelling, that is every species; comparing two *labellings*, the
+        # vocabularies differ and a name one of them never wrote is not a
+        # regression, it is a different word for something.
         moved = sorted(
             ((s, stats["per_species"][s] - base["per_species"][s], base["counts"][s])
-             for s in base["per_species"] if base["counts"][s] >= MIN_SPECIES),
+             for s in base["per_species"]
+             if base["counts"][s] >= MIN_SPECIES and s in stats["per_species"]),
             key=lambda t: t[1])
         worse = [m for m in moved if m[1] < 0][:args.movers]
         better = [m for m in reversed(moved) if m[1] > 0][:args.movers]
