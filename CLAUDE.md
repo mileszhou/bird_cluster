@@ -740,14 +740,29 @@ species for identical pixels, which is a useful direct measure of VLM label nois
 (`findings/04`). Over the 12,637 images both clusterings assign, BioCLIP's leaves
 are tighter once cluster size is controlled for (7.9× lift on species against
 6.2×) while DINOv3's branches are markedly more family-coherent (0.609 purity at
-7.3× against 0.422 at 5.2×). The proximate cause is label-free: Ward sees only
-the leaf medoids, and BioCLIP's are packed into a narrow high-similarity band
-where DINOv3's scatter — a coefficient of variation of 0.38 against 2.02, five
-times more variably spaced. It is a shortage of structure rather than misaligned
-structure, since BioCLIP's branches also score a *lower* silhouette. The claim is
-filed to be attacked: a two-level clustering recovers taxonomic structure to the
-extent its level-1 medoids are unevenly spaced relative to their own scale. It
-also carries a methodological warning: on *raw* purity BioCLIP's leaves look
+7.3× against 0.422 at 5.2×). **The crossover holds across the whole `mcs` sweep**
+— on the images both runs place, DINOv3's branches lead by 0.12 to 0.17 of family
+purity at every matched branch count — so it is a property of the two spaces
+rather than of the parameter.
+
+   **Why is still open, and one answer has already been tried and withdrawn.**
+The finding first proposed that BioCLIP's medoids are more evenly spaced, so Ward
+has less to grip, on a coefficient of variation of the pairwise medoid *cosines*
+of 0.38 against 2.02. Both halves of that failed. The CV is flat across BioCLIP's
+whole sweep while its branch purity nearly halves, so it does not track what it
+was said to predict; and the two backbones' cosine standard deviations are
+*equal*, meaning the fivefold gap was the mean — a contrastive space's anisotropy,
+not a spread. Ward is handed **euclidean** distances, and by their CV the ordering
+reverses at all five granularities. So: **a scale-free statistic is only
+scale-free in the metric it is computed in**, and normalising by a mean turns an
+offset into a fake difference. `tools/audit_medoid_spread.py` reports both metrics
+and takes one `--arm` per embedding, because a single backbone cannot answer this
+— sweeping one moves granularity and geometry together, and the resulting
+correlation measures `min_cluster_size`. What still stands as mechanism is the
+AUC and the silhouette: DINOv3's medoid geometry separates families better (0.90
+against 0.82) and Ward finds a firmer partition in it (0.095 against 0.058).
+
+   It also carries a methodological warning: on *raw* purity BioCLIP's leaves look
 worse, and are not — they are fewer and larger, so raw purity must never be
 compared across clusterings of different granularity.
 
