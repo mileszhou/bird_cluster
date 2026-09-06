@@ -1,44 +1,31 @@
 # 01 — A variation criterion for partitions
 
-## What this is, and what it is not
+## Abstract
 
-This defines **what a good partition is**. It does not say how to find one.
+Huygens' theorem makes the total variation $T = W + B$ a constant of the data:
+every partition spends the same budget, and the two extremes — everything in one
+cluster, everything alone — spend all of it in opposite halves. No undeformed
+combination of the within and between terms can tell them apart, which is why
+minimising $W$ needs $k$ fixed from outside.
 
-That distinction is the whole point of filing it separately. A clustering
-*method* — HDBSCAN, Ward, k-means — is a procedure; a *criterion* is a function
-that scores a partition, and the two are independent. k-means the objective and
-Lloyd's algorithm are routinely confused because they arrived together; here they
-did not. What follows can be evaluated on the output of any method, including
-methods that were not trying to optimise it, which is exactly how it gets used
-below.
+Discounting the *between* term by a weight $f(n) \le n$ with $f(1) = 1$ breaks
+the symmetry. The resulting $J_f = W + \sum_i f(n_i)\|\mu_i - \mu\|^2$ is at or
+below $T$ everywhere and equal to it at **both** extremes, for two different
+reasons — the trivial partition has no between-variation to discount, the
+discrete one earns no discount — so the minimiser is interior. A partition is
+paid only for structure it has captured in groups larger than one.
 
-**That separation lasted about an hour.** Once the move differences were worked
-out they turned out cheap and exact, and a criterion with cheap exact move
-differences *is* a method: accept any move that improves it. The gap was never
-going to be wide, and for a reason visible in hindsight — what makes $R_f$ cheap
-to *evaluate* (it depends on centroids and counts alone) is exactly what makes it
-cheap to *difference*. Lloyd falls out of k-means, Louvain out of modularity,
-Hartigan out of $W$, by the same route. A criterion whose objective decomposes
-over local moves is a method that has not been written down yet.
+What follows from that: no $k$, no `min_cluster_size`, no noise class, no
+thresholds of any kind — cluster count, cluster sizes and what is left alone are
+all consequences of one inequality. The move differences close in a per-point
+*credibility* coordinate $\gamma(n) = 1 - f(n)/n$, where merging reduces to
+Ward's own rule plus a bonus for consolidation. And there is a canonical
+one-parameter family whose parameter is a within/between variance ratio, so it
+could be estimated rather than chosen; $f \equiv 1$ is the point where the two
+are equal.
 
-Two things survive the collapse, and they are why this is still filed apart from
-a method.
-
-A criterion scores partitions produced by **anything**, including procedures that
-were not optimising it and could not have been — which is how it is used on
-HDBSCAN's output below. No method can do that; a method returns a partition, it
-does not evaluate one. And a descent reaches a *local* optimum, so "what is
-optimal" and "what the search returns" remain different objects with a gap nobody
-has bounded. What has to be withdrawn is only the implication that the distance
-between criterion and method was large.
-
-It is also not a finding. Nothing here was discovered *in* the data — the idea
-arrived while thinking about why a two-level clustering behaves as it does, and
-it would be equally true of a dataset of anything else. `findings/` records what
-was measured about this library; this records something that would still hold if
-the library were deleted. That also makes it the kind of document that belongs in
-a public repository without a second thought: it means something to a stranger
-with no photographs.
+Open: no bound on how far a descent falls short of the lattice optimum, and two
+structural choices — which form of $B$ to deform, and how to propose a split.
 
 ## Setup
 
@@ -508,3 +495,43 @@ answer.
    `audit_partition_reward.py` exist only to score partitions handed over by a
    method that declined some points, and are an interface to foreign output
    rather than a gap in the theory.
+
+## What this is, and what it is not
+
+This defines **what a good partition is**. It does not say how to find one.
+
+That distinction is the whole point of filing it separately. A clustering
+*method* — HDBSCAN, Ward, k-means — is a procedure; a *criterion* is a function
+that scores a partition, and the two are independent. k-means the objective and
+Lloyd's algorithm are routinely confused because they arrived together; here they
+did not. Everything above can be evaluated on the output of any method,
+including methods that were not trying to optimise it, which is exactly how it
+was used on the `min_cluster_size` sweep.
+
+**That separation lasted about an hour.** Once the move differences were worked
+out they turned out cheap and exact, and a criterion with cheap exact move
+differences *is* a method: accept any move that improves it. The gap was never
+going to be wide, and for a reason visible in hindsight — what makes $R_f$ cheap
+to *evaluate* (it depends on centroids and counts alone) is exactly what makes it
+cheap to *difference*. Lloyd falls out of k-means, Louvain out of modularity,
+Hartigan out of $W$, by the same route. A criterion whose objective decomposes
+over local moves is a method that has not been written down yet.
+
+Two things survive the collapse, and they are why this is still filed apart from
+a method.
+
+A criterion scores partitions produced by **anything**, including procedures that
+were not optimising it and could not have been — which is how it was used on
+HDBSCAN's output. No method can do that; a method returns a partition, it
+does not evaluate one. And a descent reaches a *local* optimum, so "what is
+optimal" and "what the search returns" remain different objects with a gap nobody
+has bounded. What has to be withdrawn is only the implication that the distance
+between criterion and method was large.
+
+It is also not a finding. Nothing here was discovered *in* the data — the idea
+arrived while thinking about why a two-level clustering behaves as it does, and
+it would be equally true of a dataset of anything else. `findings/` records what
+was measured about this library; this records something that would still hold if
+the library were deleted. That also makes it the kind of document that belongs in
+a public repository without a second thought: it means something to a stranger
+with no photographs.
