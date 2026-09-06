@@ -740,10 +740,16 @@ species for identical pixels, which is a useful direct measure of VLM label nois
 (`findings/04`). Over the 12,637 images both clusterings assign, BioCLIP's leaves
 are tighter once cluster size is controlled for (7.9× lift on species against
 6.2×) while DINOv3's branches are markedly more family-coherent (0.609 purity at
-7.3× against 0.422 at 5.2×). The crossover has no explanation yet. It also
-carries a methodological warning: on *raw* purity BioCLIP's leaves look worse,
-and are not — they are fewer and larger, so raw purity must never be compared
-across clusterings of different granularity.
+7.3× against 0.422 at 5.2×). The proximate cause is label-free: Ward sees only
+the leaf medoids, and BioCLIP's are packed into a narrow high-similarity band
+where DINOv3's scatter — a coefficient of variation of 0.38 against 2.02, five
+times more variably spaced. It is a shortage of structure rather than misaligned
+structure, since BioCLIP's branches also score a *lower* silhouette. The claim is
+filed to be attacked: a two-level clustering recovers taxonomic structure to the
+extent its level-1 medoids are unevenly spaced relative to their own scale. It
+also carries a methodological warning: on *raw* purity BioCLIP's leaves look
+worse, and are not — they are fewer and larger, so raw purity must never be
+compared across clusterings of different granularity.
 
 **Accuracy at species is not what separates them.** Over the same 27,194 images DINOv3 at
    512 scores 1-NN 0.5363 and BioCLIP at 224 scores 0.5334, a difference that is **not

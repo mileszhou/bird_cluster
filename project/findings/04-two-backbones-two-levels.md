@@ -56,43 +56,84 @@ not; they are fewer and larger. **Raw purity must not be compared across
 clusterings of different granularity**, which is the methodological point worth
 carrying out of this even if the rest does not survive.
 
-## The proximate cause, measured
+## The mechanism, as far as it has been measured
 
-*Added after Miles arrived independently at the same hypothesis this document
-originally carried as a guess: that BioCLIP separates species so strongly that
-the branch level has less to work with. Two people guessing the same thing is not
-evidence, but it is a sharp enough claim to test — and it makes a prediction.*
+*Miles arrived independently at the hypothesis this document originally carried
+as a guess and then dropped: that BioCLIP's medoids are more evenly distributed,
+so Ward has less to grip. Two people guessing alike is not evidence, but the
+claim is sharp enough to predict things, so it was tested rather than reinstated.
+The section is ordered the way the causation runs — geometry first, taxonomy
+after — which is the correction Miles made to the first version of it.*
 
-Ward at level 2 sees only the leaf **medoids**. If the hypothesis holds, family
-should be less recoverable from BioCLIP's medoid geometry than from DINOv3's.
-Over every pair of leaf medoids, labelled same-family or not by the leaf's modal
-family:
+Ward at level 2 sees **only the leaf medoids**, and knows nothing about what is
+under them. So the question is what the medoid geometry looks like, and that can
+be asked without any labels at all.
+
+### The medoids are more evenly spaced in BioCLIP's space
+
+| | medoids | branches | silhouette of Ward's branches | mean cos | sd | **CV** |
+|---|---:|---:|---:|---:|---:|---:|
+| DINOv3 | 1,194 | 70 | **0.0954** | 0.0550 | 0.1112 | **2.02** |
+| BioCLIP | 871 | 49 | 0.0579 | 0.3029 | 0.1147 | **0.38** |
+
+The *absolute* spread of pairwise similarities is nearly the same (sd 0.111
+against 0.115). What differs is where it sits: DINOv3's medoids scatter around a
+mean similarity of 0.055, BioCLIP's are packed into a narrow band at 0.303.
+Relative to their own scale — the coefficient of variation — DINOv3's medoids are
+**five times more variably spaced**. That is the "more even distribution", stated
+without reference to any taxonomy.
+
+**And it is a shortage of structure, not misaligned structure.** Those are
+different and they are distinguishable: if BioCLIP's medoids were strongly
+grouped along some non-taxonomic axis, Ward would find geometrically solid
+branches that merely failed to match families — high silhouette, low family
+purity. Instead the silhouette is *lower* (0.058 against 0.095). Ward did not
+find the wrong structure; there was less structure to find.
+
+Both silhouettes are low in absolute terms, which is worth saying plainly: 0.095
+is a faint partition too. Ward is extracting a weak signal in one space and a
+weaker one in the other.
+
+### The taxonomy follows from that, rather than causing it
+
+Given the above, family should be less recoverable from BioCLIP's medoid
+geometry. Over every pair of leaf medoids, labelled same-family or not by the
+leaf's modal family:
 
 | space | same-family cos | cross-family cos | **AUC** |
 |---|---:|---:|---:|
 | DINOv3 | 0.2810 | 0.0492 | **0.9006** |
 | BioCLIP | 0.4565 | 0.3002 | **0.8227** |
 
-**AUC is the comparable figure** — how often a same-family pair outranks a
-cross-family pair — because it is scale-free, where raw cosines are not
-comparable between spaces of different dimension and concentration. Family is
-markedly more recoverable from DINOv3's medoids (0.90) than from BioCLIP's
-(0.82), which is precisely what predicts Ward recovering more family structure
-there. **The crossover has a proximate cause.**
+AUC is the comparable figure — how often a same-family pair outranks a
+cross-family one — because it is scale-free where raw cosines are not comparable
+between spaces of different dimension and concentration. 0.90 against 0.82, in
+the direction the geometry predicts.
 
-**The mechanism is not the one the hypothesis named, though.** BioCLIP's medoids
-are not further apart — they are *closer together across the board*, with
-cross-family pairs at 0.30 against DINOv3's 0.05. It is a compression, a raised
-similarity floor that leaves less contrast for Ward to exploit, rather than
-species being pushed apart. Both of us said "separated more"; the data says
-"contrasted less".
+This was measured first and initially written up as *the* cause. It is not: it is
+a consequence. Medoids spread thinly and unevenly carry more of every kind of
+structure, taxonomy included. The label-free measurement is the one with the
+causal arrow pointing the right way.
+
+### The claim, stated so it can be refuted
+
+**A two-level clustering recovers taxonomic structure to the extent that its
+level-1 medoids are unevenly spaced relative to their own scale.** On this
+evidence a coefficient of variation of ~2 supports it and ~0.4 does not.
+
+That is a single comparison at one `min_cluster_size` with one clustering method
+on one dataset, so it is a claim to attack rather than a result to rely on. It
+would be refuted by a backbone with a low medoid CV that nonetheless produces
+family-coherent branches, or a high-CV one that does not.
 
 ## What is still not known
 
-Why BioCLIP's medoid space is compressed in that way. A raised floor is what you
-would expect from a space organised by a supervised objective over 200M images
-of every kind of organism, where all birds occupy one region — but that is again
-a story, not a measurement. Two other candidates remain untested:
+Why BioCLIP's medoid space is compressed in that way. A raised similarity floor
+is what you might expect from a space organised by a supervised objective over
+200M images of every kind of organism, where all birds occupy one region — but
+that is a story again, not a measurement, and it is the next thing down the chain
+rather than part of what has been established. Two other candidates remain
+untested:
 
 - an interaction with the adaptive cut, which stops at 27 leaves per branch and
   therefore produces fewer branches when there are fewer leaves;
@@ -113,9 +154,11 @@ a story, not a measurement. Two other candidates remain untested:
 4. **A second clustering method.** This is one algorithm at one setting. The
    stability study designed in `status/08` is the right instrument, and this is a
    good reason to build it.
-5. **The same AUC over a third backbone.** If medoid-family AUC predicts branch
-   family purity across embeddings generally, it is a cheap proxy: computable
-   from vectors and a taxonomy alone, without clustering twice.
+5. **Medoid CV over a third backbone.** If the coefficient of variation of
+   pairwise medoid similarity predicts branch family purity across embeddings
+   generally, it is a cheap screen — computable from vectors alone, with no
+   taxonomy and no second clustering. That is the version worth testing, because
+   it needs nothing the label-free measurement does not already have.
 
 ## Why it is filed anyway
 
