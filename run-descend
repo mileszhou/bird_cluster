@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Step 2, the other way: cluster by descending on the variation criterion in
+# project/theory/01, rather than by density.
+#
+#     ./run-descend                              # f = 1, kmeans++ init at k=2000
+#     ./run-descend --f kappa=8                  # coarser; kappa is the resolution
+#     ./run-descend --init from --init-from output/cluster/mcs3/assignments.csv
+#
+# It takes no k, no min_cluster_size and no noise threshold, because it has none
+# to take: cluster count, cluster sizes and what is left alone all fall out of one
+# inequality. What it does take is f -- how credible a group's mean is at a given
+# size -- and a starting k, which bounds the final k from above and is the one
+# unprincipled number in it. Sweep both.
+#
+# Output matches ./run-cluster's, so cluster2, export_seriated and the audits read
+# it unchanged. is_noise is always 0: every point is somewhere.
+set -euo pipefail
+# Every path in this project hangs off $PROJECT_ROOT. Set here from the script's
+# own location if the caller has not already set it, and exported so python and
+# any child process see the same answer.
+export PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$(dirname "$0")" && pwd)}"
+cd "$PROJECT_ROOT"
+[ -d .venv ] && source .venv/bin/activate
+
+python3 -m code.cluster.descend --output-dir ./output/descend "$@"
