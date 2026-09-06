@@ -126,6 +126,60 @@ on one dataset, so it is a claim to attack rather than a result to rely on. It
 would be refuted by a backbone with a low medoid CV that nonetheless produces
 family-coherent branches, or a high-CV one that does not.
 
+### The first test of it, and what it costs the claim
+
+The claim was tested the same afternoon it was written, by generating level-2
+groupings across the whole DINOv3 `min_cluster_size` sweep and correlating medoid
+CV against branch family purity:
+
+| clustering | leaves | branches | medoid CV | branch family purity |
+|---|---:|---:|---:|---:|
+| DINOv3 mcs3 | 1194 | 70 | 2.022 | 0.6066 |
+| DINOv3 mcs5 | 597 | 35 | 1.930 | 0.5364 |
+| DINOv3 mcs8 | 329 | 19 | 1.777 | 0.4689 |
+| DINOv3 mcs15 | 174 | 9 | 1.619 | 0.3826 |
+| DINOv3 mcs40 | 49 | 3 | 1.644 | 0.2461 |
+| BioCLIP mcs3 | 871 | 49 | 0.379 | 0.4211 |
+
+Over all six: Pearson r=+0.322 (p=0.534), Spearman rho=+0.771 (p=0.072). Neither
+is significant, and at n=6 nothing here could have been.
+
+**The within-backbone half of that correlation is worth nothing.** Across the
+five DINOv3 points CV and purity move together almost perfectly (rho=+0.900) —
+but so do branch count and purity (rho=**+1.000**), and both are simply following
+`min_cluster_size`. Fewer branches over a fixed taxonomy is mechanically less
+family-pure, and coarser leaves have more evenly spaced medoids for reasons that
+have nothing to do with the geometry the claim is about. Five points that all
+share a backbone cannot test a claim about backbones.
+
+**The one cross-backbone point is the one that does not fit.** BioCLIP's medoid
+CV is 0.379 — five times lower than any DINOv3 point, below the sweep's whole
+range — yet its branches are 0.4211 family-pure, mid-range, with 49 branches.
+DINOv3 scores 0.5364 at 35 branches and 0.6066 at 70, so interpolated to
+BioCLIP's granularity it sits near 0.57. The direction the claim predicts is
+therefore right: BioCLIP is worse at matched granularity, and that is the
+crossover this finding is about. The magnitude is not. A CV five times lower buys
+a purity deficit of roughly 0.15, not the collapse a proportional reading of
+"~2 supports it and ~0.4 does not" implies.
+
+**So the claim comes down a rank.** What survives is an ordering over two
+backbones — the space with the more unevenly spread medoids gives the more
+family-coherent branches. What does not survive is CV as a *quantity* predicting
+purity: the only evidence for that was the within-backbone sweep, which is
+confounded with granularity, and the single point that is not confounded lies off
+the line. As a cheap screen computable from vectors alone it is not yet usable,
+and it was proposed as one.
+
+The measurement that would separate "CV predicts purity" from "`mcs` predicts
+both" is BioCLIP across its own sweep, giving cross-backbone pairs at matched
+branch counts. Until those exist this rests on n=2 backbones, which is what it
+rested on before the correlation was run.
+
+Reproducing it: `./run-cluster2 --run output_012_before_binomial/cluster/mcs$M`
+for each `M` in the sweep, then modal family purity per branch as in
+`tools/audit_rank_alignment.py`, with CV taken over the pairwise cosines between
+level-1 medoids.
+
 ## What is still not known
 
 Why BioCLIP's medoid space is compressed in that way. A raised similarity floor
@@ -142,9 +196,11 @@ untested:
 
 ## What would test it
 
-1. **A sweep, not one `min_cluster_size`.** Both clusterings exist only at mcs3.
-   If the crossover holds from 3 to 40 it is a property of the spaces; if it
-   moves, it is a property of that parameter.
+1. **A sweep, not one `min_cluster_size`.** *Half done.* DINOv3 now exists from
+   mcs3 to mcs40 (above), which showed how strongly branch purity follows
+   granularity alone. BioCLIP still exists only at mcs3, so the crossover itself
+   is still measured at one setting — and it is BioCLIP's sweep, not a third
+   backbone, that is now the cheapest useful run.
 2. **The same leaf count.** Cutting Ward to equal branch counts, or clustering B
    at a smaller `mcs` until it yields ~1,194 leaves, removes the granularity
    difference that the lift only partly controls for.
@@ -154,11 +210,11 @@ untested:
 4. **A second clustering method.** This is one algorithm at one setting. The
    stability study designed in `status/08` is the right instrument, and this is a
    good reason to build it.
-5. **Medoid CV over a third backbone.** If the coefficient of variation of
-   pairwise medoid similarity predicts branch family purity across embeddings
-   generally, it is a cheap screen — computable from vectors alone, with no
-   taxonomy and no second clustering. That is the version worth testing, because
-   it needs nothing the label-free measurement does not already have.
+5. **Medoid CV over a third backbone.** *Attempted, and it did not go well.*
+   The correlation above is confounded within a backbone and the one unconfounded
+   point misses the line, so CV is not yet the cheap screen it was proposed as.
+   A third backbone would still help, but only alongside BioCLIP's own sweep —
+   points at matched branch counts are what the question needs, not more points.
 
 ## Why it is filed anyway
 
