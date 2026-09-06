@@ -15,8 +15,11 @@ current_working_output = "./output"
 
 # The dataset is deliberately NOT configured here. This file is tracked, so a
 # local edit to it would show as a dirty tree for as long as you keep it. Point
-# the tools at your own library by copying `_datapath` to `.datapath`, which is
-# gitignored, or set $BIRD_DATA_DIR for a one-off. See `_datapath`.
+# the tools at your own library with `data_dir` in config.local.toml (copy
+# `_config.local.toml`, which is gitignored), or set $BIRD_DATA_DIR for a
+# one-off. A `.datapath` file did this job for a day and was folded into
+# config.local.toml on 2026-08-11 -- two mechanisms for "local settings" is the
+# second mechanism this project keeps removing.
 
 # Override any of these in config.local.toml -- host alone is enough, the port
 # is inherited. --vllm-url / --embed-url still win for a single run.

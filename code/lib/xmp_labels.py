@@ -17,7 +17,7 @@ import xml.etree.ElementTree as ET
 from typing import NamedTuple, Optional
 
 # Categories bird_label writes as a bare keyword. Any other short keyword in
-# dc:subject is a pre-existing user tag (locations like "sgy-Hill Park", batch
+# dc:subject is a pre-existing user tag (locations like "gy-公园", batch
 # markers like "add=20231014") and is not a category.
 CATEGORIES = ("bird", "animal", "people", "scenery")
 
@@ -50,7 +50,7 @@ CONFIDENCE_SUFFIX_RE = re.compile(r"^_?.+\((?:\d{1,3}%|[A-Z]{1,3})\)$")
 EARLY_CATEGORIES = ("People", "Unknown")
 
 # A hand-written species keyword: the same `py-cn-en` shape as a model label
-# but with no confidence. "xs-小隼-Kestrel", "sgy-Hill Park". These are the user's
+# but with no confidence. "xs-小隼-Kestrel", "gy-公园". These are the user's
 # own work and are never claimed, even in a sidecar this pipeline has labelled.
 HAND_WRITTEN_RE = re.compile(r"^[A-Za-z]+-\s*[^-]*[一-鿿]")
 # mk_label() prefixes a low-confidence result with an underscore; "_nb" is the

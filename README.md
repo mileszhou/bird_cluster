@@ -154,7 +154,11 @@ cluster/ (marked as .)
     project/    # everything about the work in progress -- not a deliverable
         plans/      # design documents, dated
         status/     # numbered session handoffs, so the next session can pick up
-        messages/   # correspondence with the user, YYYY-MM-DD.NN who:-topic.md
+        findings/   # measured results -- what was measured, on what, what it supports
+        theory/     # results about the problem rather than about this data:
+                    # definitions, propositions and proofs, falsified by a
+                    # counterexample rather than by another run
+        ideas/      # thoughts worth keeping that are not commitments
         reports/    # analysis output. The report is tracked under a fixed
                     # filename so successive runs diff cleanly; the worklist
                     # csvs beside it are gitignored (large, fully regenerated)

@@ -32,7 +32,7 @@ def test_parse_model_label():
 
 @pytest.mark.parametrize("keyword", [
     "kq-孔雀-Peacock",       # hand-written species keyword: no confidence
-    "sgy-Hill Park",             # user location tag
+    "gy-公园",             # user location tag
     "add=20231014",          # batch marker
     "bird",                  # bare category
     "",
@@ -56,7 +56,7 @@ def test_read_labels_bird(tmp_path):
 
 def test_read_labels_ignores_user_keywords(tmp_path):
     """Pre-existing user tags coexist with the injected ones and must not confuse it."""
-    p = write_xmp(tmp_path, ["add=20231014", "sgy-Hill Park", "bird", "ml-麻雀-house sparrow(98%)"])
+    p = write_xmp(tmp_path, ["add=20231014", "gy-公园", "bird", "ml-麻雀-house sparrow(98%)"])
     got = read_labels(p)
     assert got.is_bird
     assert got.species == "house sparrow"
