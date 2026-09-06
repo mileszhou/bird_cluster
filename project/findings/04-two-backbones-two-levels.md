@@ -69,19 +69,39 @@ Ward at level 2 sees **only the leaf medoids**, and knows nothing about what is
 under them. So the question is what the medoid geometry looks like, and that can
 be asked without any labels at all.
 
-### The medoids are more evenly spaced in BioCLIP's space
+### The medoids sit differently in the two spaces
 
-| | medoids | branches | silhouette of Ward's branches | mean cos | sd | **CV** |
-|---|---:|---:|---:|---:|---:|---:|
-| DINOv3 | 1,194 | 70 | **0.0954** | 0.0550 | 0.1112 | **2.02** |
-| BioCLIP | 871 | 49 | 0.0579 | 0.3029 | 0.1147 | **0.38** |
+| | medoids | branches | silhouette of Ward's branches | mean cos | sd | cos CV | **eucl CV** |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| DINOv3 | 1,194 | 70 | **0.0954** | 0.0550 | 0.1112 | 2.02 | **0.0618** |
+| BioCLIP | 871 | 49 | 0.0579 | 0.3029 | 0.1147 | 0.38 | **0.0848** |
 
 The *absolute* spread of pairwise similarities is nearly the same (sd 0.111
 against 0.115). What differs is where it sits: DINOv3's medoids scatter around a
 mean similarity of 0.055, BioCLIP's are packed into a narrow band at 0.303.
-Relative to their own scale — the coefficient of variation — DINOv3's medoids are
-**five times more variably spaced**. That is the "more even distribution", stated
-without reference to any taxonomy.
+
+> **Correction.** This section originally read the coefficient of variation of
+> those cosines — 2.02 against 0.38 — as DINOv3's medoids being *five times more
+> variably spaced*, and built the claim below on it. That was wrong twice over,
+> and the sd column above was the tell that went unread.
+>
+> The two standard deviations are equal to within 3%. The entire fivefold gap is
+> the **denominator**: a contrastive image-text space is anisotropic, everything
+> in it sits on a high similarity floor, and dividing an ordinary spread by 0.303
+> instead of 0.055 manufactures a difference out of an offset.
+>
+> And the cosine is not the metric being described. `cluster2.py` hands Ward
+> **euclidean** distances between L2-normalised medoids, and by *their* CV the
+> ordering reverses: 0.0618 for DINOv3 against 0.0848 for BioCLIP. In the metric
+> the algorithm actually consumes, BioCLIP's medoids are the more unevenly spaced
+> — by about 50% — and they still give the less family-coherent branches. The
+> last column is the honest one, and it points the other way.
+>
+> The rank-based results in this document are unaffected: euclidean distance on
+> the unit sphere is a strictly decreasing function of cosine, so the AUC below is
+> identical under either metric. It is only the scale-free *spread* that was being
+> measured in the wrong units. `tools/audit_medoid_spread.py` now reports both,
+> and `medoid_spread.__doc__` carries the reasoning.
 
 **And it is a shortage of structure, not misaligned structure.** Those are
 different and they are distinguishable: if BioCLIP's medoids were strongly
@@ -110,10 +130,19 @@ cross-family one — because it is scale-free where raw cosines are not comparab
 between spaces of different dimension and concentration. 0.90 against 0.82, in
 the direction the geometry predicts.
 
-This was measured first and initially written up as *the* cause. It is not: it is
-a consequence. Medoids spread thinly and unevenly carry more of every kind of
-structure, taxonomy included. The label-free measurement is the one with the
-causal arrow pointing the right way.
+This was measured first, then demoted to a *consequence* of the spacing story —
+medoids spread thinly and unevenly carry more of every kind of structure,
+taxonomy included, so the label-free measurement was said to have the causal
+arrow pointing the right way.
+
+**That demotion is withdrawn with the spacing story it rested on.** The AUC and
+the silhouette are now the two surviving measurements of the mechanism, and
+between them they say something narrower than a story: DINOv3's medoid geometry
+separates families better (0.90 against 0.82) *and* Ward finds a geometrically
+firmer partition in it (0.095 against 0.058). Less structure, and what there is
+aligned better with taxonomy. Why that is true of a self-supervised space and not
+of a taxonomy-supervised one is exactly the thing still unexplained — the spacing
+account was an attempt at it, and it failed.
 
 ### The claim, stated so it can be refuted
 
@@ -125,6 +154,11 @@ That is a single comparison at one `min_cluster_size` with one clustering method
 on one dataset, so it is a claim to attack rather than a result to rely on. It
 would be refuted by a backbone with a low medoid CV that nonetheless produces
 family-coherent branches, or a high-CV one that does not.
+
+*It did not survive, and it was refuted from two directions at once — the
+predictor does not track the outcome, and it was measured in the wrong metric.
+The two sections below are the record; the claim is withdrawn, and the crossover
+it tried to explain is not.*
 
 ### The first test of it, and what it costs the claim
 
@@ -172,13 +206,104 @@ and it was proposed as one.
 
 The measurement that would separate "CV predicts purity" from "`mcs` predicts
 both" is BioCLIP across its own sweep, giving cross-backbone pairs at matched
-branch counts. Until those exist this rests on n=2 backbones, which is what it
-rested on before the correlation was run.
+branch counts. That was run the next day.
 
-Reproducing it: `./run-cluster2 --run output_012_before_binomial/cluster/mcs$M`
-for each `M` in the sweep, then modal family purity per branch as in
-`tools/audit_rank_alignment.py`, with CV taken over the pairwise cosines between
-level-1 medoids.
+### The second test: both sweeps, and the claim does not survive it
+
+BioCLIP now exists at the same five `min_cluster_size` values, so the comparison
+can be made at matched granularity in both directions. Purity here is over each
+run's own non-noise population, which is why BioCLIP mcs3 reads 0.4140 against
+the 0.4211 above — that figure was over the two clusterings' intersection.
+
+| clustering | leaves | branches | cos mean | cos sd | cos CV | eucl CV | family purity | images |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| DINOv3 mcs3 | 1194 | 70 | 0.0550 | 0.1112 | 2.022 | 0.0618 | 0.6066 | 13,488 |
+| DINOv3 mcs5 | 597 | 35 | 0.0593 | 0.1144 | 1.930 | 0.0637 | 0.5364 | 12,059 |
+| DINOv3 mcs8 | 329 | 19 | 0.0652 | 0.1158 | 1.777 | 0.0646 | 0.4689 | 10,856 |
+| DINOv3 mcs15 | 174 | 9 | 0.0737 | 0.1194 | 1.619 | 0.0671 | 0.3826 | 8,584 |
+| DINOv3 mcs40 | 49 | 3 | 0.0646 | 0.1062 | 1.644 | 0.0586 | 0.2461 | 6,206 |
+| BioCLIP mcs3 | 871 | 49 | 0.3029 | 0.1147 | 0.379 | 0.0848 | 0.4140 | 18,311 |
+| BioCLIP mcs5 | 637 | 37 | 0.3091 | 0.1188 | 0.384 | 0.0884 | 0.3648 | 17,851 |
+| BioCLIP mcs8 | 463 | 26 | 0.3135 | 0.1232 | 0.393 | 0.0921 | 0.3929 | 17,216 |
+| BioCLIP mcs15 | 317 | 18 | 0.3200 | 0.1299 | 0.406 | 0.0977 | 0.3338 | 15,712 |
+| BioCLIP mcs40 | 123 | 6 | 0.3481 | 0.1340 | 0.385 | 0.1042 | 0.2379 | 11,965 |
+
+It answers the two questions in opposite directions.
+
+**The crossover is confirmed, and at every granularity where the two can be
+compared.** Noise fractions differ between the backbones — BioCLIP declines far
+less — so the honest figure is over the images both runs place, with each run's
+own population beside it:
+
+| matched pair | shared images | DINOv3 | BioCLIP | gap |
+|---|---:|---:|---:|---:|
+| 35 vs 37 branches | 11,355 | 0.5361 | 0.3904 | **+0.1457** |
+| 19 vs 18 branches | 9,672 | 0.4875 | 0.3720 | **+0.1155** |
+| 9 vs 6 branches | 6,693 | 0.4145 | 0.2465 | **+0.1679** |
+
+That is this finding's headline measured five ways instead of one, and it holds.
+(The fourth pairing the tolerance admits, DINOv3's 3 branches against BioCLIP's
+6, is not a matched pair — a factor of two in granularity — and near the floor
+DINOv3 loses it, 0.2536 against 0.2933. At three branches over 283 families
+neither number means much.)
+
+**The mechanism is refuted, twice.**
+
+*It does not track the outcome.* Across BioCLIP's whole sweep the cosine CV is
+effectively constant — 0.379 to 0.406, a span of 0.027 — while branch family
+purity falls from 0.4140 to 0.2379. The proposed predictor does not move where
+the outcome moves. Worse for it, the two arms' CV ranges are disjoint by a factor
+of four (1.62–2.02 against 0.38–0.41), so over the ten points CV is a relabelling
+of *which backbone*: as a continuous predictor the design still has n=2, and eight
+new points bought none of them. Over all ten, log branch count predicts purity
+better than CV does — rho +0.758 (p=0.011) against +0.527 (p=0.117).
+
+*And it was the wrong quantity.* Adding the sd and euclidean columns — which the
+sweep forced, since ten rows make a pattern two rows hide — shows the cosine CV
+was never measuring spread at all. The cosine standard deviations of the two arms
+overlap completely (0.106–0.119 against 0.115–0.134; BioCLIP's are if anything
+slightly *wider*), so the fivefold CV gap is the mean cosine and nothing else. In
+the euclidean distances Ward is actually handed, the ordering reverses at every
+single one of the five granularities: DINOv3 0.0586–0.0671 against BioCLIP
+0.0848–0.1042. The claim said the more unevenly spaced medoids give the more
+family-coherent branches; measured in the metric the algorithm consumes, the more
+unevenly spaced medoids are BioCLIP's, and its branches are worse at every
+matched granularity. That is not a weak correlation — it is the wrong sign.
+
+The `test_the_cosine_cv_is_inflated_by_a_low_mean_not_a_wide_spread` case in
+`test/tools/test_audit_medoid_spread.py` is this error in eight dimensions: one
+cloud, shifted onto a similarity floor, reproduces both the inflated cosine CV
+and the euclidean reversal.
+
+**So the claim is withdrawn.** What is left is what was there before the CV was
+ever computed: two backbones and an ordering, plus the AUC and silhouette that
+say DINOv3's medoid geometry is both firmer and better aligned with family. The
+geometry may still be the cause — those two measurements are consistent with it —
+but *evenness of spacing* is not the form of it, and the coefficient of variation
+is not how to detect it. A quantity with almost no variance inside a space cannot
+explain what varies inside that space; its between-space variance is not separable
+from everything else that differs between two backbones; and taken in the right
+metric it points the wrong way.
+
+The general lesson is cheaper than the finding: **a scale-free statistic is only
+scale-free in the metric it is computed in.** Normalising by a mean makes an
+anisotropy look like a spread, and this project reached for the CV precisely
+because the two spaces were not comparable in raw units — which is the situation
+where that substitution is most tempting and most wrong.
+
+Reproducing it — one `--arm` per embedding, and the tool does the whole table
+including the matched-granularity pairs:
+
+```bash
+python3 -m tools.audit_medoid_spread \
+    --arm DINOv3  output_012_before_binomial/cluster output_012_before_binomial/cluster2 \
+    --arm BioCLIP output/cluster output/cluster2 \
+    --taxonomy   output_012_before_binomial/taxa/label_taxonomy.csv \
+    --vocabulary output_012_before_binomial/taxa/vocabulary_taxa.csv
+```
+
+It takes arms rather than a run because a single backbone cannot answer this
+question, which is what the first test found out the expensive way.
 
 ## What is still not known
 
@@ -196,25 +321,29 @@ untested:
 
 ## What would test it
 
-1. **A sweep, not one `min_cluster_size`.** *Half done.* DINOv3 now exists from
-   mcs3 to mcs40 (above), which showed how strongly branch purity follows
-   granularity alone. BioCLIP still exists only at mcs3, so the crossover itself
-   is still measured at one setting — and it is BioCLIP's sweep, not a third
-   backbone, that is now the cheapest useful run.
-2. **The same leaf count.** Cutting Ward to equal branch counts, or clustering B
-   at a smaller `mcs` until it yields ~1,194 leaves, removes the granularity
-   difference that the lift only partly controls for.
+1. ~~**A sweep, not one `min_cluster_size`.**~~ **Done, and it holds.** Both
+   backbones now run mcs3 to mcs40. The crossover survives at every matched
+   branch count, by 0.12 to 0.17 of family purity — so it is a property of the
+   two spaces and not of the parameter.
+2. **The same leaf count.** *Mostly answered by the sweep* — matched branch
+   counts within 3 give the same verdict as the lift did. What is still not
+   matched is the **population**: B declines far less as `mcs` rises, so the two
+   arms are scored over sets differing by thousands of images. The shared-image
+   column above controls for that at each pair and moves the gap by under 0.03,
+   which is the evidence it is not the explanation.
 3. **The noise class.** Compare on A's noise specifically: those 38% are images A
    declines and B accepts, and whether they are the hard ones or merely the
    sparse ones is directly measurable.
 4. **A second clustering method.** This is one algorithm at one setting. The
    stability study designed in `status/08` is the right instrument, and this is a
    good reason to build it.
-5. **Medoid CV over a third backbone.** *Attempted, and it did not go well.*
-   The correlation above is confounded within a backbone and the one unconfounded
-   point misses the line, so CV is not yet the cheap screen it was proposed as.
-   A third backbone would still help, but only alongside BioCLIP's own sweep —
-   points at matched branch counts are what the question needs, not more points.
+5. ~~**Medoid CV over a third backbone.**~~ **Tested and refuted**, twice: the
+   within-backbone correlation is confounded with granularity, and CV is flat
+   across BioCLIP's whole sweep while its purity nearly halves. It is not the
+   cheap screen it was proposed as. A third backbone would now be measuring the
+   *ordering*, not the CV — and the useful third one is a supervised backbone
+   that is not BioCLIP, since one self-supervised and one taxonomy-supervised
+   arm cannot separate the training objective from everything else that differs.
 
 ## Why it is filed anyway
 
@@ -233,7 +362,15 @@ markedly less family-coherent doing the same thing to the same photographs.
 - 12,637 of 27,194 images survive the intersection with the checklist
   restriction. That is under half the population, and the images both clusterings
   agree to cluster are not a random half.
-- One `min_cluster_size`, one clustering algorithm, one cut rule, one dataset.
+- Five `min_cluster_size` values now, but still one clustering algorithm, one
+  cut rule, one dataset, and two backbones.
+- The spread statistics and the matched-granularity table are computed by
+  `tools.audit_medoid_spread`; the branch purities agree to four decimals with
+  `tools.audit_rank_alignment` run over the same layouts, which is the check that
+  the two implementations of size-weighted modal purity have not drifted.
+- The silhouette figures are the only numbers here not recomputed under the
+  correction. They are euclidean already and their direction is unchanged, but
+  they date from the mcs3-only pass and have not been swept.
 - The BioCLIP artifacts were recovered after the fact from `local/output_bioclip/`
   and an export that predates `run.json` for renders. The clustering's own
   `run.json` records 871 leaves, 49 branches and 22,780 images, which matches the
