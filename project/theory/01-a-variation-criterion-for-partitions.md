@@ -235,12 +235,68 @@ within one space, and two spaces at different concentrations will produce
 different ratios for reasons that have nothing to do with partition quality —
 the same trap that cost `findings/04` its proposed mechanism.
 
+## A descent formulation
+
+Because $T$ is fixed, minimising $J_f$ is maximising
+
+$$R_f(\mathcal P) = \sum_i g(n_i)\,\|u_i\|^2, \qquad g = n - f, \qquad u_i = \mu_i - \mu$$
+
+and **$R_f$ is a function of the centroids and the counts alone** — the points
+themselves never appear, and $W$ never has to be computed. Working in displacement
+coordinates $u_i$ (the grand mean is the natural origin of the whole criterion, and
+it does not move when points are reassigned), each primitive move has an exact
+closed form costing $O(d)$ regardless of cluster size.
+
+**Relocate** $y$ from $C_a$ to $C_b$, writing $v = y - \mu$:
+
+$$u_a' = \frac{n_a u_a - v}{n_a - 1}, \qquad u_b' = \frac{n_b u_b + v}{n_b + 1}$$
+
+$$\Delta R_f = g(n_a{-}1)\|u_a'\|^2 + g(n_b{+}1)\|u_b'\|^2 - g(n_a)\|u_a\|^2 - g(n_b)\|u_b\|^2$$
+
+**Merge** $C_a$ and $C_b$:
+
+$$u_c = \frac{n_a u_a + n_b u_b}{n_a + n_b}, \qquad
+  \Delta R_f = g(n_a{+}n_b)\|u_c\|^2 - g(n_a)\|u_a\|^2 - g(n_b)\|u_b\|^2$$
+
+**Split** $C_a$ into $A, B$ — the one move needing the points, since a bisection has
+to be proposed before it can be scored:
+
+$$\Delta R_f = g(n_A)\|u_A\|^2 + g(n_B)\|u_B\|^2 - g(n_a)\|u_a\|^2$$
+
+Accept any move with $\Delta R_f > 0$. The objective strictly increases and the
+partition lattice is finite, so the search terminates at a local maximum. This is
+Hartigan's exact-incremental scheme rather than Lloyd's alternating one — Lloyd
+does not apply here, because a nearest-centroid assignment does not account for
+the $g(n_i)$ weights changing as the counts change.
+
+Three things follow that are worth stating before anyone implements it.
+
+**$k$ is free, but not equally free in both directions.** Relocation deletes a
+cluster when its last point leaves, so $k$ falls on its own. It cannot rise: to
+split, the search must pass through a singleton, and $g(1)=0$ makes that move
+strictly losing. Growth in $k$ therefore requires an explicit split move — which
+is the same structure as X-means or G-means, and the same reason those exist.
+
+**The Ward hierarchy gives the whole path in one sweep.** A dendrogram is a
+sequence of $N-1$ merges, consecutive cuts differ by exactly one, and the merge
+delta above is $O(d)$. So evaluating $R_f$ at *every* cut costs $O(Nd)$ total, and
+the argmax is a principled cut where `cluster2.py` currently has `--max-leaves 27`.
+That is the cheapest useful thing here and it needs no new clustering — only the
+linkage matrix, which `linkage()` already returns and the pipeline currently
+discards.
+
+**A descent is a heuristic, not a solver.** k-means is NP-hard even with $k$ fixed,
+in the plane for general $k$ and in general dimension for $k=2$; there is no reason
+to expect this to be easier. Local maxima are real, the initialisation matters, and
+the dendrogram sweep is valuable mainly as a good starting point rather than as an
+answer.
+
 ## Open
 
-1. **No algorithm.** The obvious one is to evaluate $J_f$ at every cut of a Ward
-   dendrogram and take the minimum, which is $O(k)$ evaluations over a hierarchy
-   already computed. That is a heuristic for the lattice search, not a solution
-   to it, and how far it falls short is unknown.
+1. **How far the descent falls short.** The moves above are exact and the
+   dendrogram sweep is cheap, but nothing bounds the gap between a local maximum
+   and the lattice optimum. On synthetic data with a known answer that gap is
+   directly measurable, and it has not been measured.
 2. **Which form of $B$ to deform**, given that the anchored one carries an
    unwanted size-position term and the pairwise one charges $k$ times dispersion.
    Both are defensible; they are not the same criterion.
