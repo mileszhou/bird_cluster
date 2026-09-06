@@ -222,3 +222,41 @@ def test_the_merge_rule_reproduces_the_two_mass_threshold():
     # and at n = 2 it is exactly a tie: both partitions score T.
     X = two_masses(2)
     assert merge_delta("unit", 1, X[0] - X.mean(0), 1, X[1] - X.mean(0)) == pytest.approx(0.0)
+
+
+def test_absorbing_a_lone_point_is_just_a_merge():
+    """Noise is not a primitive: a declined point is a cluster of size one.
+
+    `merge_delta` with n_a = 1 is the whole rule -- no separate formula, no
+    threshold, no special case. g(1) = 0 means such a point earns nothing, so
+    leaving it out is never free.
+    """
+    rng = np.random.default_rng(21)
+    done = 0
+    for _ in range(300):
+        X = rng.normal(size=(rng.integers(12, 30), 3))
+        lab = np.concatenate(([0], rng.integers(1, 4, size=len(X) - 1)))
+        if (lab == 1).sum() < 2:
+            continue
+        done += 1
+        nb, ub = displacements(X, lab, 1)
+        v = X[0] - X.mean(axis=0)
+        absorbed = lab.copy()
+        absorbed[0] = 1
+        direct = reward(X, absorbed, "unit") - reward(X, lab, "unit")
+        assert merge_delta("unit", 1, v, nb, ub) == pytest.approx(direct)
+    assert done > 20
+
+
+def test_the_residual_class_is_central_not_outlying():
+    """The consequence that inverts a density method's notion of noise.
+
+    A point far beyond the cluster is absorbed -- it carries displacement mass
+    worth crediting to a group. A point sitting at the grand mean is left alone --
+    it carries none. The boundary is the bisector of mu and mu_b.
+    """
+    ub = np.array([1.0, 0.0])
+    for x, absorbed in ((5.0, True), (1.0, True), (0.7, True),
+                        (0.3, False), (0.0, False), (-1.0, False)):
+        d = merge_delta("unit", 1, np.array([x, 0.0]), 200, ub)
+        assert (d > 0) is absorbed, f"point at x={x}"

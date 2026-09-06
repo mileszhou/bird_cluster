@@ -204,6 +204,61 @@ compactness at fixed centroid configuration.
 over the partition lattice. Everything above says what the answer is worth, not
 how to reach it.
 
+## Noise is not a primitive
+
+The criterion needs no noise class, no minimum cluster size and no outlier
+threshold, and this is not an omission to be repaired later. **A point left out is
+a cluster of size one**, which is an ordinary member of the partition lattice, and
+$g(1)=0$ means it earns nothing — so excluding a point is never free. There is
+nothing to declare because there is nothing to exempt.
+
+Proposition 1 says the same thing from the other side: the two extremes are
+*maximisers* of $J_f$, which is to say the worst partitions available. Any grouping
+at all does better, and the only question is which one does best.
+
+(Precisely: they are tied with the degenerate partitions whose every non-singleton
+cluster is centred at $\mu$. That tie set is not an accident and it reappears
+below.)
+
+With the descent this stops being a remark and becomes the operation. Absorbing a
+lone point into a cluster is **`merge_delta` with $n_a = 1$** — the identical
+formula, verified against recomputation, with no special case anywhere. A noise
+point is a cluster of one, and the merge rule already decides its fate.
+
+At $f \equiv 1$ the rule reads
+
+$$\text{absorb} \iff \frac{\|u_b\|^2}{n_b} + \|v\|^2 \;>\; \frac{n_b}{n_b+1}\,\|u_b - v\|^2$$
+
+and for large $n_b$ that is simply $\|v\| > \|u_b - v\|$: **absorb the point iff it
+is further from the grand mean than from the cluster centroid.** The boundary is the
+perpendicular bisector of $\mu$ and $\mu_b$, which a numerical sweep confirms exactly.
+
+### And the residual class comes out inverted
+
+That rule places the *outliers inside clusters* and leaves the *central points
+alone* — the opposite population from what a density-based method calls noise.
+
+| lone point at | distance to $\mu$ | to centroid | verdict |
+|---|---:|---:|---|
+| far beyond the cluster | 5.00 | 4.00 | absorb |
+| at the centroid | 1.00 | 0.00 | absorb |
+| on the bisector | 0.50 | 0.50 | absorb |
+| at the grand mean | 0.00 | 1.00 | **alone** |
+| behind the grand mean | 1.00 | 2.00 | **alone** |
+
+It is consistent — a far-out point carries displacement mass and is worth
+crediting to a group; a point at $\mu$ carries none and is worth nothing to
+anybody — but it is not what "noise" usually means, and anyone reading the output
+of a descent on this criterion needs to know which population is being set aside.
+
+It is also the **third** appearance of one defect. A singleton at $\mu$ is free
+because the quadratic vanishes at its anchor; a cluster at $\mu$ is free for the
+same reason; and the worst-score tie set above is exactly the partitions built out
+of such clusters. All three are the anchored form of $B$, and all three would be
+charged by the pairwise form, where $k$ multiplies the dispersion. Which form to
+deform is not a presentational choice, and this is the first place where it changes
+what the answer *looks like* rather than only what it scores.
+
 ## Where it sits among known methods
 
 | | relation |
@@ -376,7 +431,11 @@ answer.
    $g = n - f$, and the split rule depends on $g$ only through $\tau(n)$. Two
    different $f$ with the same $\tau$ are the same criterion for splitting
    purposes, so the effective dimension of the family is unclear.
-4. **Behaviour under a non-partition.** Everything assumes a partition of $S$.
-   Extending to a partial partition — which is what density-based methods
-   actually return — needs the noise class to be *modelled*, not conventioned
-   around.
+4. **Whether the inverted residual class is a defect or a result.** The
+   criterion sets aside central points rather than outlying ones (above). Under
+   the pairwise form of $B$ it would not, and which behaviour is wanted is a
+   question about the problem, not about the criterion. Note this is *not* an
+   open question about noise in general: the three conventions in
+   `audit_partition_reward.py` exist only to score partitions handed over by a
+   method that declined some points, and are an interface to foreign output
+   rather than a gap in the theory.
