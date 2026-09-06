@@ -132,3 +132,93 @@ def test_two_noise_points_do_not_share_a_cluster():
     index = dict(INDEX, d=3)
     _, lab = labels_for(rows, set(index), "singleton", index)
     assert lab[2] != lab[3]
+
+
+# --- the closed-form differences -------------------------------------------
+# R_f depends on centroids and counts alone, so every primitive move has an
+# exact O(d) delta. These are the formulae `project/theory/01` states; the tests
+# check them against recomputing R_f from scratch, which is the only guarantee
+# that the document and the code have not drifted apart.
+
+from audit_partition_reward import (credibility, merge_delta,  # noqa: E402
+                                    relocate_delta)
+
+
+def reward(X, lab, spec):
+    """R_f = T - J_f, recomputed the slow way.
+
+    Labels are made contiguous first: `score` sizes its one-hot by lab.max()+1,
+    so a gap left by a merge would be an empty cluster and a division by zero.
+    """
+    codes = {c: i for i, c in enumerate(dict.fromkeys(lab.tolist()))}
+    s = score(X, np.array([codes[c] for c in lab.tolist()]), [spec])
+    return s["T"] * (1 - s[spec])
+
+
+def displacements(X, lab, c):
+    m = lab == c
+    return int(m.sum()), X[m].mean(axis=0) - X.mean(axis=0)
+
+
+@pytest.mark.parametrize("spec", ["unit", "sqrt", "pow=0.4"])
+def test_merge_delta_matches_recomputation(spec):
+    rng = np.random.default_rng(11)
+    for _ in range(50):
+        X = rng.normal(size=(rng.integers(15, 45), 4))
+        lab = rng.integers(0, 4, size=len(X))
+        if len(np.unique(lab)) < 4:
+            continue
+        na, ua = displacements(X, lab, 0)
+        nb, ub = displacements(X, lab, 1)
+        direct = reward(X, np.where(lab == 1, 0, lab), spec) - reward(X, lab, spec)
+        assert merge_delta(spec, na, ua, nb, ub) == pytest.approx(direct)
+
+
+@pytest.mark.parametrize("spec", ["unit", "sqrt", "pow=0.4"])
+def test_relocate_delta_matches_recomputation(spec):
+    rng = np.random.default_rng(12)
+    done = 0
+    for _ in range(400):
+        X = rng.normal(size=(rng.integers(15, 45), 4))
+        lab = rng.integers(0, 4, size=len(X))
+        if (lab == 0).sum() < 2 or (lab == 1).sum() < 1:
+            continue                       # check counts before taking any mean
+        na, ua = displacements(X, lab, 0)
+        nb, ub = displacements(X, lab, 1)
+        done += 1
+        y = int(np.flatnonzero(lab == 0)[0])
+        moved = lab.copy()
+        moved[y] = 1
+        direct = reward(X, moved, spec) - reward(X, lab, spec)
+        v = X[y] - X.mean(axis=0)
+        assert relocate_delta(spec, na, ua, nb, ub, v) == pytest.approx(direct)
+    assert done > 20
+
+
+def test_relocate_refuses_to_empty_a_cluster():
+    with pytest.raises(ValueError, match="different move"):
+        relocate_delta("unit", 1, np.zeros(3), 5, np.zeros(3), np.zeros(3))
+
+
+def test_credibility_is_zero_at_one_and_rises():
+    for spec in ("unit", "sqrt", "pow=0.4"):
+        g = credibility(spec, np.arange(1, 40))
+        assert g[0] == pytest.approx(0.0)
+        assert np.all(np.diff(g) > 0)
+
+
+def test_the_merge_rule_reproduces_the_two_mass_threshold():
+    """Proposition 2, recovered from the merge rule rather than from J_f.
+
+    Two point masses must not merge exactly when n > 2 -- the same threshold,
+    derived along a different route, which is the check that the two agree.
+    """
+    for n, merges in ((2, False), (4, False), (100, False)):
+        X = two_masses(n)
+        lab = np.array([0] * (n // 2) + [1] * (n // 2))
+        na, ua = displacements(X, lab, 0)
+        nb, ub = displacements(X, lab, 1)
+        assert (merge_delta("unit", na, ua, nb, ub) > 0) is merges
+    # and at n = 2 it is exactly a tie: both partitions score T.
+    X = two_masses(2)
+    assert merge_delta("unit", 1, X[0] - X.mean(0), 1, X[1] - X.mean(0)) == pytest.approx(0.0)

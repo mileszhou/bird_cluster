@@ -247,21 +247,64 @@ coordinates $u_i$ (the grand mean is the natural origin of the whole criterion, 
 it does not move when points are reassigned), each primitive move has an exact
 closed form costing $O(d)$ regardless of cluster size.
 
-**Relocate** $y$ from $C_a$ to $C_b$, writing $v = y - \mu$:
+The differences are *finite* differences — the lattice is discrete, so there is no
+differential — but the objective is quadratic in the centroids and the counts enter
+only through $g$, so they close in a form simpler than the definition.
 
-$$u_a' = \frac{n_a u_a - v}{n_a - 1}, \qquad u_b' = \frac{n_b u_b + v}{n_b + 1}$$
+The right coordinate is the **per-point credibility**
 
-$$\Delta R_f = g(n_a{-}1)\|u_a'\|^2 + g(n_b{+}1)\|u_b'\|^2 - g(n_a)\|u_a\|^2 - g(n_b)\|u_b\|^2$$
+$$\gamma(n) \;=\; \frac{g(n)}{n} \;=\; 1 - \frac{f(n)}{n} \;\in\; [0,1)$$
 
-**Merge** $C_a$ and $C_b$:
+with $\gamma(1) = 0$ by admissibility, and $\gamma$ non-decreasing whenever $f$ is
+concave (then $f(n)/n$ decreases). It is the weight an empirical-Bayes argument
+would put on a group mean, reached here from the opposite direction: a small
+cluster's displacement is not credible, so it is not paid for.
 
-$$u_c = \frac{n_a u_a + n_b u_b}{n_a + n_b}, \qquad
-  \Delta R_f = g(n_a{+}n_b)\|u_c\|^2 - g(n_a)\|u_a\|^2 - g(n_b)\|u_b\|^2$$
+**Merge** $C_a$ and $C_b$, $n = n_a + n_b$. Substituting Ward's identity
+$n_a\|u_a\|^2 + n_b\|u_b\|^2 - n\|u_c\|^2 = \frac{n_an_b}{n}\|\mu_a-\mu_b\|^2$
+collapses the definition to
 
-**Split** $C_a$ into $A, B$ — the one move needing the points, since a bisection has
-to be proposed before it can be scored:
+$$\Delta R_f \;=\; \underbrace{\sum_{i\in\{a,b\}} n_i\bigl(\gamma(n)-\gamma(n_i)\bigr)\|u_i\|^2}_{\text{credibility gained}} \;-\; \underbrace{\gamma(n)\,\frac{n_an_b}{n}\|\mu_a-\mu_b\|^2}_{\gamma(n)\,\times\,\text{Ward's merge cost}}$$
+
+**Merge iff the credibility gained exceeds $\gamma(n)$ times what Ward charges.**
+Both sides are non-negative — merging always raises each part's per-point
+credibility, and always pays Ward's cost — so the criterion is a clean trade-off
+with one term of each sign, and it is Ward's own rule with a bonus for
+consolidation.
+
+For $f \equiv 1$, where $\gamma(n) = 1 - 1/n$, it reduces to
+
+$$\text{merge} \iff \frac{\|u_a\|^2}{n_a} + \frac{\|u_b\|^2}{n_b} \;>\; \frac{n-1}{n}\,\|\mu_a-\mu_b\|^2$$
+
+— displacement *per point* against squared separation, with nothing else in it.
+On two point masses this gives equality at $n=2$ and refuses to merge for every
+$n>2$, which is Proposition 2 recovered along an entirely different route.
+
+**Relocate** $y$ from $C_a$ to $C_b$ ($n_a \ge 2$), with $v = y-\mu$, so that
+$\|u_i - v\|^2$ is the point's squared distance to centroid $i$ and no absolute
+coordinate appears:
+
+$$\Delta R_f = n_a\bigl(\gamma(n_a{-}1)-\gamma(n_a)\bigr)\|u_a\|^2
+             + n_b\bigl(\gamma(n_b{+}1)-\gamma(n_b)\bigr)\|u_b\|^2
+             + \bigl(\gamma(n_b{+}1)-\gamma(n_a{-}1)\bigr)\|v\|^2$$
+$$\qquad\qquad + \;\gamma(n_a{-}1)\,\frac{n_a}{n_a-1}\|u_a-v\|^2
+             \;-\; \gamma(n_b{+}1)\,\frac{n_b}{n_b+1}\|u_b-v\|^2$$
+
+The last two terms are **Hartigan's classic test** — does the move reduce $W$ —
+with each side weighted by the credibility of the cluster it lands in. The first
+three are the count effects, which Hartigan has no equivalent of: $a$ shrinks and
+loses credibility, $b$ grows and gains it, and the point's own displacement is
+re-credited at the destination's rate instead of the source's.
+
+**Split** $C_a$ into $A, B$ is the one move needing the points, since a bisection
+must be proposed before it can be scored:
 
 $$\Delta R_f = g(n_A)\|u_A\|^2 + g(n_B)\|u_B\|^2 - g(n_a)\|u_a\|^2$$
+
+All three are implemented as `merge_delta`, `relocate_delta` and `credibility` in
+`tools/audit_partition_reward.py`, and each is tested against recomputing $R_f$
+from scratch over random partitions at three choices of $f$ — which is what keeps
+the formulae above honest rather than merely written down.
 
 Accept any move with $\Delta R_f > 0$. The objective strictly increases and the
 partition lattice is finite, so the search terminates at a local maximum. This is

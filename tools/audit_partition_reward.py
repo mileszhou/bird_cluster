@@ -105,6 +105,61 @@ def f_weights(spec: str, n: np.ndarray) -> np.ndarray:
                      f"use unit, sqrt or pow=<alpha>")
 
 
+def credibility(spec: str, n):
+    """gamma(n) = g(n)/n = 1 - f(n)/n, the per-point weight on a cluster's displacement.
+
+    gamma(1) = 0 by admissibility, and gamma is non-decreasing for concave f
+    (f(n)/n is then decreasing), so a larger cluster's displacement counts more
+    per point. It is the shrinkage weight an empirical-Bayes argument would put
+    on a group mean, arrived at from the other direction.
+    """
+    n = np.asarray(n, dtype=float)
+    return (n - f_weights(spec, n)) / n
+
+
+def merge_delta(spec, n_a, u_a, n_b, u_b) -> float:
+    """Exact change in R_f from merging two clusters. O(d), points not needed.
+
+    Displacements u_i = mu_i - mu. Substituting Ward's identity into the
+    definition collapses it to a trade-off with one interpretable side each:
+
+        credibility gained by both parts  -  gamma(n) x Ward's merge cost
+
+    Merging always raises both parts' per-point credibility (gamma is
+    non-decreasing) and always costs the within-scatter Ward charges for it.
+    """
+    n = n_a + n_b
+    d = np.asarray(u_a) - np.asarray(u_b)
+    return float(
+        n_a * (credibility(spec, n) - credibility(spec, n_a)) * (u_a @ u_a)
+        + n_b * (credibility(spec, n) - credibility(spec, n_b)) * (u_b @ u_b)
+        - credibility(spec, n) * (n_a * n_b / n) * (d @ d))
+
+
+def relocate_delta(spec, n_a, u_a, n_b, u_b, v) -> float:
+    """Exact change in R_f from moving one point out of C_a and into C_b. O(d).
+
+    `v` is the point's own displacement from the grand mean, so ||u_i - v||^2 is
+    its squared distance to centroid i and no absolute coordinate is needed. The
+    last two terms are Hartigan's classic test -- does the move reduce W -- with
+    each side weighted by the credibility of the cluster it lands in; the first
+    three are the count effects Hartigan has no equivalent of.
+
+    Requires n_a >= 2: moving the last point out deletes the cluster, and since
+    g(1) = 0 that case is exactly `merge`-free, contributing nothing to R_f.
+    """
+    if n_a < 2:
+        raise ValueError("n_a must be >= 2; emptying a cluster is a different move")
+    ga_, gb_ = credibility(spec, n_a - 1), credibility(spec, n_b + 1)
+    da, db = np.asarray(u_a) - v, np.asarray(u_b) - v
+    return float(
+        n_a * (ga_ - credibility(spec, n_a)) * (u_a @ u_a)
+        + n_b * (gb_ - credibility(spec, n_b)) * (u_b @ u_b)
+        + (gb_ - ga_) * (v @ v)
+        + ga_ * (n_a / (n_a - 1)) * (da @ da)
+        - gb_ * (n_b / (n_b + 1)) * (db @ db))
+
+
 def score(X: np.ndarray, lab: np.ndarray, variants: list[str]) -> dict:
     """T, W, B and J_f/T for one partition. `lab` is contiguous 0..k-1."""
     N, k = len(X), int(lab.max()) + 1
