@@ -260,3 +260,34 @@ def test_the_residual_class_is_central_not_outlying():
                         (0.3, False), (0.0, False), (-1.0, False)):
         d = merge_delta("unit", 1, np.array([x, 0.0]), 200, ub)
         assert (d > 0) is absorbed, f"point at x={x}"
+
+
+# --- the credibility family ------------------------------------------------
+
+def test_kappa_one_is_exactly_the_unit_weight():
+    n = np.arange(1, 60)
+    assert f_weights("kappa=1", n) == pytest.approx(f_weights("unit", n))
+
+
+@pytest.mark.parametrize("k", ["0.25", "1", "2", "8"])
+def test_the_kappa_family_is_admissible(k):
+    n = np.arange(1, 200)
+    f = f_weights(f"kappa={k}", n)
+    assert f[0] == pytest.approx(1.0)            # f(1) = 1
+    assert np.all(f <= n)                        # f(n) <= n
+    g = credibility(f"kappa={k}", n)
+    assert g[0] == pytest.approx(0.0)
+    assert np.all(np.diff(g) > 0)                # gamma non-decreasing
+
+
+def test_kappa_must_be_positive():
+    with pytest.raises(SystemExit, match="kappa must be positive"):
+        f_weights("kappa=0", np.array([4]))
+
+
+def test_larger_kappa_discounts_less_and_so_prefers_coarser():
+    # gamma is the credibility; a bigger kappa means more shrinkage, a smaller
+    # reward, and -- via the split threshold -- a coarser selected partition.
+    n = np.arange(2, 100)
+    assert np.all(credibility("kappa=4", n) < credibility("kappa=1", n))
+    assert np.all(credibility("kappa=1", n) < credibility("kappa=0.25", n))

@@ -259,6 +259,73 @@ charged by the pairwise form, where $k$ multiplies the dispersion. Which form to
 deform is not a presentational choice, and this is the first place where it changes
 what the answer *looks like* rather than only what it scores.
 
+## Nothing to tune
+
+The list of things this does *not* ask anyone to choose is most of the list a
+clustering usually has: no $k$, no `min_cluster_size`, no `max_leaves`, no
+`min_samples`, no distance cutoff, no outlier threshold. Every one of them is a
+*consequence* here — cluster count, cluster sizes and what gets left alone all
+fall out of the same inequality. There is no boundary condition because there is
+no boundary.
+
+What remains is $f$, and it is worth being exact about what kind of object that
+is. It maps an integer in $[1,N]$ to a real number. It has no units, no dependence
+on the dimension, the scale of the data, or $N$; `min_cluster_size = 15` means
+something different in 1,000 points than in 100,000, and $f$ does not. Its
+normalisation is **fixed by the theory** rather than left open — $f(1)=1$ and
+$f(n)\le n$ are forced by Proposition 1, where the $\lambda$ in $W + \lambda k$
+is a free scalar with no anchor at all. And it is a modelling belief about how
+credible a group's mean is at a given size, not a threshold fitted against the
+data it will then be used to describe.
+
+### A canonical family, whose parameter is estimable
+
+The credibility coordinate suggests where to look. Credibility theory shrinks a
+group mean by $\gamma(n) = n/(n+\kappa)$ with $\kappa$ the ratio of within-group
+to between-group variance — and that form is **inadmissible** here: it gives
+$f(1)=\kappa/(1+\kappa) < 1$, a singleton with non-zero credibility, and the
+discrete partition then wins outright.
+
+Replacing $n$ by the degrees of freedom $n-1$ lands exactly:
+
+$$\gamma_\kappa(n) = \frac{n-1}{n-1+\kappa}, \qquad
+  f_\kappa(n) = \frac{\kappa\,n}{n-1+\kappa}, \qquad \kappa > 0$$
+
+This is admissible for every $\kappa>0$ — $f_\kappa(1)=1$ and $f_\kappa(n)\le n$
+identically, with $\gamma$ increasing throughout — and
+
+$$\kappa = 1 \quad\text{is exactly}\quad f \equiv 1$$
+
+so the "each cluster counts once" weight is not an arbitrary pick but the point
+where within-group and between-group variance are equal. Larger $\kappa$ shrinks
+harder, rewards less, and selects coarser.
+
+The $n-1$ is the same degrees-of-freedom correction that $\sum_i (n_i-1) = N-k$
+already produced, which is the within-groups df of the ANOVA table this whole
+construction started from. Two routes to the same correction is mild evidence it
+is the right one.
+
+**And $\kappa$ is a variance ratio, so it can be estimated rather than chosen.**
+$\kappa = MS_{\text{within}}/MS_{\text{between}} = 1/F$, the reciprocal of the
+ANOVA F-statistic of the partition. That makes the criterion parameter-free in the
+strong sense — nothing is set by hand — at the cost of a fixed point, since $F$
+depends on the partition being scored. Whether that iteration converges, and to
+what, is not known and is the most interesting thing left open here.
+
+### What is still a choice
+
+Three things, and none of them is a tuning knob:
+
+- **The split proposer.** Relocate and merge are exhaustive; split is not, and
+  something has to nominate the bisection.
+- **Anchored or pairwise $B$.** A structural choice with visible consequences
+  (see the residual class above), not a parameter.
+- **The metric.** Huygens is an identity of *squared Euclidean* distance; the
+  whole construction rests on it and does not transfer to an arbitrary
+  dissimilarity. It does apply to L2-normalised embeddings, where squared
+  Euclidean and cosine are affinely related — which is this project's case, and
+  the reason any of it is usable here at all.
+
 ## Where it sits among known methods
 
 | | relation |
@@ -428,9 +495,11 @@ answer.
    unwanted size-position term and the pairwise one charges $k$ times dispersion.
    Both are defensible; they are not the same criterion.
 3. **Whether the family is richer than one parameter.** $f$ enters only through
-   $g = n - f$, and the split rule depends on $g$ only through $\tau(n)$. Two
-   different $f$ with the same $\tau$ are the same criterion for splitting
-   purposes, so the effective dimension of the family is unclear.
+   $g = n - f$, and the split rule depends on $g$ only through $\tau(n)$, so two
+   different $f$ with the same $\tau$ are the same criterion for splitting. The
+   $\kappa$-family above is one principled curve through the admissible set; how
+   much of that set it misses, and whether anything outside it behaves
+   differently, is unknown.
 4. **Whether the inverted residual class is a defect or a result.** The
    criterion sets aside central points rather than outlying ones (above). Under
    the pairwise form of $B$ it would not, and which behaviour is wanted is a

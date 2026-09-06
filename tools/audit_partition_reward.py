@@ -101,8 +101,20 @@ def f_weights(spec: str, n: np.ndarray) -> np.ndarray:
     m = re.fullmatch(r"pow=([0-9.]+)", spec)
     if m:
         return n.astype(float) ** float(m.group(1))
+    m = re.fullmatch(r"kappa=([0-9.]+)", spec)
+    if m:
+        # gamma(n) = (n-1)/(n-1+kappa), i.e. credibility theory's shrinkage
+        # weight with n replaced by the degrees of freedom. kappa is a ratio of
+        # within to between variance, so it is estimable rather than chosen, and
+        # kappa = 1 is exactly f == 1. Buhlmann's own n/(n+kappa) is NOT
+        # admissible here: it gives f(1) = kappa/(1+kappa) < 1, and a singleton
+        # with non-zero credibility lets the discrete partition win.
+        k = float(m.group(1))
+        if k <= 0:
+            raise SystemExit("error: kappa must be positive")
+        return n.astype(float) * k / (n.astype(float) - 1 + k)
     raise SystemExit(f"error: unknown f variant {spec!r}; "
-                     f"use unit, sqrt or pow=<alpha>")
+                     f"use unit, sqrt, pow=<alpha> or kappa=<k>")
 
 
 def credibility(spec: str, n):
