@@ -602,7 +602,7 @@ anything else belongs in `docs/`.
 
 **Where documents go:** `project/` holds everything about the work in progress — `plans/`,
 `status/` handoffs, `reports/` (analysis output — generated ones are gitignored, see
-above), `plans/`, `ideas/`, `findings/`. Correspondence is `local/messages/`, named
+above), `plans/`, `ideas/`, `findings/`, `theory/`. Correspondence is `local/messages/`, named
 `YYYY-MM-DD.NN <who>:-<topic>.md`; reply by filling in the placeholder file they leave. `local/` is gitignored and holds everything local: period-specific run commands,
 `local/manifests/` for scope lists naming real trips, and working copies of generated
 reports. `docs/` is reserved for product documentation, i.e. output meant for whoever uses
@@ -617,6 +617,18 @@ them, and state the caveats as plainly as the result. A finding about *one run*
 belongs in that run's own `FINDINGS.md` instead, travelling with its artifacts;
 a finding about the *collection* is data research and belongs in `local/` or the
 private repository, not here.
+
+**`project/theory/` is about the problem; `findings/` is about the library.** A finding
+records what was measured on this data and is falsified by another measurement. A theory
+document states something that would be true of a dataset of anything else, and is
+falsified by a proof or a counterexample — so it carries the definitions, the propositions
+and their proofs, and is explicit about what it does *not* establish. `theory/01` is a
+criterion for scoring a partition, which is a different object from a method for finding
+one, and keeping the two apart is most of the reason the directory exists: k-means the
+objective and Lloyd's algorithm are confused with each other because they arrived together.
+Measurements may appear, as illustration of how the criterion behaves on partitions that
+were not optimising it — never as the content. This is also the one category that passes
+the public-repository test without argument: a stranger with no photographs can read it.
 
 **`project/ideas/` is not `plans/`.** A plan is a commitment to an approach; an idea is a
 thought that surfaced while doing something else and would be lost by the time the project is
