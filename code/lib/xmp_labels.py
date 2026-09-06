@@ -128,7 +128,8 @@ RANK_KEYWORD_RE = re.compile(
     r"^(?:(?:bc-)?(?:ord|fam|gen):[A-Z][A-Za-z-]+(?: [a-z-]+)?"
     r"|(?:sp-sci|bc-sci):[A-Z][A-Za-z-]+(?: [a-z-]+)?"
     r"|(?:sp|bc):[A-Za-z][\w '-]*"
-    r"|bc-conf:(?:high|mid|low))$")
+    r"|bc-conf:(?:high|mid|low)"
+    r"|(?:[A-Z]{1,3}-)?conf:[A-Z])$")
 
 
 def split_keywords(subjects) -> tuple[tuple[str, ...], tuple[str, ...]]:

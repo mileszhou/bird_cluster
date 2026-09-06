@@ -278,6 +278,10 @@ def apply_row(key, when, colour, out, jpg_root, labellings, labels_only,
         text = effective_label(row, tag) if row else None
         if text:
             composed.append(text)
+            grade = confidence_grade(row)
+            if grade:
+                # `Q-conf:A`, matching `bc-conf:high` -- source, then field.
+                composed.append(f"{tag}-conf:{grade}" if tag else f"conf:{grade}")
     if not composed:
         stat["no label"] += 1
         failures.append((key, "no usable label in any label CSV"))
@@ -299,6 +303,36 @@ def apply_row(key, when, colour, out, jpg_root, labellings, labels_only,
 TAXA_DEFAULT = PROJECT_ROOT / "output" / "taxa" / "label_taxonomy.csv"
 TAXA_RANKS = (("ord", "order"), ("fam", "family"), ("gen", "genus"))
 PRED_DEFAULT = PROJECT_ROOT / "output" / "taxa" / "taxa_predictions.csv"
+
+# The labeller's confidence, as a letter rather than a number.
+#
+# It goes in its own keyword and never into the label. Inside the label it would
+# fragment the species -- `common kingfisher(99%)` and `(95%)` are two keyword
+# entries for one bird, which is why the number was taken out of the label in the
+# first place. Banded, it collapses to a handful of values that sort together and
+# leave the species alone.
+#
+# The cuts are where the measured disagreement actually steps, not round numbers.
+# Over 27,194 images against an independent labelling: 0.95+ disagrees 36%,
+# 0.90-0.94 65%, 0.75-0.89 78%, below 0.75 91%. A single 0.90+ band would have
+# put the most trustworthy tenth in with something that behaves like a B.
+#
+# This is one model's calibration on one library. Another labeller's numbers mean
+# something else, or nothing -- the column averaged 0.968 against a ~35% error for
+# the models tried before this one.
+GRADE_BANDS = ((0.95, "A"), (0.90, "B"), (0.75, "C"), (0.0, "D"))
+
+
+def confidence_grade(row) -> str:
+    """`A`..`D` for a label CSV row, or "" when there is no usable confidence."""
+    try:
+        conf = float((row or {}).get("confidence") or "")
+    except (TypeError, ValueError):
+        return ""
+    for floor, letter in GRADE_BANDS:
+        if conf >= floor:
+            return letter
+    return ""
 # Buckets over `margin` (top-1 minus runner-up cosine), which rises monotonically
 # across its deciles from 0.08 to 0.68 agreement with the existing labels. It is
 # the only calibrated confidence this project has -- the VLM's own averages 0.968
@@ -666,7 +700,7 @@ def export_index(args):
     stat, failures, recoloured = Counter(), [], 0
     index = out / "index.csv.tmp"
     with open(index, "w", newline="", encoding="utf-8-sig") as fh:
-        ranks = ([rank for _, rank in TAXA_RANKS] if taxa else []) \
+        ranks = ["grade"] + ([rank for _, rank in TAXA_RANKS] if taxa else []) \
             + (["bc_common", "bc_genus", "bc_margin"] if pred else [])
         w = csv.DictWriter(fh, fieldnames=list(rows[0]) + ["species"] + ranks)
         w.writeheader()
@@ -682,6 +716,8 @@ def export_index(args):
             # and it is written by the step that did the rendering.
             t, bc = taxa.get(r["key"]) or {}, pred.get(r["key"]) or {}
             extra = {rank: t.get(rank, "") for _, rank in TAXA_RANKS} if taxa else {}
+            # The first labelling's grade: the render records what it captioned.
+            extra["grade"] = confidence_grade(labellings[0][1].get(r["key"]))
             if pred:
                 extra.update(bc_common=bc.get("common_name", ""),
                              bc_genus=bc.get("genus", ""),

@@ -560,3 +560,36 @@ def test_a_truncated_reply_adapts_like_an_empty_one(jpg):
     assert (category, label) == ("bird", "eurasian spoonbill")
     assert sci == "Platalea leucorodia"
     assert _Truncating.budgets == [200, 2000], _Truncating.budgets
+
+
+def test_confidence_grades_are_ours_and_do_not_touch_the_label():
+    """The grade is a keyword of its own, never part of the species string.
+
+    Inside the label a confidence fragments the species -- `kingfisher(99%)` and
+    `(95%)` are two entries for one bird -- which is why the number left the
+    label. Banded and separate, it sorts on its own and the species stays one
+    keyword.
+    """
+    from code.lib.xmp_labels import split_keywords
+    ours, theirs = split_keywords(["Q-conf:A", "G-conf:D", "conf:B", "bc-conf:high"])
+    assert theirs == () and len(ours) == 4
+
+
+def test_the_grade_rule_spares_user_keywords():
+    from code.lib.xmp_labels import split_keywords
+    subjects = ["conf:", "Q-conf:AA", "conf:a", "confidence: high"]
+    ours, theirs = split_keywords(subjects)
+    assert ours == ()
+    assert set(theirs) == set(subjects)
+
+
+def test_grade_bands_follow_the_measured_steps():
+    """Not round numbers: 0.95+ disagrees 36%, 0.90-0.94 65%. A single 0.90+
+    band would put the most trustworthy tenth in with something behaving like a B."""
+    from tools.export_seriated import confidence_grade
+    assert confidence_grade({"confidence": "0.97"}) == "A"
+    assert confidence_grade({"confidence": "0.92"}) == "B"
+    assert confidence_grade({"confidence": "0.80"}) == "C"
+    assert confidence_grade({"confidence": "0.40"}) == "D"
+    assert confidence_grade({"confidence": ""}) == ""
+    assert confidence_grade(None) == ""

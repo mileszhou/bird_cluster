@@ -85,6 +85,7 @@ contiguous while you browse.
 | **`bc-sci:`** | The same call as a scientific binomial, for an expert's eye. |
 | **`bc-ord:` `bc-fam:` `bc-gen:`** | BioCLIP's ranks, on the same footing as its species. |
 | **`bc-conf:`** | `high` / `mid` / `low`, bucketing **margin** (see The measures). The only calibrated confidence here, and the right thing to sort a review by. |
+| **`<TAG>-conf:`** | `A`–`D`, banding *that labeller's own* confidence — `Q-conf:A`. A letter rather than a number, and a keyword rather than part of the label, because a confidence inside the label fragments the species: `kingfisher(99%)` and `(95%)` are two entries for one bird. The cuts follow where disagreement measurably steps rather than round numbers. |
 
 The labeller's own confidence **is not written into a keyword**, and used to be.
 It said nothing — it averages 0.968 against a measured ~35% error — and it did
