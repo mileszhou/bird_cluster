@@ -12,6 +12,26 @@ did not. What follows can be evaluated on the output of any method, including
 methods that were not trying to optimise it, which is exactly how it gets used
 below.
 
+**That separation lasted about an hour.** Once the move differences were worked
+out they turned out cheap and exact, and a criterion with cheap exact move
+differences *is* a method: accept any move that improves it. The gap was never
+going to be wide, and for a reason visible in hindsight — what makes $R_f$ cheap
+to *evaluate* (it depends on centroids and counts alone) is exactly what makes it
+cheap to *difference*. Lloyd falls out of k-means, Louvain out of modularity,
+Hartigan out of $W$, by the same route. A criterion whose objective decomposes
+over local moves is a method that has not been written down yet.
+
+Two things survive the collapse, and they are why this is still filed apart from
+a method.
+
+A criterion scores partitions produced by **anything**, including procedures that
+were not optimising it and could not have been — which is how it is used on
+HDBSCAN's output below. No method can do that; a method returns a partition, it
+does not evaluate one. And a descent reaches a *local* optimum, so "what is
+optimal" and "what the search returns" remain different objects with a gap nobody
+has bounded. What has to be withdrawn is only the implication that the distance
+between criterion and method was large.
+
 It is also not a finding. Nothing here was discovered *in* the data — the idea
 arrived while thinking about why a two-level clustering behaves as it does, and
 it would be equally true of a dataset of anything else. `findings/` records what
@@ -327,6 +347,15 @@ the argmax is a principled cut where `cluster2.py` currently has `--max-leaves 2
 That is the cheapest useful thing here and it needs no new clustering — only the
 linkage matrix, which `linkage()` already returns and the pipeline currently
 discards.
+
+**Two of the three moves are a method; the third is a proposal problem.**
+Relocate and merge are closed-form and exhaustive — every candidate can be scored.
+Split cannot be, because "split $C_a$" is not one move but $2^{n_a-1}-1$ of them,
+so a bisection has to be *proposed* before the exact delta can score it. That is
+where an outside heuristic enters (2-means, a principal direction, the existing
+dendrogram), and it is the only place it does. So what the differences buy is a
+method modulo a split proposer, which is a smaller gap than "no method" and a
+larger one than none.
 
 **A descent is a heuristic, not a solver.** k-means is NP-hard even with $k$ fixed,
 in the plane for general $k$ and in general dimension for $k=2$; there is no reason
