@@ -8,6 +8,7 @@ are the load-bearing tests.
 """
 import numpy as np
 import pytest
+from scipy.spatial.distance import pdist, squareform
 
 from code.cluster.descend import (Partition, descend, f_weight, gamma,
                                   merge_sweep, relocate_sweep)
@@ -194,6 +195,24 @@ def test_the_medoid_does_not_depend_on_the_input_dtype():
     for dtype in (np.float32, np.float64):
         got = cluster_centres(M.astype(dtype), labels, probs, rows)[0]["medoid"]
         assert got == expected, f"{dtype.__name__} picked {got}, float64 says {expected}"
+
+
+def test_the_gram_identity_is_wrong_for_vectors_that_are_only_nearly_unit():
+    """The second error, and the one float64 alone does not fix.
+
+    ||a-b||^2 = 2 - 2cos holds for *exactly* unit vectors. The embed server
+    normalises in float32, so stored vectors are unit to ~2.4e-7, and the Gram
+    form's substitution of 2 is then an outright modelling error -- amplified by
+    the same cancellation. Subtracting the vectors assumes nothing about norms.
+    """
+    M = near_identical_cluster()
+    M *= (1 + 2.4e-7 * np.array([[1], [-1]] * (len(M) // 2)))   # nearly unit
+    L = np.longdouble(M)
+    exact = np.sqrt(((L[:, None, :] - L[None, :, :]) ** 2).sum(-1)).sum(1)
+    gram = np.sqrt(np.maximum(0, 2 - 2 * (M @ M.T))).sum(1)
+    direct = squareform(pdist(M)).sum(1)
+    err = lambda x: float(np.abs(np.longdouble(x) - exact).max() / exact.min())
+    assert err(direct) < err(gram) / 100, (err(direct), err(gram))
 
 
 def test_float32_really_would_have_got_that_wrong():

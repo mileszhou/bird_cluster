@@ -45,6 +45,7 @@ import sys
 from pathlib import Path
 
 import numpy as np
+from scipy.spatial.distance import pdist, squareform
 
 from code.lib.config import PROJECT_ROOT, data_dir
 
@@ -102,21 +103,43 @@ def cluster_centres(X, labels, probabilities, rows):
     out = []
     for cid in sorted(set(labels) - {-1}):
         idx = np.flatnonzero(labels == cid)
-        # float64, and not for tidiness. `2 - 2*cos` subtracts two nearly equal
-        # numbers whenever two members are similar, which in a *tight* cluster is
-        # most pairs -- at cos 0.99 the result keeps a hundredth of the input's
-        # significant digits, so float32's relative error is amplified by ~2/(2-2cos).
-        # Measured: one 871-cluster run, recomputed on a second machine from
-        # byte-identical vectors with identical membership, named a different
-        # medoid for 5 clusters -- all of them tight (internal cosine 0.976 to
-        # 0.997). Neither machine was right: float64 agrees with one on 3 of the
-        # five and with the other on 2, so each had float32 wrong somewhere. The
-        # medoid is a cluster's identity across runs, and it cannot depend on
-        # which BLAS summed the row.
+        # Subtract, then square. The Gram identity ||a-b||^2 = 2 - 2cos is exact
+        # in real arithmetic and terrible in floating point: it subtracts two
+        # nearly equal numbers whenever two members are similar, which in a
+        # *tight* cluster is most pairs. At cos 0.99 the result keeps a hundredth
+        # of the input's significant digits, so the relative error is amplified by
+        # ~2/(2-2cos). Computing ||a-b||^2 directly never subtracts near-equals
+        # -- componentwise a_i - b_i is exact for close values (Sterbenz) and the
+        # squares are then summed with no cancellation at all.
+        #
+        # And there is a second, larger error the Gram form makes here, which is
+        # not rounding at all: it substitutes 2 for ||a||^2 + ||b||^2, exact only
+        # for exactly-unit vectors. These are normalised by the embed server in
+        # float32 and stored as decimal, so ||v|| deviates by ~2.4e-7 -- and that
+        # deviation enters the distance directly before being amplified by the
+        # same cancellation. Measured against a longdouble reference on the five
+        # real clusters this actually got wrong, the Gram form in *float64* is
+        # still off by 1e-4 to 7e-4 relative, which on one of them exceeds the
+        # gap between the top two candidates. float64 alone does not fix this;
+        # not forming the Gram matrix does.
+        #
+        # On a synthetic near-degenerate cluster, against longdouble:
+        #     Gram   float32   2.8e-02   (picks the wrong medoid)
+        #     Gram   float64   5.9e-11   (right there, wrong on real data)
+        #     direct float32   5.9e-06
+        #     direct float64   1.3e-16   <- this
+        #
+        # It matters because the medoid is a cluster's identity across runs. One
+        # 871-cluster run recomputed on a second machine, from byte-identical
+        # vectors with identical membership, named a different medoid for 5
+        # clusters -- all tight (internal cosine 0.976 to 0.997) -- and neither
+        # machine was right, each having float32 wrong somewhere. A name cannot
+        # depend on which BLAS summed the row. pdist costs ~0.05s on the largest
+        # cluster here (947 members), so the accuracy is free.
         members = X[idx].astype(np.float64)
         centroid = members.mean(0)
 
-        d = np.sqrt(np.maximum(0, 2 - 2 * (members @ members.T)))
+        d = squareform(pdist(members))
         medoid_local = int(np.argmin(d.sum(1)))
         medoid = idx[medoid_local]
         peak = idx[int(np.argmax(probabilities[idx]))]
