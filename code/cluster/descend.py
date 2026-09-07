@@ -310,6 +310,8 @@ def main():
                     help="an assignments.csv to start from; its noise enters as "
                          "singletons, since the criterion has no noise class")
     ap.add_argument("--max-sweeps", type=int, default=50)
+    ap.add_argument("--force", action="store_true",
+                    help="replace a finished run in the target directory")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=None,
                     help="first N vectors only, for a quick trial")
@@ -344,6 +346,18 @@ def main():
     took = time.time() - t0
 
     out = args.output_dir / args.f.replace("=", "")
+    # A finished run is protected; an unfinished one is not -- the same contract
+    # cluster.py keeps. The directory is named for f alone, so two runs differing
+    # only in --init-k would otherwise silently overwrite each other, and since
+    # the starting k bounds the final k they are different clusterings with one
+    # name. run.json records init_k either way; this makes the collision visible
+    # rather than destructive.
+    if (out / "run.json").exists() and not args.force:
+        prev = json.loads((out / "run.json").read_text())
+        raise SystemExit(
+            f"error: {out} holds a finished run -- {prev['clusters']} clusters, "
+            f"init_k={prev['init_k']}. Re-running would destroy it.\n"
+            f"       Pass --force to replace it, or --output-dir to keep both.")
     out.mkdir(parents=True, exist_ok=True)
     probs = np.ones(len(rows))              # hard assignment; no probability model
     # Centres come from the fitted set: the medoid must be a member of what was
