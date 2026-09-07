@@ -46,7 +46,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from code.cluster.cluster import (  # noqa: E402
-    cluster_centres, drop_duplicate_captures, label_agreement, load,
+    capture_of, cluster_centres, drop_duplicate_captures, label_agreement, load,
     write_assignments)
 from code.lib.csv_post import embeddings_for  # noqa: E402
 
@@ -230,6 +230,36 @@ def descend(V, labels, spec, max_sweeps=50):
 
 # --- initialisation --------------------------------------------------------
 
+def expand_duplicates(labels, kept_rows, all_rows):
+    """Put the dropped alternate edits back, in their capture's cluster.
+
+    Deduplication is done for the *fitter* -- HDBSCAN's density and this
+    criterion's counts are both distorted by the same photograph appearing
+    several times -- but it is not a reason for the image to be missing from the
+    result. The dropped rows are alternate edits of one capture, sharing a
+    sidecar, so the representative's cluster is their answer exactly rather than
+    approximately; nothing is inferred.
+
+    `capture_of()` and the min-key representative rule are the same ones
+    `drop_duplicate_captures()` used, so this inverts it rather than guessing at
+    it.
+    """
+    of = {r["key"]: i for i, r in enumerate(kept_rows)}
+    rep = {}
+    for r in all_rows:
+        c = capture_of(r)
+        if r["key"] in of:
+            rep[c] = of[r["key"]]
+    out = []
+    for r in all_rows:
+        i = of.get(r["key"], rep.get(capture_of(r)))
+        if i is None:
+            raise SystemExit(f"error: {r['key']!r} has no representative; "
+                             f"the dedup rule and its inverse disagree")
+        out.append(labels[i])
+    return np.asarray(out)
+
+
 def initial_labels(V, args, rows):
     if args.init == "from":
         import csv
@@ -283,7 +313,13 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--limit", type=int, default=None,
                     help="first N vectors only, for a quick trial")
-    ap.add_argument("--keep-duplicate-captures", action="store_true")
+    ap.add_argument("--keep-duplicate-captures", action="store_true",
+                    help="fit on every row, including alternate edits of one "
+                         "capture. They distort the counts the criterion reads")
+    ap.add_argument("--no-expand-duplicates", action="store_true",
+                    help="leave the dropped alternate edits out of "
+                         "assignments.csv. By default they are put back, in "
+                         "their capture's cluster, which is exact")
     args = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
@@ -291,9 +327,11 @@ def main():
         raise SystemExit("error: --init from needs --init-from PATH")
     src = args.embeddings or embeddings_for(args.output_dir, None)
     X, rows = load(src)
+    all_rows = rows
+    dropped = 0
     if not args.keep_duplicate_captures:
         X, rows, dropped = drop_duplicate_captures(X, rows)
-        logger.info("%d duplicate captures dropped", dropped)
+        logger.info("%d duplicate captures dropped for fitting", dropped)
     if args.limit:
         X, rows = X[:args.limit], rows[:args.limit]
     logger.info("%d vectors, %d dims, from %s", len(X), X.shape[1], src)
@@ -308,9 +346,17 @@ def main():
     out = args.output_dir / args.f.replace("=", "")
     out.mkdir(parents=True, exist_ok=True)
     probs = np.ones(len(rows))              # hard assignment; no probability model
+    # Centres come from the fitted set: the medoid must be a member of what was
+    # actually optimised, and duplicate captures would re-weight the centroid.
     centres = cluster_centres(X, P.lab, probs, rows)
     names = {c["cluster_id"]: c["name"] for c in centres}
-    write_assignments(out / "assignments.csv", P.lab, probs, rows, names)
+    written_rows, written_lab = rows, P.lab
+    if dropped and not args.no_expand_duplicates and not args.limit:
+        written_lab = expand_duplicates(P.lab, rows, all_rows)
+        written_rows = all_rows
+        logger.info("%d dropped edits put back in their capture's cluster", dropped)
+    write_assignments(out / "assignments.csv", written_lab,
+                      np.ones(len(written_rows)), written_rows, names)
     with open(out / "centers.jsonl", "w", encoding="utf-8") as fh:
         for c in centres:
             fh.write(json.dumps(c, ensure_ascii=False) + "\n")
@@ -320,6 +366,7 @@ def main():
         "init_k": args.init_k if args.init == "kmeans++" else None,
         "init_from": str(args.init_from) if args.init_from else None,
         "vectors": len(X), "dims": int(X.shape[1]),
+        "rows_written": len(written_rows), "duplicate_captures": dropped,
         "clusters": int(P.k), "noise": 0, "noise_fraction": 0.0,
         "reward_over_T": round(P.reward() / P.T, 6),
         "J_over_T": round(1 - P.reward() / P.T, 6),

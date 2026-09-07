@@ -137,3 +137,30 @@ def test_noise_becomes_singletons_not_a_class():
     lab = initial_labels(np.zeros((5, 2)), A, rows)
     assert lab[0] == lab[1]                     # a real cluster stays together
     assert len({lab[2], lab[3], lab[0], lab[4]}) == 4   # each noise point alone
+
+
+def test_dropped_edits_come_back_in_their_captures_cluster():
+    """Deduplication is for the fitter, not a reason to lose the image.
+
+    Alternate edits share a sidecar, so `capture_of()` recovers the grouping and
+    the representative's cluster is their answer exactly. The point of dropping
+    them first is that a capture present three times pulls the grand mean three
+    times, pulls its own centroid three times, and raises its cluster's n_i --
+    which raises that cluster's credibility. None of those are decisions the
+    duplicates should get a vote in.
+    """
+    from code.cluster.descend import expand_duplicates
+    all_rows = [{"key": "a.jpg", "xmp": "s1.xmp"},
+                {"key": "a-2.jpg", "xmp": "s1.xmp"},     # alternate edit of a
+                {"key": "b.jpg", "xmp": "s2.xmp"},
+                {"key": "c.jpg", "xmp": ""}]             # no sidecar: own capture
+    kept = [all_rows[0], all_rows[2], all_rows[3]]       # min key per capture
+    out = expand_duplicates(np.array([7, 9, 9]), kept, all_rows)
+    assert out.tolist() == [7, 7, 9, 9]                  # a-2 follows a
+
+
+def test_expansion_refuses_when_a_capture_has_no_representative():
+    from code.cluster.descend import expand_duplicates
+    all_rows = [{"key": "a.jpg", "xmp": "s1.xmp"}, {"key": "b.jpg", "xmp": "s2.xmp"}]
+    with pytest.raises(SystemExit, match="no representative"):
+        expand_duplicates(np.array([0]), [all_rows[0]], all_rows)
