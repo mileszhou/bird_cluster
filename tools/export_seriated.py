@@ -649,8 +649,23 @@ def label_tag(label_dir: Path) -> str:
 
 
 def load_labels(label_dir: Path):
-    with open(label_dir / "bird_identification_output.csv",
-              encoding="utf-8-sig", newline="") as fh:
+    """The labelling CSV, or a refusal that says what was wrong with the path.
+
+    `--label-dir` names the directory *holding* the CSV, which for a run root is
+    its `label/` subdirectory. Passing the run root instead is the obvious slip,
+    and so is pointing it at a clustering run, which has no labelling in it at
+    all -- both used to surface as a bare FileNotFoundError traceback.
+    """
+    csv_path = label_dir / "bird_identification_output.csv"
+    if not csv_path.is_file():
+        nested = label_dir / "label" / "bird_identification_output.csv"
+        hint = (f"\n       Did you mean --label-dir {label_dir / 'label'} ?"
+                if nested.is_file() else
+                f"\n       That directory holds no labelling. The default is "
+                f"data/label; a run's own is <run>/label.")
+        raise SystemExit(f"error: no bird_identification_output.csv in "
+                         f"{label_dir}.{hint}")
+    with open(csv_path, encoding="utf-8-sig", newline="") as fh:
         return {r["jpg"]: r for r in csv.DictReader(fh)}
 
 

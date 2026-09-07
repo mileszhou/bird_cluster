@@ -6,7 +6,9 @@ Lightroom follows from it, and none of it is checkable by looking at one file.
 """
 from datetime import datetime
 
-from tools.export_seriated import (SLOTS_PER_DAY, TAIL_COLORS,
+import pytest
+
+from tools.export_seriated import (SLOTS_PER_DAY, TAIL_COLORS, load_labels,
                                    TAIL_SLOTS_PER_DAY, plan_dates)
 
 BASE = datetime(2000, 1, 1)
@@ -101,3 +103,17 @@ def test_the_tail_starts_after_the_kept_clusters():
 def test_no_tail_means_no_extra_date():
     plan, day = plan_dates([("a", [0])], [], BASE)
     assert day == 1 and len(plan) == 1
+
+
+def test_label_dir_pointing_at_a_run_root_says_so(tmp_path):
+    """The obvious slip: --label-dir <run> instead of --label-dir <run>/label."""
+    (tmp_path / "label").mkdir()
+    (tmp_path / "label" / "bird_identification_output.csv").write_text("jpg\n")
+    with pytest.raises(SystemExit, match=r"Did you mean --label-dir .*label"):
+        load_labels(tmp_path)
+
+
+def test_label_dir_pointing_at_a_clustering_says_that_too(tmp_path):
+    (tmp_path / "assignments.csv").write_text("key\n")
+    with pytest.raises(SystemExit, match="holds no labelling"):
+        load_labels(tmp_path)
