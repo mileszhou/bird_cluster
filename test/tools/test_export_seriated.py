@@ -117,3 +117,25 @@ def test_label_dir_pointing_at_a_clustering_says_that_too(tmp_path):
     (tmp_path / "assignments.csv").write_text("key\n")
     with pytest.raises(SystemExit, match="holds no labelling"):
         load_labels(tmp_path)
+
+
+def test_taxonomy_given_a_directory_names_the_file_inside(tmp_path):
+    """A taxa/ run directory holds several CSVs; --taxonomy names one of them."""
+    from tools.export_seriated import load_taxa
+    (tmp_path / "label_taxonomy.csv").write_text("jpg,family\n")
+    with pytest.raises(SystemExit, match=r"Did you mean .*label_taxonomy\.csv"):
+        load_taxa(tmp_path, True)
+
+
+def test_taxonomy_given_a_directory_without_one_says_that(tmp_path):
+    from tools.export_seriated import load_taxa
+    with pytest.raises(SystemExit, match="holds no label_taxonomy.csv"):
+        load_taxa(tmp_path, True)
+
+
+def test_predictions_given_a_directory_names_the_file_inside(tmp_path):
+    """Same trap as --taxonomy, one flag along; both take a file."""
+    from tools.export_seriated import load_predictions
+    (tmp_path / "taxa_predictions.csv").write_text("jpg,species\n")
+    with pytest.raises(SystemExit, match=r"Did you mean .*taxa_predictions\.csv"):
+        load_predictions(tmp_path, True)

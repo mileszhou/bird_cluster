@@ -367,6 +367,12 @@ def load_predictions(path: Path | None, required: bool):
             raise SystemExit(f"error: no predictions at {PRED_DEFAULT}. Build them "
                              "with `python3 -m tools.predict_taxa`.")
         return {}
+    if Path(path).is_dir():
+        inside = Path(path) / "taxa_predictions.csv"
+        raise SystemExit(
+            f"error: --predictions names a file, not a directory. "
+            + (f"Did you mean {inside} ?" if inside.is_file() else
+               f"{path} holds no taxa_predictions.csv."))
     if not Path(path).is_file():
         raise SystemExit(f"error: no predictions at {path}. Build them with "
                          "`python3 -m tools.predict_taxa`.")
@@ -421,6 +427,15 @@ def load_taxa(path: Path | None, required: bool):
                              f"{TAXA_DEFAULT}. Build one with "
                              "`python3 -m tools.map_label_taxa`.")
         return {}
+    if Path(path).is_dir():
+        # A taxa/ run directory holds several CSVs and this flag names one of
+        # them. Telling the caller to build what is already there sends them a
+        # long way round, so name the file instead.
+        inside = Path(path) / "label_taxonomy.csv"
+        raise SystemExit(
+            f"error: --taxonomy names a file, not a directory. "
+            + (f"Did you mean {inside} ?" if inside.is_file() else
+               f"{path} holds no label_taxonomy.csv."))
     if not Path(path).is_file():
         raise SystemExit(f"error: no taxonomy at {path}. Build one with "
                          "`python3 -m tools.map_label_taxa`.")
