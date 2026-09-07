@@ -164,3 +164,45 @@ def test_expansion_refuses_when_a_capture_has_no_representative():
     all_rows = [{"key": "a.jpg", "xmp": "s1.xmp"}, {"key": "b.jpg", "xmp": "s2.xmp"}]
     with pytest.raises(SystemExit, match="no representative"):
         expand_duplicates(np.array([0]), [all_rows[0]], all_rows)
+
+
+def near_identical_cluster(seed=1, scale=3e-4, n=12, dim=64):
+    """Unit vectors at cosine ~0.99999 -- where `2 - 2*cos` has nothing left."""
+    rng = np.random.default_rng(seed)
+    base = rng.normal(size=dim)
+    base /= np.linalg.norm(base)
+    M = base + scale * rng.normal(size=(n, dim))
+    return M / np.linalg.norm(M, axis=1, keepdims=True)
+
+
+def test_the_medoid_does_not_depend_on_the_input_dtype():
+    """`2 - 2*cos` cancels catastrophically for similar members.
+
+    A cluster of near-identical unit vectors is the worst case and also the
+    commonest good case: at cos = 1 - 1e-7 the subtraction leaves 2e-7, which is
+    below float32's epsilon, so a float32 distance there is noise. The medoid is
+    the cluster's identity across runs, so it must be the float64 answer whatever
+    dtype arrives.
+    """
+    from code.cluster.cluster import cluster_centres
+    M = near_identical_cluster()
+    rows = [{"key": f"img{i}.jpg", "xmp": ""} for i in range(len(M))]
+    labels, probs = np.zeros(len(M), dtype=int), np.ones(len(M))
+
+    d64 = np.sqrt(np.maximum(0, 2 - 2 * (M @ M.T))).sum(1)
+    expected = rows[int(d64.argmin())]["key"]
+    for dtype in (np.float32, np.float64):
+        got = cluster_centres(M.astype(dtype), labels, probs, rows)[0]["medoid"]
+        assert got == expected, f"{dtype.__name__} picked {got}, float64 says {expected}"
+
+
+def test_float32_really_would_have_got_that_wrong():
+    """The regression this pins is real, not hypothetical.
+
+    Chosen, not assumed: over 400 seeds this construction disagrees only
+    sometimes, so the fixture is one that actually does.
+    """
+    M = near_identical_cluster()
+    naive32 = np.sqrt(np.maximum(0, 2 - 2 * (M.astype(np.float32) @ M.astype(np.float32).T))).sum(1)
+    exact64 = np.sqrt(np.maximum(0, 2 - 2 * (M @ M.T))).sum(1)
+    assert int(naive32.argmin()) != int(exact64.argmin())

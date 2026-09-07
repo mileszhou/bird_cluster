@@ -102,7 +102,18 @@ def cluster_centres(X, labels, probabilities, rows):
     out = []
     for cid in sorted(set(labels) - {-1}):
         idx = np.flatnonzero(labels == cid)
-        members = X[idx]
+        # float64, and not for tidiness. `2 - 2*cos` subtracts two nearly equal
+        # numbers whenever two members are similar, which in a *tight* cluster is
+        # most pairs -- at cos 0.99 the result keeps a hundredth of the input's
+        # significant digits, so float32's relative error is amplified by ~2/(2-2cos).
+        # Measured: one 871-cluster run, recomputed on a second machine from
+        # byte-identical vectors with identical membership, named a different
+        # medoid for 5 clusters -- all of them tight (internal cosine 0.976 to
+        # 0.997). Neither machine was right: float64 agrees with one on 3 of the
+        # five and with the other on 2, so each had float32 wrong somewhere. The
+        # medoid is a cluster's identity across runs, and it cannot depend on
+        # which BLAS summed the row.
+        members = X[idx].astype(np.float64)
         centroid = members.mean(0)
 
         d = np.sqrt(np.maximum(0, 2 - 2 * (members @ members.T)))
